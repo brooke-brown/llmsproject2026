@@ -1,6 +1,6 @@
 # LLMs Project 2026
 
-Welcome to our team's repository for *CS4501** (Fall 2026). This is where everything for our group project lives, from early startup ideas to the final deployed product.
+Welcome to our team's repository for **CS4501** (Fall 2026). This is where everything for our group project lives, from early startup ideas to the final deployed product.
 
 ## 📁 What's Here
 
