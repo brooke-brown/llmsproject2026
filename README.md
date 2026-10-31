@@ -6,9 +6,9 @@ Welcome to our team's repository for **CS4501** (Fall 2026). This is where every
 
 | Folder | Contents |
 |---|---|
-| [`directions/`](directions/) | Startup idea proposals, each with a `readme-direction.md` explaining how it meets the project criteria |
+| [`docs/`](docs/) | [`readme-startupSelected.md`](docs/readme-startupSelected.md) — the STRIVE pitch we're building, plus design notes and architecture |
+| [`directions/`](directions/) | Archive of the startup ideas we considered and **did not** pick|
 | `app/` *(coming soon)* | Source code for our final product |
-| `docs/` *(coming soon)* | Design notes, architecture, and project documentation |
 
 ## 👥 Group Members
 

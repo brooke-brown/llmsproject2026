@@ -1,26 +1,26 @@
 # STRIVE: evidence-based contribution reports for team software projects
  
-## One problem it solves extremely well.
+## The Problem Statement
  
 **Instructors can't see who actually did what on a team software project until it's too late to fix.**
  
-Today, contribution is judged by end-of-term peer surveys, which rely on memory and are subjective, and by Git stats like commits and lines changed, which are easy to game and miss reviews, tests and design work. STRIVE does one thing: each week, it produces a per-student contribution summary in which **every claim links to a specific commit, PR, review or issue**, and it flags imbalanced teams while there's still time to step in.
+Today, contribution is judged by peer surveys (like CATME), which rely on memory and are subjective, and by Git stats like commits and lines changed, which are easy to game and do not reflect quality of work, off-repo/collaborative work, etc.
+STRIVE produces a per-student contribution summary in which **every claim links to a specific commit, PR, review or issue**, and it flags imbalanced teams while there's still time to step in.
  
 ## Briefly describe how we know the target customers or have direct access to them.
  
 - **We are the students.** As UVA CS students, we've been on team projects and know the free-rider and "who did what" problem from the inside. We can recruit student testers from our own classes and networks.
 - **Instructors and TAs are a short walk away.** UVA runs team-project courses such as CS 3240 (Software Engineering), which centers on a semester-long group project. Its instructors and TAs are the buyers and daily users, and we can reach them through office hours, our department, and TAs we already know.
-- **Natural pilot.** A single course with 10–20 teams is enough to validate the MVP, and our department is the most direct way to get one.
 ## How we are familiar with (or can quickly learn) most of the required infrastructure.
  
 | Component | Our familiarity |
 |---|---|
 | Git and GitHub (commits, PRs, reviews, issues) | We use these every day in our coursework |
-| GitHub REST/GraphQL API and webhooks | Well-documented; quick to learn |
-| Backend (Python/FastAPI or TypeScript/Node) and Postgres | Covered in our coursework and side projects |
-| Web dashboard (React or a server-rendered app) | Standard web development |
+| GitHub REST API, authenticated via OAuth or a per-repo access token | Well-documented; quick to learn |
+| Backend in Python and a relational database | Covered in our coursework and side projects; exact web framework/ORM still being decided by the group |
+| Web dashboard (login routes to instructor view or student view) | Standard web development |
 | LLM API with structured (JSON) output | Learnable in days; there are many examples |
-| GitHub App packaging (installs on a course org) | New to us, but a narrow, well-documented task |
+| Requirements/rubric PDF parsing | New to us, but a narrow, well-documented task |
  
 Nothing requires specialized hardware, model training or proprietary data. The hardest part is prompt and validation design, which is the interesting part of the project anyway.
  
@@ -29,10 +29,10 @@ Nothing requires specialized hardware, model training or proprietary data. The h
 | Today (CATME, peer surveys, git-stats) | STRIVE |
 |---|---|
 | Measured once or twice a term, from memory | Continuous, from what the team actually did that week |
-| Counts commits and lines | Reads each diff and judges what it accomplished (feature, fix, test, refactor, review) |
+| Counts commits and lines | Reads each PR's diff and judges what it accomplished — core feature, bug fix, test, refactor, or just a reformatted README — against the project's actual requirements |
 | A survey score with no evidence behind it | Every claim links to a commit, PR or issue a TA can click |
 | Problems surface at the final peer evaluation | Flags appear weeks earlier, while the team can still recover |
-| Students can't see or contest what's said about them | Students see their own summary and can dispute or annotate it |
+| Students can't see or contest what's said about them | Students will be able to see their own summary and dispute or annotate it (planned, after the instructor view ships) |
  
 Work that doesn't show up as commits is handled explicitly instead of being treated as zero:
  
@@ -43,11 +43,18 @@ Work that doesn't show up as commits is handled explicitly instead of being trea
  
 The LLM is the engine of the product, not an add-on. Without it, STRIVE is just another line counter.
  
-1. **Semantic diff classification.** The LLM reads each diff in context and labels what it did (new feature, bug fix, tests, refactor, docs, review) and how significant it is. A 5-line fix to a race condition outweighs 500 lines of generated boilerplate, and only semantic understanding can tell them apart.
+1. **Requirements-aware classification.** The instructor uploads the project's requirements/rubric (optional) and connects each team's GitHub repo(s). For every PR, the LLM reads the diff and the project requirements together and judges: is this a core feature, a bug fix, a test, a refactor, or just a reformatted README? That tells instructors what each student actually accomplished — not just how much code they touched.
 2. **Cross-artifact linking.** It connects an issue to the PR that closed it, the review that shaped that PR, and the follow-up fix. Those threads are the real story of who drove a feature.
-3. **Evidence-linked summaries.** It writes a short, readable weekly summary per student, citing every claim.
+3. **Evidence-linked summaries.** It writes a short, readable weekly summary per student, mapping their PRs to requirements and citing every claim.
 4. **Interpreting off-repo signals.** It parses co-author trailers, "paired with" notes and self-reports, and matches them against artifacts.
-There's no chat interface. Students and instructors only see the validated summaries, the team view and the flags.
+There's no chat interface. Instructors, TAs and students only see the validated summaries, the team view and the flags.
+
+### Demo: here's what STRIVE looks like from the instructor's side
+
+1. The instructor uploads the project requirements and connects a team's GitHub repo(s).
+2. The dashboard shows each student's share of meaningful contributions across the team.
+3. Clicking a student shows each of their PRs — summarized, labeled, and mapped to a requirement — with the LLM's reasoning.
+4. Clicking any claim lands the instructor on the actual PR. Nothing is taken on faith: instead of hours of repo forensics, the instructor gets evidence they can check in seconds and grade with confidence.
  
 ## What Validation or Guardrail we can introduce so that no LLM-generated artifact reaches the user without passing through validation.
 For each claim, code checks the following against the GitHub data we already pulled:
@@ -103,13 +110,6 @@ def summarize_week(evidence, max_attempts=3):
  
 **Yes** Every piece is standard and inexpensive:
  
-- **App:** a GitHub App that the instructor installs on the course's GitHub organization. Installing it is one click for the org admin.
-- **Hosting:** a small backend and Postgres on Render, Fly.io, Railway or a UVA-provided VM. A weekly batch job, so the load is light.
-- **LLM cost (rough estimate):** a 4-person team might produce ~40 commits a week at ~2,000 tokens of diff each, which is ~80k input tokens per team per week. For 20 teams that's ~1.6M tokens a week, a few dollars at small-model API prices. Option B or E would multiply this by roughly 2–3×.
+- **App:** a web app, not a GitHub App. The instructor connects each team's repo(s) individually (OAuth or a per-repo access token), and STRIVE pulls commits, PRs, reviews and issues over the GitHub REST/GraphQL API.
+- **LLM cost (rough estimate):** a 4-person team might produce ~40 commits a week at ~2,000 tokens of diff each, which is ~80k input tokens per team per week. For 20 teams that's ~1.6M tokens a week, a few dollars at small-model API prices.
 - **Rate limits:** a weekly batch over a few dozen repos stays well within GitHub's API limits.
-**What we'd need beyond code (to plan for now):**
- 
-- **Student data and FERPA.** Contribution summaries are education records. A real course deployment needs the instructor's approval, a course-level opt-in, and likely a check with UVA about where data is stored and which LLM provider sees student code. Choose a provider with a no-training, limited-retention data policy.
-- **IRB.** If we publish or present pilot results as research, ask UVA's IRB whether the study needs review before collecting data.
-- **Instructor buy-in.** The pilot instructor must be willing to install the app and have TAs spend a few minutes a week auditing claims.
-**Bottom line:** the three of us can build and fully deploy the MVP within the semester. The main deployment risk is approvals and data policy, not engineering, so start those conversations early, in parallel with week 1 of the build.

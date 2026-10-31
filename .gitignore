@@ -12,6 +12,9 @@ venv/
 *.db
 *.sqlite3
 
+# Claude Code personal overrides
+.claude/settings.local.json
+
 # Editors / OS
 .idea/
 .vscode/

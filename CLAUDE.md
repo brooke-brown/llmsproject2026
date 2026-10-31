@@ -6,7 +6,9 @@ Shared guidance for every group member's Claude agent working in this repo. Keep
 
 **STRIVE** is a website that gives instructors evidence-based, per-student contribution reports for team software projects (CS4501, Fall 2026). Each week it produces a summary for every student where **every claim links to a specific commit, PR, review or issue**, and it flags imbalanced teams early.
 
-Full product pitch: `directions/readme-startupSelected.md`. Read it before designing any feature.
+Product rationale, audiences and the instructor demo flow: `docs/readme-startupSelected.md`. Read it when scoping a new feature, not for routine work.
+
+Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. It's contents are irrelevant to this project, but must stay for documentation purposes.
 
 ## How the website works
 
@@ -59,6 +61,7 @@ The whole app is written in **Python**. The web framework, templating vs. fronte
 ## Non-negotiable rules for LLM output
 
 - **No LLM-generated text reaches a user without passing the validator.**
+- Every PR gets exactly one label from this set, and no other: `feature`, `fix`, `test`, `refactor`, `docs`, `chore`. Use these exact strings in prompts, schemas, the database and the UI.
 - The validator returns specific, machine-readable errors per claim, not just pass/fail. Those errors feed back to the LLM, which regenerates **only the failing claims**, up to **3 attempts**.
 - A claim that still fails is dropped from the user-facing summary, counted as "couldn't verify," and queued for TA review.
 - Validator checks, using stored GitHub data: every cited SHA/PR/issue/review ID exists in one of this team's repos; it falls inside the reporting week; the student is its author, co-author or reviewer; any numbers in the text match the actual diff.
