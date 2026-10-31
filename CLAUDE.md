@@ -61,7 +61,7 @@ The whole app is written in **Python**. The web framework, templating vs. fronte
 ## Non-negotiable rules for LLM output
 
 - **No LLM-generated text reaches a user without passing the validator.**
-- Every PR gets exactly one label from this set, and no other: `feature`, `fix`, `test`, `refactor`, `docs`, `chore`. Use these exact strings in prompts, schemas, the database and the UI.
+- Every PR gets exactly one label from this set, and no other: `feature`, `fix`, `test`, `refactor`, `docs`, `chore`. Use these exact strings in prompts, schemas, the database and the UI. ***FIXME: we should talk about this.***
 - The validator returns specific, machine-readable errors per claim, not just pass/fail. Those errors feed back to the LLM, which regenerates **only the failing claims**, up to **3 attempts**.
 - A claim that still fails is dropped from the user-facing summary, counted as "couldn't verify," and queued for TA review.
 - Validator checks, using stored GitHub data: every cited SHA/PR/issue/review ID exists in one of this team's repos; it falls inside the reporting week; the student is its author, co-author or reviewer; any numbers in the text match the actual diff.
