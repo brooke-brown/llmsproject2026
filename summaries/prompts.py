@@ -9,6 +9,7 @@ REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
 # accomplished, so they're included, but only the start of a long one.
 TITLE_CAP = 1000
 BODY_CAP = 2000
+REQUIREMENT_CAP = 1000
 DIFF_CAP = 4000
 
 # A week with many artifacts shrinks each diff's cap so the prompt stays near this many
@@ -30,16 +31,21 @@ exactly as listed. Never cite an ID that isn't in the list.
 - Set each claim's significance (minor, moderate or major) by what the work accomplishes, \
 not by how many lines changed. A small fix that unblocks the team can be major, and a \
 large reformatting is minor.
-- Always set requirement_ids to an empty list.
+- Set requirement_ids to the numbers of the requirements this work advances, using only the \
+numbers in the project's requirement list. Use an empty list if it advances none.
 - Write each claim as one plain sentence. Group related artifacts into one claim and cite \
 all of them.
 """
 
 
-def build_prompt(artifacts) -> str:
-    """List the student's artifacts for the week, oldest first, one block each."""
+def build_prompt(artifacts, requirements=()) -> str:
+    """The project's requirements, then the student's artifacts for the week, oldest first.
+
+    `requirements` are Requirement rows in number order. They come first so the LLM knows
+    what it can tie claims to.
+    """
     artifacts = list(artifacts)
-    intro = "This student's artifacts for the week:\n\n"
+    intro = _requirements_section(requirements) + "This student's artifacts for the week:\n\n"
     heads = [_head(artifact) for artifact in artifacts]
     diff_cap = _diff_cap(
         room=PROMPT_BUDGET - len(intro) - sum(len(head) + 2 for head in heads),
@@ -49,7 +55,7 @@ def build_prompt(artifacts) -> str:
     return intro + "\n\n".join(blocks)
 
 
-def build_retry_prompt(artifacts, failing) -> str:
+def build_retry_prompt(artifacts, failing, requirements=()) -> str:
     """Ask for corrected versions of the claims that failed validation.
 
     `failing` is a list of (claim, errors) pairs. The artifact list goes back too, so the
@@ -57,7 +63,7 @@ def build_retry_prompt(artifacts, failing) -> str:
     """
     blocks = [_failing_claim_block(number, claim, errors) for number, (claim, errors) in enumerate(failing, start=1)]
     return (
-        build_prompt(artifacts)
+        build_prompt(artifacts, requirements)
         + "\n\nThese claims from your earlier answer failed validation:\n\n"
         + "\n\n".join(blocks)
         + "\n\nReturn exactly one corrected claim for each claim above, in the same order. "
@@ -77,6 +83,17 @@ def _failing_claim_block(number, claim, errors) -> str:
     ]
     lines.extend(f"- {error.check}: {error.message}" for error in errors)
     return "\n".join(lines)
+
+
+def _requirements_section(requirements) -> str:
+    requirements = list(requirements)
+    if not requirements:
+        return "This project has no requirements, so leave requirement_ids empty.\n\n"
+    lines = ["The project's requirements:"]
+    for requirement in requirements:
+        capped = _capped(f"{requirement.number}.", requirement.text, REQUIREMENT_CAP, label="requirement")
+        lines.extend(capped)
+    return "\n".join(lines) + "\n\n"
 
 
 def _diff_cap(room: int, diffs: int) -> int:
@@ -106,10 +123,17 @@ def _head(artifact) -> str:
     return "\n".join(lines)
 
 
-def _capped(label: str, text: str, cap: int) -> list[str]:
+def _capped(prefix: str, text: str, cap: int, label: str | None = None) -> list[str]:
+    """`prefix` and the text, cut to `cap` characters and marked if it was too long.
+
+    A prefix like "title" is written "title: ..." and names its own marker. One that ends in
+    a period, like "3.", is written "3. ..." and needs `label` for its marker.
+    """
+    separator = " " if prefix.endswith(".") else ": "
+    marker = f"[{label or prefix} truncated]"
     if len(text) <= cap:
-        return [f"{label}: {text}"]
-    return [f"{label}: {text[:cap]}", f"[{label} truncated]"]
+        return [f"{prefix}{separator}{text}"]
+    return [f"{prefix}{separator}{text[:cap]}", marker]
 
 
 def _artifact_block(artifact, head: str, diff_cap: int) -> str:

@@ -3,7 +3,7 @@ from datetime import date
 
 from django.db import transaction
 
-from core.models import Team, TeamMembership, User
+from core.models import Requirement, Team, TeamMembership, User
 from ingest.models import Artifact
 from ingest.services import student_week_artifacts
 from summaries import schemas
@@ -33,7 +33,8 @@ def generate_validated_claims(user: User, team: Team, week_start: date, artifact
     with a different number of claims than were sent, counts as a failed attempt and the
     claims are left as they were. Only the first attempt can raise.
     """
-    claims = list(generate_claims(build_prompt(artifacts), system=SYSTEM_PROMPT))
+    requirements = list(Requirement.objects.filter(project=team.project_id).order_by("number"))
+    claims = list(generate_claims(build_prompt(artifacts, requirements), system=SYSTEM_PROMPT))
     results = validate_claims(claims, user=user, team=team, week_start=week_start)
     first_pass = sum(result.ok for result in results)
 
@@ -43,7 +44,9 @@ def generate_validated_claims(user: User, team: Team, week_start: date, artifact
         if not failing:
             break
         retries += 1
-        fixes = _retry(artifacts, [(claims[index], results[index].errors) for index in failing])
+        fixes = _retry(
+            artifacts, requirements, [(claims[index], results[index].errors) for index in failing]
+        )
         if fixes is None:
             continue
         for index, fixed in zip(failing, fixes):
@@ -53,10 +56,12 @@ def generate_validated_claims(user: User, team: Team, week_start: date, artifact
     return ValidatedClaims(claims, results, retries, first_pass)
 
 
-def _retry(artifacts, failing):
+def _retry(artifacts, requirements, failing):
     """One corrected claim per failing claim, or None if this attempt didn't work."""
     try:
-        fixes = generate_claims(build_retry_prompt(artifacts, failing), system=SYSTEM_PROMPT)
+        fixes = generate_claims(
+            build_retry_prompt(artifacts, failing, requirements), system=SYSTEM_PROMPT
+        )
     except LLMError:
         return None
     # Replies are matched to failures by position, so a wrong count can't be trusted.
@@ -103,9 +108,9 @@ def generate_summary(user: User, team: Team, week_start: date) -> Summary:
                 text=claim.text,
                 category=claim.category,
                 artifact_ids=list(claim.artifact_ids),
-                # The validator can't check requirement numbers until US-14, and the flag
-                # rules weight requirement-tied claims, so none are saved until it can.
-                requirement_ids=[],
+                # Checked by the validator, so a verified claim's numbers are real. A claim
+                # that failed keeps them as written, like its artifact_ids.
+                requirement_ids=list(claim.requirement_ids),
                 significance=claim.significance,
                 status=Claim.Status.VERIFIED if result.ok else Claim.Status.COULDNT_VERIFY,
                 validator_errors=[error.to_dict() for error in result.errors],

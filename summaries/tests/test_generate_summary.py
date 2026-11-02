@@ -516,8 +516,11 @@ class PromptSizeTests(GenerateSummaryTestCase):
             self.assertIn(artifact_id, prompt)
         self.assertNotIn("diff:", prompt)
 
-    def test_a_prompt_with_no_artifacts_is_just_the_heading(self):
-        self.assertTrue(prompts().build_prompt([]).startswith("This student's artifacts"))
+    def test_a_prompt_with_no_artifacts_has_the_heading_and_no_artifact_blocks(self):
+        prompt = prompts().build_prompt([])
+
+        self.assertIn("This student's artifacts for the week:", prompt)
+        self.assertNotIn("artifact ID:", prompt)
 
     def test_a_few_artifacts_still_get_the_full_diff_cap(self):
         self.add_artifact("longdiff2", diff="A" * DIFF_CAP + "B" * 6000)
