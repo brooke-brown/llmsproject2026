@@ -45,6 +45,13 @@ These are the interfaces between people. Changing them silently breaks someone e
    "requirement_ids": [int],
    "significance": "minor" | "moderate" | "major"}
   ```
+  - `artifact_ids` use the format `owner/repo:type:id`, such as `acme/app:pr:12`, so they stay unique across a team's repos.
+  - `requirement_ids` hold `Requirement.number`, not the database ID.
+- **Reporting week:** Monday-Sunday inclusive, in `America/New_York`. Ingest and the validator must use the same date for each artifact:
+  - Commit: author date
+  - PR: merged date, or created date if unmerged
+  - Review: submitted date
+  - Issue: created date
 - **`Requirement` model** in `core/`: `project`, `number`, `text`
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
