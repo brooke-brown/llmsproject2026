@@ -2,3 +2,4 @@ Django>=6.0,<6.1
 coverage>=7,<8
 pydantic>=2.14,<3
 anthropic>=2.3,<3
+PyGithub>=2.10,<3
