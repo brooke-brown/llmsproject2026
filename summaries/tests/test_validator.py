@@ -305,3 +305,20 @@ class SeveralClaimsTests(ValidatorTestCase):
 
     def test_no_claims_gives_no_results(self):
         self.assertEqual(validate([], self.student, self.team), [])
+
+
+class WeekStartTests(ValidatorTestCase):
+    def test_a_week_start_that_is_not_a_monday_is_rejected(self):
+        # Otherwise the check would quietly use the wrong seven days.
+        for week_start in [date(2026, 10, 27), date(2026, 10, 28), date(2026, 11, 1)]:
+            with self.subTest(week_start=week_start):
+                with self.assertRaises(ValueError):
+                    validate([make_claim(COMMIT)], self.student, self.team, week_start)
+
+    def test_the_error_says_the_week_must_start_on_a_monday(self):
+        with self.assertRaisesMessage(ValueError, "Monday"):
+            validate([make_claim(COMMIT)], self.student, self.team, date(2026, 10, 28))
+
+    def test_a_non_monday_is_rejected_even_when_there_are_no_claims(self):
+        with self.assertRaises(ValueError):
+            validate([], self.student, self.team, date(2026, 10, 28))
