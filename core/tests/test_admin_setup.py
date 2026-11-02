@@ -521,6 +521,29 @@ class RepoWithArtifactsTests(AdminTestCase):
                 self.repo.refresh_from_db()
                 self.assertEqual(self.repo.full_name, "acme/app")
 
+    def test_repo_page_rejects_moving_it_to_another_team(self):
+        # The validator finds artifacts through repo__team, so they'd become citable
+        # in the new team's summaries.
+        team_b = Team.objects.create(project=self.project, name="Team B")
+        response = self.client.post(
+            self.admin_url("repo", "change", self.repo.pk),
+            {"team": team_b.pk, "url": self.repo.url},
+        )
+        self.assert_rejected(response, "artifacts")
+        self.repo.refresh_from_db()
+        self.assertEqual(self.repo.team, self.team)
+
+    def test_a_repo_with_no_artifacts_can_move_to_another_team(self):
+        self.repo.artifacts.all().delete()
+        team_b = Team.objects.create(project=self.project, name="Team B")
+        response = self.client.post(
+            self.admin_url("repo", "change", self.repo.pk),
+            {"team": team_b.pk, "url": self.repo.url},
+        )
+        self.assert_saved(response)
+        self.repo.refresh_from_db()
+        self.assertEqual(self.repo.team, team_b)
+
     def test_a_repo_with_no_artifacts_can_still_change(self):
         self.repo.artifacts.all().delete()
         self.assert_saved(self.post_repo_page(self.NEW_URL))
@@ -753,3 +776,32 @@ class MembershipAdminTests(MembershipRuleFixtures):
         self.team.refresh_from_db()
         self.assertEqual(self.team.project, self.later_project)
         self.assertEqual(self.team.memberships.get(), membership)
+
+    def test_enrollment_page_can_resave_a_team_member_unchanged(self):
+        TeamMembership.objects.create(user=self.student, team=self.team)
+        enrollment = Enrollment.objects.get(user=self.student, course=self.course)
+        response = self.client.post(
+            self.admin_url("enrollment", "change", enrollment.pk),
+            {"user": self.student.pk, "course": self.course.pk, "role": "student"},
+        )
+        self.assert_saved(response)
+
+    def test_incomplete_forms_come_back_with_an_error_instead_of_crashing(self):
+        cases = {
+            "membership with no team": (
+                self.admin_url("teammembership", "add"),
+                {"user": self.student.pk},
+            ),
+            "membership with no user": (
+                self.admin_url("teammembership", "add"),
+                {"team": self.team.pk},
+            ),
+            "new team with a member but no project": (
+                self.admin_url("team", "add"),
+                {**team_form(self.project, members=[{"user": self.student.pk}]), "project": ""},
+            ),
+        }
+        for case, (url, data) in cases.items():
+            with self.subTest(case=case):
+                self.assert_rejected(self.client.post(url, data), "required")
+        self.assertFalse(TeamMembership.objects.exists())
