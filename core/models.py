@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models.functions import Lower
@@ -58,6 +59,32 @@ class Enrollment(models.Model):
             ),
         ]
 
+    def clean(self):
+        super().clean()
+        stored = Enrollment.objects.filter(pk=self.pk).first()
+        if stored is None or stored.role != self.Role.STUDENT:
+            return
+        unchanged = (self.user_id, self.course_id, self.role) == (
+            stored.user_id,
+            stored.course_id,
+            stored.role,
+        )
+        if unchanged:
+            return
+        # Only a student enrolled in the course may stay on one of its teams.
+        membership = (
+            TeamMembership.objects.filter(
+                user_id=stored.user_id, team__project__course_id=stored.course_id
+            )
+            .select_related("team")
+            .first()
+        )
+        if membership is not None:
+            raise ValidationError(
+                f"{stored.user.github_login} is on {membership.team.name} in this course. "
+                "Remove them from the team before changing this enrollment."
+            )
+
     def __str__(self):
         return f"{self.user} ({self.role}) in {self.course}"
 
@@ -90,6 +117,41 @@ class TeamMembership(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["user", "team"], name="core_teammembership_unique"),
         ]
+
+    def clean(self):
+        """Check the rules a database constraint can't, since they span several tables.
+
+        On the team page, `team` can be unsaved or have a project that isn't saved yet, so
+        this reads the team object and never its stored row.
+        """
+        super().clean()
+        try:
+            team = self.team
+        except Team.DoesNotExist:
+            return
+        if self.user_id is None or team.project_id is None:
+            return
+
+        errors = []
+        is_student = Enrollment.objects.filter(
+            user_id=self.user_id, course_id=team.project.course_id, role=Enrollment.Role.STUDENT
+        ).exists()
+        if not is_student:
+            errors.append(
+                f"{self.user.github_login} isn't enrolled as a student in {team.project.course}."
+            )
+        other = (
+            TeamMembership.objects.filter(user_id=self.user_id, team__project_id=team.project_id)
+            .exclude(pk=self.pk)
+            .select_related("team")
+            .first()
+        )
+        if other is not None:
+            errors.append(
+                f"{self.user.github_login} is already on {other.team.name} in this project."
+            )
+        if errors:
+            raise ValidationError(errors)
 
     def __str__(self):
         return f"{self.user} on {self.team}"
