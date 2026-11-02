@@ -7,6 +7,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.coverage
+coverage.json
 
 # Local databases
 *.db

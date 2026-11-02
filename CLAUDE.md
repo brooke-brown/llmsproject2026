@@ -124,6 +124,14 @@ There is **no chat interface**, in the alpha or later. Users only see validated 
 - `main` always works. **Never commit directly to `main`**; changes land only through small PRs with one teammate's approval. Pull `main` often.
 - One short-lived branch per task, named for its owner: `todd/ingest-commits`, `akshita/validator`, `brooke/course-overview`.
 - If a PR completes a GitHub issue, include `Closes #N` in its description.
+- Keep PR descriptions concise, but include crucial information and end every one with a `## Test Metrics` section. We parse these for the end-of-alpha presentation, so keep these exact labels and measure fresh on the PR's branch:
+  ```
+  ## Test Metrics
+  - Tests: <total> total, <passing> passing (<new> new)
+  - Line coverage: <percent>% (<covered>/<total> lines)
+  - Branch coverage: <percent>% (<covered>/<total>)
+  ```
+  Get the numbers with `coverage run manage.py test`, then `coverage json -q -o coverage.json`, and read `totals` in `coverage.json` (`covered_lines`/`num_statements`, `covered_branches`/`num_branches`). `.coveragerc` sets what's measured: don't override it.
 - One person merges migrations at a time.
 - Use `Co-authored-by:` trailers when pairing. STRIVE credits pair programming from them, and our own repo is test data.
 - Fixture for working in parallel: `ingest/fixtures/sample_artifacts.json`.
