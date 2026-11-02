@@ -48,7 +48,9 @@ def generate_summary(user: User, team: Team, week_start: date) -> Summary:
                 text=claim.text,
                 category=claim.category,
                 artifact_ids=list(claim.artifact_ids),
-                requirement_ids=list(claim.requirement_ids),
+                # The validator can't check requirement numbers until US-14, and the flag
+                # rules weight requirement-tied claims, so none are saved until it can.
+                requirement_ids=[],
                 significance=claim.significance,
                 status=Claim.Status.VERIFIED if result.ok else Claim.Status.COULDNT_VERIFY,
                 validator_errors=[error.to_dict() for error in result.errors],

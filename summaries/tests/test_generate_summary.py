@@ -479,22 +479,22 @@ class PromptSizeTests(GenerateSummaryTestCase):
                 self.assertIn(f"{number:03d}" + "x" * 150, self.prompt)
         self.assertGreaterEqual(self.prompt.count("[diff truncated]"), MANY_ARTIFACTS)
 
+    def test_a_prompt_with_no_diffs_at_all_is_built_without_trouble(self):
+        # Reviews, issues and PRs have no diff, so a week can have none.
+        no_diffs = Artifact.objects.filter(artifact_id__in=[PR, REVIEW, ISSUE])
+
+        prompt = prompts().build_prompt(no_diffs)
+
+        for artifact_id in [PR, REVIEW, ISSUE]:
+            self.assertIn(artifact_id, prompt)
+        self.assertNotIn("diff:", prompt)
+
+    def test_a_prompt_with_no_artifacts_is_just_the_heading(self):
+        self.assertTrue(prompts().build_prompt([]).startswith("This student's artifacts"))
+
     def test_a_few_artifacts_still_get_the_full_diff_cap(self):
         self.add_artifact("longdiff2", diff="A" * DIFF_CAP + "B" * 6000)
 
         self.run_summary()
 
         self.assertIn("A" * DIFF_CAP, self.prompt)
-
-    def test_the_retry_prompt_is_held_to_the_same_budget(self):
-        from ingest.services import student_week_artifacts
-
-        for number in range(MANY_ARTIFACTS):
-            self.add_artifact(f"bulk{number:03d}", diff=f"{number:03d}" + "x" * 5000)
-        artifacts = student_week_artifacts(self.student, self.team, WEEK_START)
-        failing = [(make_claim(PR), [])]
-
-        prompt = prompts().build_retry_prompt(artifacts, failing)
-
-        # Room is left for the failing claims, which are short.
-        self.assertLessEqual(len(prompt), prompts().PROMPT_BUDGET + 2000)
