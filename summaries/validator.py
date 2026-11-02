@@ -1,0 +1,123 @@
+"""The validator: checks every claim against the GitHub data stored for a team.
+
+Plain Python with no LLM calls. For each artifact a claim cites it checks that the ID is
+well formed, that the artifact is in one of the team's repos, that it falls inside the
+reporting week, and that the student is its author or co-author (for a review, the
+author is the reviewer). A claim fails if any citation fails, and every problem is
+reported so the LLM can fix them all in one retry.
+
+Requirement numbers are not checked here (US-14).
+"""
+
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from ingest.models import ARTIFACT_ID_PATTERN, Artifact
+
+REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
+MONDAY = 0  # date.weekday() counts from Monday.
+
+MALFORMED_ID = "malformed_id"
+ARTIFACT_NOT_FOUND = "artifact_not_found"
+OUTSIDE_WEEK = "outside_week"
+NOT_CONTRIBUTOR = "not_contributor"
+
+_ARTIFACT_ID_RE = re.compile(ARTIFACT_ID_PATTERN)
+
+
+@dataclass(frozen=True)
+class ClaimError:
+    """One problem with one citation, in a form that can be stored and sent to the LLM."""
+
+    claim_index: int
+    artifact_id: str
+    check: str
+    message: str
+
+    def to_dict(self):
+        return {
+            "claim_index": self.claim_index,
+            "artifact_id": self.artifact_id,
+            "check": self.check,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class ClaimResult:
+    claim_index: int
+    errors: list[ClaimError] = field(default_factory=list)
+
+    @property
+    def ok(self):
+        return not self.errors
+
+
+def validate_claims(claims, user, team, week_start: date) -> list[ClaimResult]:
+    """Check each claim for `user` and `team` in the week starting on `week_start`.
+
+    Returns one result per claim, in order. Raises ValueError if `week_start` isn't a
+    Monday, because the week would otherwise quietly cover the wrong seven days.
+    """
+    if week_start.weekday() != MONDAY:
+        raise ValueError(f"The reporting week must start on a Monday, not {week_start.isoformat()}.")
+    week = _Week(week_start)
+    login = user.github_login.lower()
+    return [
+        ClaimResult(index, _validate_claim(index, claim, team, login, week))
+        for index, claim in enumerate(claims)
+    ]
+
+
+class _Week:
+    """Monday 00:00 to the next Monday 00:00 in New York, so Sunday night is included."""
+
+    def __init__(self, week_start: date):
+        self.first_day = week_start
+        self.last_day = week_start + timedelta(days=6)
+        self.start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
+        self.end = datetime.combine(
+            week_start + timedelta(days=7), time.min, tzinfo=REPORTING_TIME_ZONE
+        )
+
+    def contains(self, moment: datetime) -> bool:
+        return self.start <= moment < self.end
+
+
+def _validate_claim(index, claim, team, login, week):
+    errors = []
+    for artifact_id in claim.artifact_ids:
+        errors.extend(_validate_citation(index, artifact_id, team, login, week))
+    return errors
+
+
+def _validate_citation(index, artifact_id, team, login, week):
+    def error(check, message):
+        return ClaimError(index, artifact_id, check, message)
+
+    if not _ARTIFACT_ID_RE.match(artifact_id):
+        return [error(MALFORMED_ID, f"{artifact_id!r} isn't in the format owner/repo:type:id.")]
+
+    # Looked up within the team: an artifact in another team's repo doesn't count.
+    artifact = Artifact.objects.filter(repo__team=team, artifact_id=artifact_id).first()
+    if artifact is None:
+        return [error(ARTIFACT_NOT_FOUND, f"{artifact_id} isn't in any of this team's repos.")]
+
+    errors = []
+    when = artifact.timestamp.astimezone(REPORTING_TIME_ZONE)
+    if not week.contains(when):
+        errors.append(
+            error(
+                OUTSIDE_WEEK,
+                f"{artifact_id} is dated {when.date().isoformat()}, outside the reporting "
+                f"week {week.first_day.isoformat()} to {week.last_day.isoformat()}.",
+            )
+        )
+    credited = {artifact.author_login.lower(), *(c.lower() for c in artifact.co_author_logins)}
+    if login not in credited:
+        errors.append(
+            error(NOT_CONTRIBUTOR, f"The student isn't the author or a co-author of {artifact_id}.")
+        )
+    return errors
