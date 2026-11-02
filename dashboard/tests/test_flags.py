@@ -137,7 +137,7 @@ class ComputeFlagsTests(TestCase):
 
         self.assertEqual(list(inspect.signature(contract).parameters), ["team"])
 
-    def test_returns_no_flags_until_rules_exist(self):
+    def test_returns_no_flags_for_a_team_with_no_activity(self):
         team = make_team()
 
         self.assertEqual(compute_flags(team), [])
