@@ -46,13 +46,16 @@ These are the interfaces between people. Changing them silently breaks someone e
    "significance": "minor" | "moderate" | "major"}
   ```
   - `artifact_ids` use the format `owner/repo:type:id`, such as `acme/app:pr:12`, so they stay unique across a team's repos.
+  - `Artifact.artifact_id` is unique per `Repo`, not globally: a later project reusing a GitHub repo has its own `Repo` row and copies. Always look IDs up within the team: `Artifact.objects.filter(repo__team=team, artifact_id=...)`.
   - `requirement_ids` hold `Requirement.number`, not the database ID.
-- **Reporting week:** Monday-Sunday inclusive, in `America/New_York`. Ingest and the validator must use the same date for each artifact:
+- **Reporting week:** Monday-Sunday inclusive, in `America/New_York`. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
   - Commit: author date
   - PR: merged date, or created date if unmerged
   - Review: submitted date
   - Issue: created date
 - **`Requirement` model** in `core/`: `project`, `number`, `text`
+- **`Repo.full_name`** in `core/` is `owner/repo`, required and unique per team. An artifact's ID must start with its repo's `full_name`. Only repo setup (US-1) reads `Repo.url` to fill this in; everything else uses `full_name`.
+- **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field.
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
   - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`
