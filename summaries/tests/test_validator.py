@@ -17,7 +17,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
-from core.models import Repo, Team
+from core.models import Project, Repo, Requirement, Team
 from ingest.models import Artifact
 from summaries.schemas import Claim
 
@@ -322,3 +322,102 @@ class WeekStartTests(ValidatorTestCase):
     def test_a_non_monday_is_rejected_even_when_there_are_no_claims(self):
         with self.assertRaises(ValueError):
             validate([], self.student, self.team, date(2026, 10, 28))
+
+
+class RequirementTests(ValidatorTestCase):
+    """A claim fails if it cites a requirement number its team's project doesn't have.
+
+    Requirement numbers are Requirement.number, not the database ID. The sample
+    fixture's project has requirements 1 and 2.
+    """
+
+    def requirement_result(self, requirement_ids, *artifact_ids):
+        claim = Claim(
+            text="Worked on the task list.",
+            category="feature",
+            artifact_ids=list(artifact_ids) or [PR],
+            requirement_ids=requirement_ids,
+            significance="minor",
+        )
+        return validate([claim], self.student, self.team)[0]
+
+    def test_numbers_the_project_has_pass(self):
+        self.assertTrue(self.requirement_result([1, 2]).ok)
+
+    def test_a_claim_tied_to_no_requirement_passes(self):
+        self.assertTrue(self.requirement_result([]).ok)
+
+    def test_a_number_the_project_does_not_have_fails(self):
+        result = self.requirement_result([99])
+
+        self.assertFalse(result.ok)
+        self.assertEqual(self.checks_of(result), ["unknown_requirement"])
+
+    def test_the_error_names_the_claim_and_the_requirement_number(self):
+        error = self.requirement_result([99]).errors[0]
+
+        self.assertEqual(error.claim_index, 0)
+        self.assertEqual(error.requirement_id, 99)
+        self.assertEqual(error.artifact_id, "")  # It's about a requirement, not an artifact.
+        self.assertIn("99", error.message)
+
+    def test_the_error_becomes_a_dict_that_includes_the_requirement_number(self):
+        error = self.requirement_result([99]).errors[0]
+
+        self.assertEqual(
+            error.to_dict(),
+            {
+                "claim_index": 0,
+                "artifact_id": "",
+                "check": "unknown_requirement",
+                "message": error.message,
+                "requirement_id": 99,
+            },
+        )
+
+    def test_an_artifact_error_still_has_no_requirement_number_in_its_dict(self):
+        # Errors saved before requirements were checked keep exactly their old shape.
+        error = self.check(MISSING).errors[0]
+
+        self.assertNotIn("requirement_id", error.to_dict())
+
+    def test_every_unknown_number_is_reported(self):
+        result = self.requirement_result([98, 99, 1])
+
+        self.assertEqual({error.requirement_id for error in result.errors}, {98, 99})
+
+    def test_only_the_unknown_numbers_are_reported_when_some_are_fine(self):
+        result = self.requirement_result([1, 99])
+
+        self.assertEqual([error.requirement_id for error in result.errors], [99])
+
+    def test_another_projects_requirement_does_not_count(self):
+        other = Project.objects.create(course=self.team.project.course, name="Other project")
+        Requirement.objects.create(project=other, number=7, text="Belongs to another project.")
+
+        self.assertEqual(self.checks_of(self.requirement_result([7])), ["unknown_requirement"])
+
+    def test_numbers_are_matched_by_requirement_number_not_database_id(self):
+        requirement = Requirement.objects.create(
+            project=self.team.project, number=5, text="Users can delete a task."
+        )
+        self.assertNotIn(requirement.pk, {1, 2, 5})  # So the two can't be confused.
+
+        self.assertTrue(self.requirement_result([5]).ok)
+        self.assertEqual(self.checks_of(self.requirement_result([requirement.pk])), ["unknown_requirement"])
+
+    def test_a_requirement_error_and_an_artifact_error_are_both_reported(self):
+        result = self.requirement_result([99], STUDENT_B_PR)
+
+        self.assertCountEqual(self.checks_of(result), ["not_contributor", "unknown_requirement"])
+
+    def test_a_project_with_no_requirements_accepts_only_an_empty_list(self):
+        Requirement.objects.filter(project=self.team.project).delete()
+
+        self.assertTrue(self.requirement_result([]).ok)
+        self.assertEqual(self.checks_of(self.requirement_result([1])), ["unknown_requirement"])
+
+    def test_a_valid_claim_with_an_unknown_requirement_still_fails(self):
+        # The artifact is fine, but a claim is only as good as everything it says.
+        self.assertTrue(self.check(PR).ok)
+        self.assertFalse(self.requirement_result([99], PR).ok)
