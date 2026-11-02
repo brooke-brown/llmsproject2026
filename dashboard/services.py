@@ -1,14 +1,21 @@
 from datetime import timedelta
 
 from django.core.exceptions import PermissionDenied
-from django.db.models import Prefetch
+from django.db.models import Case, Exists, OuterRef, Prefetch, Value, When
 from django.shortcuts import get_object_or_404
 
 from core.models import Course, Enrollment, Team, TeamMembership
 from ingest.models import Artifact
 from summaries.models import Claim, Summary
 
+from .models import Flag
+
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
+
+
+def flags_in_display_order():
+    # "flag" sorts before "warning", so flags come first.
+    return Flag.objects.order_by("severity", "id")
 
 
 def staff_courses(user):
@@ -80,22 +87,55 @@ def team_repos(team):
     return team.repos.order_by("full_name")
 
 
+def team_wide_flags(team):
+    """The team's flags that aren't about one student."""
+    return flags_in_display_order().filter(team=team, user=None)
+
+
 def team_memberships_with_summaries(team):
-    """The team's memberships, each user with `team_summaries` for this team, newest first."""
+    """The team's memberships, each user with this team's `team_summaries`, newest first,
+    and `team_flags` about them."""
     summaries = Summary.objects.filter(team=team).order_by("-week_start")
     return (
         team.memberships.select_related("user")
         .order_by("user__last_name", "user__first_name", "user__github_login")
-        .prefetch_related(Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"))
+        .prefetch_related(
+            Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"),
+            Prefetch(
+                "user__flags",
+                queryset=flags_in_display_order().filter(team=team),
+                to_attr="team_flags",
+            ),
+        )
     )
+
+
+def _has_flag(severity):
+    """True for a team with at least one flag of this severity, inside a Team query."""
+    return Exists(Flag.objects.filter(team=OuterRef("pk"), severity=severity))
 
 
 def course_projects_with_teams(course):
-    """The course's projects, each with its teams and their students prefetched."""
+    """The course's projects, each with its teams, their students and their flags.
+
+    Within a project, flagged teams come first, then warned teams, then the rest, each
+    group sorted by name.
+    """
     memberships = TeamMembership.objects.select_related("user").order_by(
         "user__last_name", "user__first_name", "user__github_login"
     )
-    teams = Team.objects.order_by("name").prefetch_related(
-        Prefetch("memberships", queryset=memberships)
+    teams = (
+        Team.objects.annotate(
+            flag_rank=Case(
+                When(_has_flag(Flag.Severity.FLAG), then=Value(0)),
+                When(_has_flag(Flag.Severity.WARNING), then=Value(1)),
+                default=Value(2),
+            )
+        )
+        .order_by("flag_rank", "name")
+        .prefetch_related(
+            Prefetch("memberships", queryset=memberships),
+            Prefetch("flags", queryset=flags_in_display_order()),
+        )
     )
     return course.projects.order_by("id").prefetch_related(Prefetch("teams", queryset=teams))
