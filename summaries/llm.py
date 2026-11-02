@@ -16,8 +16,11 @@ from pydantic import BaseModel, ValidationError
 from summaries.schemas import Claim
 
 DEFAULT_MODEL = "claude-opus-5-5"
-MAX_TOKENS = 16000
-TIMEOUT_SECONDS = 60
+# A summary's claims are short, so the reply is capped well below the model's maximum.
+# Together with the timeout and no automatic retries, that bounds how long one call can
+# take: at most TIMEOUT_SECONDS. generate_summary may make up to 3 calls.
+MAX_TOKENS = 8000
+TIMEOUT_SECONDS = 120
 
 
 class LLMError(Exception):
@@ -78,7 +81,8 @@ def _build_client():
     api_key = os.environ.get("LLM_API_KEY", "").strip()
     if not api_key:
         raise LLMError("LLM_API_KEY isn't set. Add it to the environment (see .env.example).")
-    return anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_SECONDS)
+    # No automatic retries: the SDK's would triple the wait. A failure raises LLMError.
+    return anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_SECONDS, max_retries=0)
 
 
 def _model():

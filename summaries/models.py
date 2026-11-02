@@ -18,6 +18,9 @@ class Summary(models.Model):
     )
     # The Monday that starts the reporting week (Monday-Sunday, America/New_York).
     week_start = models.DateField()
+    # How many artifacts the student had that week, so a page can tell "no activity"
+    # apart from "every claim was dropped".
+    artifact_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
