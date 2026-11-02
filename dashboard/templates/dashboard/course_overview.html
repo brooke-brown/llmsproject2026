@@ -10,6 +10,9 @@
   {% for team in project.teams.all %}
   <article>
     <header><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></header>
+    {% for flag in team.flags.all %}
+    <p><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
+    {% endfor %}
     <ul>
       {% for membership in team.memberships.all %}
       <li>{{ membership.user.get_full_name|default:membership.user.github_login }} (<code>{{ membership.user.github_login }}</code>)</li>

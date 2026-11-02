@@ -30,6 +30,7 @@ def team(request, team_id):
         {
             "team": team,
             "repos": services.team_repos(team),
+            "team_flags": services.team_wide_flags(team),
             "memberships": services.team_memberships_with_summaries(team),
         },
     )
