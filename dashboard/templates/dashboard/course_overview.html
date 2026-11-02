@@ -1,0 +1,28 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}{{ course.name }} · STRIVE{% endblock %}
+
+{% block content %}
+<h1>{{ course.name }}</h1>
+{% for project in projects %}
+<section>
+  <h2>{{ project.name }}</h2>
+  {% for team in project.teams.all %}
+  <article>
+    <header><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></header>
+    <ul>
+      {% for membership in team.memberships.all %}
+      <li>{{ membership.user.get_full_name|default:membership.user.github_login }} (<code>{{ membership.user.github_login }}</code>)</li>
+      {% empty %}
+      <li>No students on this team yet.</li>
+      {% endfor %}
+    </ul>
+  </article>
+  {% empty %}
+  <p>No teams in this project yet.</p>
+  {% endfor %}
+</section>
+{% empty %}
+<p>No projects in this course yet.</p>
+{% endfor %}
+{% endblock %}

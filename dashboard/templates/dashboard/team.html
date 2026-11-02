@@ -1,0 +1,10 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}{{ team.name }} · STRIVE{% endblock %}
+
+{% block content %}
+{# Placeholder until the team page story lands. #}
+<p><a href="{% url 'dashboard:course_overview' team.project.course.id %}">{{ team.project.course.name }}</a> › {{ team.project.name }}</p>
+<h1>{{ team.name }}</h1>
+<p>The team page is coming soon.</p>
+{% endblock %}

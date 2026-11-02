@@ -2,4 +2,14 @@
 
 {% block content %}
 <h1>Dashboard</h1>
+{% if courses %}
+<p>Choose a course:</p>
+<ul>
+  {% for course in courses %}
+  <li><a href="{% url 'dashboard:course_overview' course.id %}">{{ course.name }}</a></li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>You aren't an instructor or TA in any course yet.</p>
+{% endif %}
 {% endblock %}
