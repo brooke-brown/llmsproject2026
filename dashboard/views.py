@@ -24,4 +24,18 @@ def course_overview(request, course_id):
 @login_required
 def team(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
-    return render(request, "dashboard/team.html", {"team": team})
+    return render(
+        request,
+        "dashboard/team.html",
+        {
+            "team": team,
+            "repos": services.team_repos(team),
+            "memberships": services.team_memberships_with_summaries(team),
+        },
+    )
+
+
+@login_required
+def summary(request, summary_id):
+    summary = services.get_summary_for_staff(request.user, summary_id)
+    return render(request, "dashboard/summary.html", {"summary": summary})
