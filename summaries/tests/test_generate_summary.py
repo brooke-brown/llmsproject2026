@@ -16,7 +16,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
-from core.models import Repo, Team
+from core.models import Project, Repo, Requirement, Team
 from ingest.models import Artifact
 from summaries.llm import LLMError
 from summaries.models import Claim as ClaimRow
@@ -287,10 +287,14 @@ class SystemPromptTests(GenerateSummaryTestCase):
         self.assertIn("significance", text)
         self.assertIn("lines", text)  # ...not by lines changed.
 
-    def test_tells_the_llm_to_leave_requirement_ids_empty_for_now(self):
+    def test_tells_the_llm_what_to_put_in_requirement_ids(self):
         self.run_summary()
 
+        text = self.system_prompt.lower()
         self.assertIn("requirement_ids", self.system_prompt)
+        self.assertIn("using only the numbers", text)  # From the project's own list.
+        self.assertIn("empty list", text)  # When the work advances none.
+        self.assertNotIn("always set requirement_ids to an empty list", text)
 
 
 class NoActivityTests(GenerateSummaryTestCase):
@@ -389,36 +393,59 @@ class RegenerationTests(GenerateSummaryTestCase):
 
 
 class RequirementIdsTests(GenerateSummaryTestCase):
-    """Requirement numbers can't be checked until US-14, so none are saved yet.
+    """Requirement numbers are checked by the validator, so verified claims keep them.
 
-    The flag rules weight requirement-tied claims, so a number the validator never
-    checked must not reach a verified claim.
+    The sample fixture's project has requirements 1 and 2.
     """
 
-    def claim_with_requirements(self, artifact_id):
+    def claim_with_requirements(self, artifact_id, requirement_ids):
         return Claim(
             text="Built the task form.",
             category="feature",
             artifact_ids=[artifact_id],
-            requirement_ids=[3, 99],
+            requirement_ids=requirement_ids,
             significance="minor",
         )
 
-    def test_a_verified_claim_is_saved_without_requirement_ids(self):
-        self.llm.return_value = [self.claim_with_requirements(PR)]
+    def test_a_verified_claim_keeps_its_requirement_ids(self):
+        self.llm.return_value = [self.claim_with_requirements(PR, [1, 2])]
+
+        claim = self.run_summary().claims.get()
+
+        self.assertEqual(claim.status, "verified")
+        self.assertEqual(claim.requirement_ids, [1, 2])
+
+    def test_a_claim_tied_to_no_requirement_is_verified_with_an_empty_list(self):
+        self.llm.return_value = [self.claim_with_requirements(PR, [])]
 
         claim = self.run_summary().claims.get()
 
         self.assertEqual(claim.status, "verified")
         self.assertEqual(claim.requirement_ids, [])
 
-    def test_a_claim_that_could_not_be_verified_is_saved_without_them_too(self):
-        self.llm.return_value = [self.claim_with_requirements(STUDENT_B_PR)]
+    def test_a_claim_with_an_unknown_requirement_is_not_verified(self):
+        self.llm.return_value = [self.claim_with_requirements(PR, [1, 99])]
 
         claim = self.run_summary().claims.get()
 
         self.assertEqual(claim.status, "couldnt_verify")
-        self.assertEqual(claim.requirement_ids, [])
+        self.assertEqual([error["check"] for error in claim.validator_errors], ["unknown_requirement"])
+        self.assertEqual(claim.validator_errors[0]["requirement_id"], 99)
+
+    def test_a_claim_that_could_not_be_verified_keeps_the_numbers_as_written(self):
+        # Like its artifact_ids, so the admin shows what was wrong.
+        self.llm.return_value = [self.claim_with_requirements(PR, [1, 99])]
+
+        self.assertEqual(self.run_summary().claims.get().requirement_ids, [1, 99])
+
+    def test_a_project_with_no_requirements_still_gets_summaries(self):
+        Requirement.objects.filter(project=self.team.project).delete()
+        self.llm.return_value = [self.claim_with_requirements(PR, [])]
+
+        summary = self.run_summary()
+
+        self.assertEqual(summary.claims.get().status, "verified")
+        self.assertEqual(summary.claims.get().requirement_ids, [])
 
 
 def prompts():
@@ -489,8 +516,11 @@ class PromptSizeTests(GenerateSummaryTestCase):
             self.assertIn(artifact_id, prompt)
         self.assertNotIn("diff:", prompt)
 
-    def test_a_prompt_with_no_artifacts_is_just_the_heading(self):
-        self.assertTrue(prompts().build_prompt([]).startswith("This student's artifacts"))
+    def test_a_prompt_with_no_artifacts_has_the_heading_and_no_artifact_blocks(self):
+        prompt = prompts().build_prompt([])
+
+        self.assertIn("This student's artifacts for the week:", prompt)
+        self.assertNotIn("artifact ID:", prompt)
 
     def test_a_few_artifacts_still_get_the_full_diff_cap(self):
         self.add_artifact("longdiff2", diff="A" * DIFF_CAP + "B" * 6000)
@@ -498,3 +528,55 @@ class PromptSizeTests(GenerateSummaryTestCase):
         self.run_summary()
 
         self.assertIn("A" * DIFF_CAP, self.prompt)
+
+
+class RequirementPromptTests(GenerateSummaryTestCase):
+    """The prompt lists the project's requirements, so the LLM can tie claims to them."""
+
+    def test_the_prompt_lists_the_projects_requirements_by_number(self):
+        self.run_summary()
+
+        self.assertIn("1. Users can add a task to a shared list.", self.prompt)
+        self.assertIn("2. Users can mark a task as done.", self.prompt)
+
+    def test_requirements_are_listed_in_number_order(self):
+        Requirement.objects.create(project=self.team.project, number=3, text="Third one.")
+
+        self.run_summary()
+
+        self.assertLess(self.prompt.index("1. Users can add"), self.prompt.index("2. Users can mark"))
+        self.assertLess(self.prompt.index("2. Users can mark"), self.prompt.index("3. Third one."))
+
+    def test_another_projects_requirements_are_not_in_the_prompt(self):
+        other = Project.objects.create(course=self.team.project.course, name="Other project")
+        Requirement.objects.create(project=other, number=7, text="OTHER-PROJECT-REQUIREMENT")
+
+        self.run_summary()
+
+        self.assertNotIn("OTHER-PROJECT-REQUIREMENT", self.prompt)
+
+    def test_a_project_with_no_requirements_says_so(self):
+        Requirement.objects.filter(project=self.team.project).delete()
+
+        self.run_summary()
+
+        self.assertIn("has no requirements", self.prompt)
+
+    def test_a_project_with_requirements_does_not_say_it_has_none(self):
+        self.run_summary()
+
+        self.assertNotIn("has no requirements", self.prompt)
+
+    def test_a_long_requirement_is_cut_to_the_cap_and_marked(self):
+        Requirement.objects.create(project=self.team.project, number=3, text="R" * 1500)
+
+        self.run_summary()
+
+        self.assertIn("R" * 1000, self.prompt)
+        self.assertNotIn("R" * 1001, self.prompt)
+        self.assertIn("requirement truncated", self.prompt)
+
+    def test_a_short_requirement_is_not_marked_as_truncated(self):
+        self.run_summary()
+
+        self.assertNotIn("requirement truncated", self.prompt)

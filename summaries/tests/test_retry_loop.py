@@ -379,3 +379,55 @@ class RetryPromptSizeTests(RetryTestCase):
 
         # The failing claims are short, so they add little beyond the artifact list.
         self.assertLessEqual(len(prompt), prompts.PROMPT_BUDGET + 2000)
+
+
+class RequirementRetryTests(RetryTestCase):
+    """An unknown requirement is an ordinary failure, so the loop already retries it."""
+
+    def with_requirements(self, requirement_ids, text="Built the task form.", artifact=PR):
+        from summaries.schemas import Claim
+
+        return Claim(
+            text=text,
+            category="feature",
+            artifact_ids=[artifact],
+            requirement_ids=requirement_ids,
+            significance="minor",
+        )
+
+    def test_the_retry_prompt_lists_the_projects_requirements(self):
+        self.replies([bad()], [good(FIXED, COMMIT)])
+
+        self.run_summary()
+
+        self.assertIn("1. Users can add a task to a shared list.", self.prompt_of(1))
+
+    def test_an_unknown_requirement_and_its_error_go_back_to_the_llm(self):
+        self.replies([self.with_requirements([99])], [self.with_requirements([1], FIXED)])
+
+        self.run_summary()
+
+        self.assertEqual(self.llm.call_count, 2)
+        self.assertIn("unknown_requirement", self.prompt_of(1))
+        self.assertIn("99", self.prompt_of(1))
+
+    def test_a_claim_fixed_on_retry_is_saved_verified_with_its_requirement_numbers(self):
+        self.replies([self.with_requirements([99])], [self.with_requirements([1, 2], FIXED)])
+
+        self.run_summary()
+
+        claim = self.saved()[0]
+        self.assertEqual((claim.status, claim.text, claim.requirement_ids), ("verified", FIXED, [1, 2]))
+
+    def test_a_claim_that_keeps_citing_an_unknown_requirement_is_dropped(self):
+        self.replies(
+            [self.with_requirements([99])],
+            [self.with_requirements([98], "Try 2.")],
+            [self.with_requirements([97], "Try 3.")],
+        )
+
+        summary = self.run_summary()
+
+        self.assertEqual(self.llm.call_count, 3)
+        self.assertEqual(summary.unverified_count, 1)
+        self.assertEqual(self.saved()[0].validator_errors[0]["requirement_id"], 97)

@@ -6,7 +6,8 @@ reporting week, and that the student is its author or co-author (for a review, t
 author is the reviewer). A claim fails if any citation fails, and every problem is
 reported so the LLM can fix them all in one retry.
 
-Requirement numbers are not checked here (US-14).
+It also checks that every requirement number a claim cites exists in the team's project
+(Requirement.number, not the database ID).
 """
 
 import re
@@ -14,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from core.models import Requirement
 from ingest.models import ARTIFACT_ID_PATTERN, Artifact
 
 REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
@@ -23,6 +25,7 @@ MALFORMED_ID = "malformed_id"
 ARTIFACT_NOT_FOUND = "artifact_not_found"
 OUTSIDE_WEEK = "outside_week"
 NOT_CONTRIBUTOR = "not_contributor"
+UNKNOWN_REQUIREMENT = "unknown_requirement"
 
 _ARTIFACT_ID_RE = re.compile(ARTIFACT_ID_PATTERN)
 
@@ -32,17 +35,22 @@ class ClaimError:
     """One problem with one citation, in a form that can be stored and sent to the LLM."""
 
     claim_index: int
-    artifact_id: str
+    artifact_id: str  # Empty for an error about a requirement, which has no artifact.
     check: str
     message: str
+    requirement_id: int | None = None  # Set only for an unknown_requirement error.
 
     def to_dict(self):
-        return {
+        data = {
             "claim_index": self.claim_index,
             "artifact_id": self.artifact_id,
             "check": self.check,
             "message": self.message,
         }
+        # Left out when unset, so an artifact error keeps exactly its old shape.
+        if self.requirement_id is not None:
+            data["requirement_id"] = self.requirement_id
+        return data
 
 
 @dataclass(frozen=True)
@@ -65,8 +73,12 @@ def validate_claims(claims, user, team, week_start: date) -> list[ClaimResult]:
         raise ValueError(f"The reporting week must start on a Monday, not {week_start.isoformat()}.")
     week = _Week(week_start)
     login = user.github_login.lower()
+    # Looked up once for the whole list, from the team's project.
+    requirement_numbers = set(
+        Requirement.objects.filter(project=team.project_id).values_list("number", flat=True)
+    )
     return [
-        ClaimResult(index, _validate_claim(index, claim, team, login, week))
+        ClaimResult(index, _validate_claim(index, claim, team, login, week, requirement_numbers))
         for index, claim in enumerate(claims)
     ]
 
@@ -86,10 +98,22 @@ class _Week:
         return self.start <= moment < self.end
 
 
-def _validate_claim(index, claim, team, login, week):
+def _validate_claim(index, claim, team, login, week, requirement_numbers):
     errors = []
     for artifact_id in claim.artifact_ids:
         errors.extend(_validate_citation(index, artifact_id, team, login, week))
+    # Each unknown number once, even if the claim repeats it.
+    for number in dict.fromkeys(claim.requirement_ids):
+        if number not in requirement_numbers:
+            errors.append(
+                ClaimError(
+                    index,
+                    "",
+                    UNKNOWN_REQUIREMENT,
+                    f"Requirement {number} doesn't exist in this project.",
+                    requirement_id=number,
+                )
+            )
     return errors
 
 
