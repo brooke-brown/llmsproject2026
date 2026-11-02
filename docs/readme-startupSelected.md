@@ -16,9 +16,9 @@ STRIVE produces a per-student contribution summary in which **every claim links 
 | Component | Our familiarity |
 |---|---|
 | Git and GitHub (commits, PRs, reviews, issues) | We use these every day in our coursework |
-| GitHub REST API, authenticated via OAuth or a per-repo access token | Well-documented; quick to learn |
-| Backend in Python and a relational database | Covered in our coursework and side projects; exact web framework/ORM still being decided by the group |
-| Web dashboard (login routes to instructor view or student view) | Standard web development |
+| GitHub REST API through PyGithub, authenticated with an access token | Well-documented; quick to learn |
+| Backend in Python 3.12 and Django, with SQLite locally | Covered in our coursework and side projects |
+| Web dashboard (server-rendered Django templates, Pico.css) | Standard web development |
 | LLM API with structured (JSON) output | Learnable in days; there are many examples |
 | Requirements/rubric PDF parsing | New to us, but a narrow, well-documented task |
  
@@ -62,7 +62,7 @@ For each claim, code checks the following against the GitHub data we already pul
 - every cited SHA, PR, issue or review ID exists in this team's repo;
 - the cited artifact falls inside the reporting week;
 - the student is the author, co-author or reviewer of every cited artifact;
-- any numbers in the text ("added 12 tests") match the actual diff.
+- any numbers in the text ("added 12 tests") match the actual diff (after the alpha).
 
 ### Self-Correction Loop: Validation errors must automatically feed back into the LLM to retry/correct.
  
@@ -110,6 +110,6 @@ def summarize_week(evidence, max_attempts=3):
  
 **Yes** Every piece is standard and inexpensive:
  
-- **App:** a web app, not a GitHub App. The instructor connects each team's repo(s) individually (OAuth or a per-repo access token), and STRIVE pulls commits, PRs, reviews and issues over the GitHub REST/GraphQL API.
+- **App:** a Django web app, not a GitHub App. Each team's repo(s) are connected individually by URL and access token (GitHub OAuth comes after the alpha), and STRIVE pulls commits, PRs, reviews and issues over the GitHub REST API using PyGithub.
 - **LLM cost (rough estimate):** a 4-person team might produce ~40 commits a week at ~2,000 tokens of diff each, which is ~80k input tokens per team per week. For 20 teams that's ~1.6M tokens a week, a few dollars at small-model API prices.
 - **Rate limits:** a weekly batch over a few dozen repos stays well within GitHub's API limits.

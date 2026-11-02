@@ -8,7 +8,7 @@ Welcome to our team's repository for **CS4501** (Fall 2026). This is where every
 |---|---|
 | [`docs/`](docs/) | [`readme-startupSelected.md`](docs/readme-startupSelected.md) — the STRIVE pitch we're building, plus design notes and architecture |
 | [`directions/`](directions/) | Archive of the startup ideas we considered and **did not** pick|
-| `app/` *(coming soon)* | Source code for our final product |
+| `core/`, `ingest/`, `summaries/`, `dashboard/` *(coming soon)* | Django apps for our final product |
 
 ## 👥 Group Members
 
