@@ -1,8 +1,10 @@
 """Tests for the admin pages of Summary, Claim and ValidationRun.
 
 The admin is for debugging and spot checks, not editing: everything is read-only, so
-nobody can change claim text that has already passed the validator. Deleting is still
-allowed, so a bad test summary can be cleared.
+nobody can change claim text that has already passed the validator. Only a whole summary
+can be deleted, which removes its claims and logs together. A single claim or run can't
+be: deleting a claim would silently change a validated summary's "N couldn't be verified"
+note, and deleting a run would change the first-pass and drop-rate metrics.
 
 The helpers that build summaries, claims and runs are the ones the model tests use.
 """
@@ -101,6 +103,57 @@ class ReadOnlyTests(AdminTestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Summary.objects.filter(pk=self.summary.pk).exists())
+
+
+class DeleteTests(AdminTestCase):
+    """Only a summary can be deleted, because it removes its claims and logs together."""
+
+    def test_a_single_claim_or_run_cannot_be_deleted(self):
+        for name in ["claim", "validationrun"]:
+            obj = self.objects[name]
+            with self.subTest(model=name, step="page"):
+                self.assertEqual(
+                    self.client.get(admin_url(name, "delete", obj.pk)).status_code, 403
+                )
+            with self.subTest(model=name, step="post"):
+                response = self.client.post(admin_url(name, "delete", obj.pk), {"post": "yes"})
+
+                self.assertEqual(response.status_code, 403)
+                self.assertTrue(type(obj).objects.filter(pk=obj.pk).exists())
+
+    def test_the_bulk_delete_action_is_not_offered_for_claims_or_runs(self):
+        for name in ["claim", "validationrun"]:
+            with self.subTest(model=name):
+                response = self.client.get(admin_url(name, "changelist"))
+
+                self.assertNotContains(response, "Delete selected")
+
+    def test_a_bulk_delete_request_for_claims_or_runs_deletes_nothing(self):
+        for name in ["claim", "validationrun"]:
+            obj = self.objects[name]
+            with self.subTest(model=name):
+                self.client.post(
+                    admin_url(name, "changelist"),
+                    {"action": "delete_selected", "_selected_action": [obj.pk], "post": "yes"},
+                )
+
+                self.assertTrue(type(obj).objects.filter(pk=obj.pk).exists())
+
+    def test_the_bulk_delete_action_is_still_offered_for_summaries(self):
+        response = self.client.get(admin_url("summary", "changelist"))
+
+        self.assertContains(response, "Delete selected")
+
+    def test_deleting_a_summary_removes_its_claims_and_runs_with_it(self):
+        self.client.post(admin_url("summary", "delete", self.summary.pk), {"post": "yes"})
+
+        self.assertEqual(Claim.objects.count(), 0)
+        self.assertEqual(ValidationRun.objects.count(), 0)
+
+    def test_claims_cannot_be_deleted_from_a_summarys_page_either(self):
+        response = self.client.get(admin_url("summary", "change", self.summary.pk))
+
+        self.assertNotContains(response, "inline-deletelink")
 
 
 class SummaryPageTests(AdminTestCase):
