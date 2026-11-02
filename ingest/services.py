@@ -1,10 +1,81 @@
-from datetime import date, datetime, time, timedelta
+import os
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from core.models import Team, User
+from github import Auth, Github
+
+from core.models import Repo, Team, User
 from ingest.models import Artifact
 
 REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
+MAX_DIFF_CHARS = 100_000
+
+
+def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
+    """Collects a repo's commits for a reporting week and returns all its artifacts for that week.
+
+    The week runs from the start of week_start through the end of week_end, in the
+    reporting time zone. Commits come from every branch, and merge commits are skipped.
+    """
+    start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
+    end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
+
+    github_repo = Github(auth=Auth.Token(os.environ["GITHUB_TOKEN"])).get_repo(repo.full_name)
+    for commit in _commits_authored_between(github_repo, start, end):
+        _save_commit(repo, commit)
+
+    return list(
+        Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end).order_by(
+            "timestamp", "pk"
+        )
+    )
+
+
+def _commits_authored_between(github_repo, start: datetime, end: datetime) -> list:
+    """The non-merge commits on any branch with an author date in [start, end)."""
+    # GitHub filters on committer date, which a rebase moves later than the author date.
+    # So `until` would lose rebased commits, and author dates are checked here instead.
+    # PyGithub labels `since` as UTC without converting it, so it must already be in UTC.
+    since = start.astimezone(timezone.utc)
+    commits_by_sha = {
+        commit.sha: commit
+        for branch in github_repo.get_branches()
+        for commit in github_repo.get_commits(sha=branch.name, since=since)
+    }
+    return [
+        commit
+        for commit in commits_by_sha.values()
+        if len(commit.parents) <= 1 and start <= commit.commit.author.date < end
+    ]
+
+
+def _save_commit(repo: Repo, commit) -> Artifact:
+    diff = _diff_text(commit)
+    git_author = commit.commit.author
+    artifact, _ = Artifact.objects.update_or_create(
+        repo=repo,
+        artifact_id=f"{repo.full_name}:commit:{commit.sha}",
+        defaults={
+            "type": Artifact.Type.COMMIT,
+            "url": commit.html_url,
+            "timestamp": git_author.date,
+            "title": commit.commit.message,
+            "author_login": commit.author.login if commit.author else "",
+            "git_author_name": git_author.name,
+            "git_author_email": git_author.email,
+            "diff": diff[:MAX_DIFF_CHARS],
+            "diff_truncated": len(diff) > MAX_DIFF_CHARS,
+        },
+    )
+    return artifact
+
+
+def _diff_text(commit) -> str:
+    # GitHub sends no patch for binary files, so those are listed by name only.
+    return "".join(
+        f"--- a/{file.filename}\n+++ b/{file.filename}\n{file.patch or ''}\n"
+        for file in commit.files
+    )
 
 
 def student_week_artifacts(user: User, team: Team, week_start: date) -> list[Artifact]:
