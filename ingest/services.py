@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -9,6 +10,14 @@ from ingest.models import Artifact
 
 REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
 MAX_DIFF_CHARS = 100_000
+# Matched against a whole line, so a mention inside a sentence isn't a trailer.
+CO_AUTHOR_TRAILER = re.compile(
+    r"co-authored-by:(?P<name>[^<>]*)<(?P<email>[^<>\s@]+@[^<>\s@]+)>\s*", re.IGNORECASE
+)
+# Both of GitHub's formats: 123+login@users.noreply.github.com and login@users.noreply.github.com.
+NOREPLY_EMAIL = re.compile(
+    r"(?:\d+\+)?(?P<login>[^@+]+)@users\.noreply\.github\.com", re.IGNORECASE
+)
 
 
 def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
@@ -16,13 +25,17 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
 
     The week runs from the start of week_start through the end of week_end, in the
     reporting time zone. Commits come from every branch, and merge commits are skipped.
+    Co-authors are matched against the students on the repo's team at the time of the run.
     """
     start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
     end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
 
     github_repo = Github(auth=Auth.Token(os.environ["GITHUB_TOKEN"])).get_repo(repo.full_name)
+    students = list(
+        User.objects.filter(team_memberships__team=repo.team).values_list("github_login", "email")
+    )
     for commit in _commits_authored_between(github_repo, start, end):
-        _save_commit(repo, commit)
+        _save_commit(repo, commit, students)
 
     return list(
         Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end).order_by(
@@ -49,9 +62,10 @@ def _commits_authored_between(github_repo, start: datetime, end: datetime) -> li
     ]
 
 
-def _save_commit(repo: Repo, commit) -> Artifact:
+def _save_commit(repo: Repo, commit, students: list[tuple[str, str]]) -> Artifact:
     diff = _diff_text(commit)
     git_author = commit.commit.author
+    co_author_logins, unmatched_co_authors = _match_co_authors(commit.commit.message, students)
     artifact, _ = Artifact.objects.update_or_create(
         repo=repo,
         artifact_id=f"{repo.full_name}:commit:{commit.sha}",
@@ -63,11 +77,48 @@ def _save_commit(repo: Repo, commit) -> Artifact:
             "author_login": commit.author.login if commit.author else "",
             "git_author_name": git_author.name,
             "git_author_email": git_author.email,
+            "co_author_logins": co_author_logins,
+            "unmatched_co_authors": unmatched_co_authors,
             "diff": diff[:MAX_DIFF_CHARS],
             "diff_truncated": len(diff) > MAX_DIFF_CHARS,
         },
     )
     return artifact
+
+
+def _match_co_authors(
+    message: str, students: list[tuple[str, str]]
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Splits a commit message's co-authors into student logins and records of everyone else.
+
+    `students` holds (github_login, email) pairs. Only emails are matched, never names.
+    A line that isn't a well-formed trailer is skipped, since it names no one to match.
+    """
+    logins = []
+    unmatched = []
+    seen_emails = set()
+    for line in message.splitlines():
+        trailer = CO_AUTHOR_TRAILER.fullmatch(line)
+        if trailer is None or trailer["email"].lower() in seen_emails:
+            continue
+        seen_emails.add(trailer["email"].lower())
+        login = _student_login(trailer["email"], students)
+        if login is None:
+            unmatched.append({"name": trailer["name"].strip(), "email": trailer["email"]})
+        elif login not in logins:
+            logins.append(login)
+    return logins, unmatched
+
+
+def _student_login(email: str, students: list[tuple[str, str]]) -> str | None:
+    """The login of the one student this email identifies, or None."""
+    noreply = NOREPLY_EMAIL.fullmatch(email)
+    if noreply:
+        matches = [login for login, _ in students if login.lower() == noreply["login"].lower()]
+    else:
+        # User.email isn't unique, so an address two teammates share identifies neither.
+        matches = [login for login, address in students if address.lower() == email.lower()]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _diff_text(commit) -> str:
