@@ -49,6 +49,36 @@ def build_prompt(artifacts) -> str:
     return intro + "\n\n".join(blocks)
 
 
+def build_retry_prompt(artifacts, failing) -> str:
+    """Ask for corrected versions of the claims that failed validation.
+
+    `failing` is a list of (claim, errors) pairs. The artifact list goes back too, so the
+    LLM still has the evidence in front of it.
+    """
+    blocks = [_failing_claim_block(number, claim, errors) for number, (claim, errors) in enumerate(failing, start=1)]
+    return (
+        build_prompt(artifacts)
+        + "\n\nThese claims from your earlier answer failed validation:\n\n"
+        + "\n\n".join(blocks)
+        + "\n\nReturn exactly one corrected claim for each claim above, in the same order. "
+        "Fix the citations or the wording. If no listed artifact supports a claim, replace it "
+        "with a claim that is supported."
+    )
+
+
+def _failing_claim_block(number, claim, errors) -> str:
+    lines = [
+        f"Claim {number}:",
+        f"text: {claim.text}",
+        f"category: {claim.category}",
+        f"significance: {claim.significance}",
+        f"artifact IDs: {', '.join(claim.artifact_ids)}",
+        "errors:",
+    ]
+    lines.extend(f"- {error.check}: {error.message}" for error in errors)
+    return "\n".join(lines)
+
+
 def _diff_cap(room: int, diffs: int) -> int:
     """How many characters of each diff fit in the room left once heads are written."""
     if not diffs:
