@@ -8,7 +8,7 @@ from ingest.models import Artifact
 from ingest.services import student_week_artifacts
 from summaries import schemas
 from summaries.llm import LLMError, generate_claims
-from summaries.models import Claim, Summary
+from summaries.models import Claim, Summary, ValidationRun
 from summaries.prompts import SYSTEM_PROMPT, build_prompt, build_retry_prompt
 from summaries.validator import ClaimResult, validate_claims
 
@@ -70,7 +70,7 @@ def generate_summary(user: User, team: Team, week_start: date) -> Summary:
     to the LLM, with its errors, for up to MAX_RETRIES retries. A claim that passes is
     saved as verified. One that still fails is saved as couldn't verify, with the
     validator's last errors, and is never shown. Regenerating a week reuses its Summary and
-    replaces its claims.
+    replaces its claims. Each call also saves one ValidationRun for the metrics.
 
     Raises ValueError for a week_start that isn't a Monday or a student who isn't on the
     team, and LLMError if the LLM can't give us claims. In each case nothing is saved, and
@@ -82,11 +82,12 @@ def generate_summary(user: User, team: Team, week_start: date) -> Summary:
         raise ValueError(f"{user.github_login} isn't on this team.")
 
     artifacts = student_week_artifacts(user, team, week_start)
-    claims, results = [], []
+    claims, results, retries, first_pass = [], [], 0, 0
     # With nothing to describe there's nothing to ask the LLM, so no call is made.
     if artifacts:
         outcome = generate_validated_claims(user, team, week_start, artifacts)
         claims, results = outcome.claims, outcome.results
+        retries, first_pass = outcome.retries, outcome.first_pass
 
     with transaction.atomic():
         summary, _ = Summary.objects.update_or_create(
@@ -114,4 +115,13 @@ def generate_summary(user: User, team: Team, week_start: date) -> Summary:
                 row.artifacts.set(
                     Artifact.objects.filter(repo__team=team, artifact_id__in=claim.artifact_ids)
                 )
+        # Saved with the summary, so the log never says something the database doesn't.
+        # Counts only: it never holds student text or code.
+        ValidationRun.objects.create(
+            summary=summary,
+            claims_total=len(claims),
+            claims_first_pass=first_pass,
+            claims_dropped=sum(not result.ok for result in results),
+            retries=retries,
+        )
     return summary
