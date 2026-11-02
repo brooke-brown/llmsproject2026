@@ -1,0 +1,128 @@
+[
+  {"model": "core.user", "pk": 1, "fields": {"username": "sample-student-a", "password": "!", "email": "sample-student-a@example.com", "first_name": "Sample", "last_name": "Student A", "github_login": "sample-student-a"}},
+  {"model": "core.user", "pk": 2, "fields": {"username": "sample-student-b", "password": "!", "email": "sample-student-b@example.com", "first_name": "Sample", "last_name": "Student B", "github_login": "sample-student-b"}},
+  {"model": "core.user", "pk": 3, "fields": {"username": "sample-student-c", "password": "!", "email": "sample-student-c@example.com", "first_name": "Sample", "last_name": "Student C", "github_login": "sample-student-c"}},
+
+  {"model": "core.course", "pk": 1, "fields": {"name": "Sample Course, Fall 2026"}},
+
+  {"model": "core.enrollment", "pk": 1, "fields": {"user": 1, "course": 1, "role": "student"}},
+  {"model": "core.enrollment", "pk": 2, "fields": {"user": 2, "course": 1, "role": "student"}},
+  {"model": "core.enrollment", "pk": 3, "fields": {"user": 3, "course": 1, "role": "student"}},
+
+  {"model": "core.project", "pk": 1, "fields": {"course": 1, "name": "Sample Project"}},
+
+  {"model": "core.requirement", "pk": 1, "fields": {"project": 1, "number": 1, "text": "Users can add a task to a shared list."}},
+  {"model": "core.requirement", "pk": 2, "fields": {"project": 1, "number": 2, "text": "Users can mark a task as done."}},
+
+  {"model": "core.team", "pk": 1, "fields": {"project": 1, "name": "Sample Team A"}},
+  {"model": "core.team", "pk": 2, "fields": {"project": 1, "name": "Sample Team B"}},
+
+  {"model": "core.teammembership", "pk": 1, "fields": {"user": 1, "team": 1}},
+  {"model": "core.teammembership", "pk": 2, "fields": {"user": 2, "team": 1}},
+  {"model": "core.teammembership", "pk": 3, "fields": {"user": 3, "team": 2}},
+
+  {"model": "core.repo", "pk": 1, "fields": {"team": 1, "url": "https://github.com/sample-strive-org/team-a-app", "full_name": "sample-strive-org/team-a-app"}},
+  {"model": "core.repo", "pk": 2, "fields": {"team": 2, "url": "https://github.com/sample-strive-org/team-b-app", "full_name": "sample-strive-org/team-b-app"}},
+
+  {"model": "ingest.artifact", "pk": 1, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:commit:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "type": "commit",
+    "url": "https://github.com/sample-strive-org/team-a-app/commit/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "timestamp": "2026-10-27T14:00:00Z",
+    "title": "Add the task model",
+    "author_login": "sample-student-a",
+    "git_author_name": "Sample Student A",
+    "git_author_email": "sample-student-a@example.com",
+    "diff": "--- /dev/null\n+++ b/tasks/models.py\n@@ -0,0 +1,2 @@\n+class Task:\n+    title = \"\"\n"
+  }},
+  {"model": "ingest.artifact", "pk": 2, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:pr:1",
+    "type": "pr",
+    "url": "https://github.com/sample-strive-org/team-a-app/pull/1",
+    "timestamp": "2026-10-28T15:00:00Z",
+    "title": "Add a form for creating tasks",
+    "body": "Lets users add a task to the shared list. Closes #3",
+    "author_login": "sample-student-a"
+  }},
+  {"model": "ingest.artifact", "pk": 3, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:review:1001",
+    "type": "review",
+    "url": "https://github.com/sample-strive-org/team-a-app/pull/2#pullrequestreview-1001",
+    "timestamp": "2026-10-29T16:00:00Z",
+    "body": "Approved. The done button works as described.",
+    "author_login": "sample-student-a"
+  }},
+  {"model": "ingest.artifact", "pk": 4, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:issue:3",
+    "type": "issue",
+    "url": "https://github.com/sample-strive-org/team-a-app/issues/3",
+    "timestamp": "2026-11-02T04:30:00Z",
+    "title": "Tasks disappear after a page refresh",
+    "body": "Created tasks aren't saved between page loads.",
+    "author_login": "sample-student-a"
+  }},
+  {"model": "ingest.artifact", "pk": 5, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:commit:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "type": "commit",
+    "url": "https://github.com/sample-strive-org/team-a-app/commit/b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "timestamp": "2026-10-28T18:00:00Z",
+    "title": "Save tasks to the database\n\nCo-authored-by: Sample Student A <sample-student-a@example.com>\nCo-authored-by: Sample Visitor <visitor@example.com>",
+    "author_login": "sample-student-b",
+    "git_author_name": "Sample Student B",
+    "git_author_email": "sample-student-b@example.com",
+    "co_author_logins": ["sample-student-a"],
+    "unmatched_co_authors": [{"name": "Sample Visitor", "email": "visitor@example.com"}],
+    "diff": "--- a/tasks/views.py\n+++ b/tasks/views.py\n@@ -1 +1,2 @@\n def add_task(request):\n+    Task.objects.create(title=request.POST[\"title\"])\n"
+  }},
+  {"model": "ingest.artifact", "pk": 6, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:commit:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "type": "commit",
+    "url": "https://github.com/sample-strive-org/team-a-app/commit/c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "timestamp": "2026-10-30T20:00:00Z",
+    "title": "Fix a typo in the task form label",
+    "author_login": "",
+    "git_author_name": "Sample Laptop User",
+    "git_author_email": "user@laptop.example.com",
+    "diff": "--- a/tasks/forms.py\n+++ b/tasks/forms.py\n@@ -1 +1 @@\n-label = \"Titel\"\n+label = \"Title\"\n"
+  }},
+  {"model": "ingest.artifact", "pk": 7, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:commit:d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "type": "commit",
+    "url": "https://github.com/sample-strive-org/team-a-app/commit/d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "timestamp": "2026-10-26T03:30:00Z",
+    "title": "Set up the project skeleton",
+    "author_login": "sample-student-a",
+    "git_author_name": "Sample Student A",
+    "git_author_email": "sample-student-a@example.com",
+    "diff": "--- /dev/null\n+++ b/README.md\n@@ -0,0 +1 @@\n+# Task list\n"
+  }},
+  {"model": "ingest.artifact", "pk": 8, "fields": {
+    "repo": 1,
+    "artifact_id": "sample-strive-org/team-a-app:pr:2",
+    "type": "pr",
+    "url": "https://github.com/sample-strive-org/team-a-app/pull/2",
+    "timestamp": "2026-10-29T17:00:00Z",
+    "title": "Add a button that marks a task as done",
+    "body": "Lets users mark a task as done from the list page.",
+    "author_login": "sample-student-b"
+  }},
+  {"model": "ingest.artifact", "pk": 9, "fields": {
+    "repo": 2,
+    "artifact_id": "sample-strive-org/team-b-app:commit:e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+    "type": "commit",
+    "url": "https://github.com/sample-strive-org/team-b-app/commit/e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+    "timestamp": "2026-10-27T19:00:00Z",
+    "title": "Add the login page",
+    "author_login": "sample-student-a",
+    "git_author_name": "Sample Student A",
+    "git_author_email": "sample-student-a@example.com",
+    "diff": "--- /dev/null\n+++ b/accounts/login.html\n@@ -0,0 +1 @@\n+<form></form>\n"
+  }}
+]
