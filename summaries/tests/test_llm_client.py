@@ -231,7 +231,25 @@ class ClientCreationTests(LLMClientTestCase):
 
         generate_claims(PROMPT)
 
-        self.assertEqual(self.anthropic_class.call_args.kwargs["timeout"], 60)
+        self.assertEqual(self.anthropic_class.call_args.kwargs["timeout"], 120)
+
+    def test_the_client_does_not_retry_on_its_own(self):
+        # The SDK's own retries would multiply the wait: 3 tries at 120s is 6 minutes for
+        # one call. A failure raises LLMError straight away instead.
+        self.anthropic_class.side_effect = None
+        self.anthropic_class.return_value = FakeClient()
+
+        generate_claims(PROMPT)
+
+        self.assertEqual(self.anthropic_class.call_args.kwargs["max_retries"], 0)
+
+    def test_the_reply_is_capped_at_8000_tokens(self):
+        # A summary's claims are short. A smaller cap keeps the worst-case wait known.
+        client = FakeClient()
+
+        generate_claims(PROMPT, client=client)
+
+        self.assertEqual(client.call["max_tokens"], 8000)
 
     def test_a_missing_api_key_raises_a_clear_error(self):
         del os.environ["LLM_API_KEY"]
