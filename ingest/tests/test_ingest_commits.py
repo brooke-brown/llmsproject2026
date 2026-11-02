@@ -78,10 +78,16 @@ def as_utc(moment):
 
 
 class FakeGitHubRepo:
-    """Takes {branch name: commits, newest first}. The first branch is the default."""
+    """Takes {branch name: commits, newest first}. The first branch is the default.
 
-    def __init__(self, branches):
+    As on GitHub, listing PRs or issues returns only open ones unless asked otherwise,
+    `since` filters issues on their updated date, and the issues list includes every PR.
+    """
+
+    def __init__(self, branches, pulls=(), issues=()):
         self.branches = branches
+        self.pulls = pulls
+        self.issues = issues
 
     def get_branches(self):
         return iter(
@@ -107,6 +113,25 @@ class FakeGitHubRepo:
                 return commits
         raise AssertionError(f"Asked for commits on an unknown ref: {ref}")
 
+    def get_pulls(self, state="open", sort="created", direction="desc"):
+        return iter(self._listed(self.pulls, state, sort, direction))
+
+    def get_issues(self, state="open", sort="created", direction="desc", since=None):
+        issues_and_pulls = [*self.issues, *(pull.as_issue for pull in self.pulls)]
+        return iter(
+            issue
+            for issue in self._listed(issues_and_pulls, state, sort, direction)
+            if since is None or issue.updated_at >= as_utc(since)
+        )
+
+    @staticmethod
+    def _listed(items, state, sort, direction):
+        return sorted(
+            (item for item in items if state in ("all", item.state)),
+            key=lambda item: getattr(item, f"{sort}_at"),
+            reverse=direction == "desc",
+        )
+
 
 class IngestTestCase(TestCase):
     def setUp(self):
@@ -114,12 +139,14 @@ class IngestTestCase(TestCase):
         self.team = make_team(self.project)
         self.repo = add_repo(self.team, FULL_NAME)
 
-    def ingest(self, branches, repo=None, week_start=WEEK_START, week_end=WEEK_END):
+    def ingest(
+        self, branches, repo=None, week_start=WEEK_START, week_end=WEEK_END, pulls=(), issues=()
+    ):
         from ingest.services import ingest
 
         repo = repo or self.repo
         # A lookup by any name other than the Repo's full_name raises a KeyError.
-        repos_on_github = {repo.full_name: FakeGitHubRepo(branches)}
+        repos_on_github = {repo.full_name: FakeGitHubRepo(branches, pulls, issues)}
         with (
             mock.patch("ingest.services.Github") as github,
             mock.patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"}),
