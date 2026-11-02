@@ -1,9 +1,12 @@
+from datetime import timedelta
+
 from django.core.exceptions import PermissionDenied
 from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 
 from core.models import Course, Enrollment, Team, TeamMembership
-from summaries.models import Summary
+from ingest.models import Artifact
+from summaries.models import Claim, Summary
 
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
 
@@ -44,6 +47,33 @@ def get_summary_for_staff(user, summary_id):
     )
     check_course_staff(user, summary.team.project.course)
     return summary
+
+
+def week_end(week_start):
+    """The Sunday that ends the Monday-Sunday reporting week."""
+    return week_start + timedelta(days=6)
+
+
+def verified_claims(summary):
+    """The summary's verified claims, the only ones a user may see.
+
+    Each claim has its artifacts prefetched for the GitHub links, and
+    `tagged_requirements`: a (number, text) pair per requirement_id, with text None
+    when the team's project has no requirement with that number.
+    """
+    requirements = dict(summary.team.project.requirements.values_list("number", "text"))
+    claims = list(
+        summary.claims.filter(status=Claim.Status.VERIFIED)
+        .order_by("id")
+        .prefetch_related(
+            Prefetch("artifacts", queryset=Artifact.objects.order_by("artifact_id"))
+        )
+    )
+    for claim in claims:
+        claim.tagged_requirements = [
+            (number, requirements.get(number)) for number in claim.requirement_ids
+        ]
+    return claims
 
 
 def team_repos(team):
