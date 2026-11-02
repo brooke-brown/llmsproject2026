@@ -1,7 +1,10 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
+from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models.functions import Lower
+
+REPO_FULL_NAME_PATTERN = r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+"
 
 
 class User(AbstractUser):
@@ -95,6 +98,32 @@ class TeamMembership(models.Model):
 class Repo(models.Model):
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="repos")
     url = models.URLField()
+    # Artifact IDs start with this, so nothing needs to parse `url` to compare them.
+    # 140 is GitHub's 39-character owner, a slash and its 100-character repo name.
+    full_name = models.CharField(
+        max_length=140,
+        validators=[
+            RegexValidator(
+                rf"^{REPO_FULL_NAME_PATTERN}\Z", "Enter the repo as owner/repo, such as acme/app."
+            )
+        ],
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(full_name__regex=rf"^{REPO_FULL_NAME_PATTERN}\Z"),
+                name="core_repo_full_name_valid",
+                violation_error_message="Enter the repo as owner/repo, such as acme/app.",
+            ),
+            # GitHub treats names differing only by case as the same repo.
+            models.UniqueConstraint(
+                "team",
+                Lower("full_name"),
+                name="core_repo_team_full_name_unique_ci",
+                violation_error_message="This team already has this repo.",
+            ),
+        ]
 
     def __str__(self):
         return self.url
