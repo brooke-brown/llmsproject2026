@@ -5,7 +5,7 @@ from django.db.models import Case, Exists, OuterRef, Prefetch, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from core.models import Course, Enrollment, Team, TeamMembership
+from core.models import Course, Enrollment, Requirement, Team, TeamMembership
 from ingest import services as ingest_services
 from ingest.models import Artifact
 from summaries import services as summaries_services
@@ -122,7 +122,8 @@ def _has_flag(severity):
 
 
 def course_projects_with_teams(course):
-    """The course's projects, each with its teams, their students and their flags.
+    """The course's projects, each with its requirements by number, and its teams, their
+    students and their flags.
 
     Within a project, flagged teams come first, then warned teams, then the rest, each
     group sorted by name.
@@ -144,7 +145,10 @@ def course_projects_with_teams(course):
             Prefetch("flags", queryset=flags_in_display_order()),
         )
     )
-    return course.projects.order_by("id").prefetch_related(Prefetch("teams", queryset=teams))
+    return course.projects.order_by("id").prefetch_related(
+        Prefetch("teams", queryset=teams),
+        Prefetch("requirements", queryset=Requirement.objects.order_by("number")),
+    )
 
 
 class GenerationError(Exception):
