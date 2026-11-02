@@ -10,6 +10,8 @@ from ingest.models import Artifact
 
 REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
 MAX_DIFF_CHARS = 100_000
+# GitHub's placeholder author for activity from a deleted account.
+DELETED_ACCOUNT_LOGIN = "ghost"
 # Matched against a whole line, so a mention inside a sentence isn't a trailer.
 CO_AUTHOR_TRAILER = re.compile(
     r"co-authored-by:(?P<name>[^<>]*)<(?P<email>[^<>\s@]+@[^<>\s@]+)>\s*", re.IGNORECASE
@@ -21,11 +23,13 @@ NOREPLY_EMAIL = re.compile(
 
 
 def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
-    """Collects a repo's commits for a reporting week and returns all its artifacts for that week.
+    """Collects a repo's commits, PRs and issues for a week and returns all its artifacts for it.
 
     The week runs from the start of week_start through the end of week_end, in the
     reporting time zone. Commits come from every branch, and merge commits are skipped.
     Co-authors are matched against the students on the repo's team at the time of the run.
+    A PR counts when it merged, or when it was created if unmerged. An issue counts when
+    it was created. Activity from a deleted GitHub account is stored with no author login.
     """
     start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
     end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
@@ -36,6 +40,9 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
     )
     for commit in _commits_authored_between(github_repo, start, end):
         _save_commit(repo, commit, students)
+    _save_pulls(repo, github_repo, start, end)
+    for issue in _issues_created_between(github_repo, start, end):
+        _save_issue(repo, issue)
 
     return list(
         Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end).order_by(
@@ -63,7 +70,6 @@ def _commits_authored_between(github_repo, start: datetime, end: datetime) -> li
 
 
 def _save_commit(repo: Repo, commit, students: list[tuple[str, str]]) -> Artifact:
-    diff = _diff_text(commit)
     git_author = commit.commit.author
     co_author_logins, unmatched_co_authors = _match_co_authors(commit.commit.message, students)
     artifact, _ = Artifact.objects.update_or_create(
@@ -79,11 +85,74 @@ def _save_commit(repo: Repo, commit, students: list[tuple[str, str]]) -> Artifac
             "git_author_email": git_author.email,
             "co_author_logins": co_author_logins,
             "unmatched_co_authors": unmatched_co_authors,
-            "diff": diff[:MAX_DIFF_CHARS],
-            "diff_truncated": len(diff) > MAX_DIFF_CHARS,
+            **_diff_fields(commit.files),
         },
     )
     return artifact
+
+
+def _save_pulls(repo: Repo, github_repo, start: datetime, end: datetime) -> None:
+    """Saves the PRs dated in [start, end), and updates any already stored from another week.
+
+    Updating those moves a PR out of the week it was first stored in once it merges later.
+    Every PR is listed, since one merged this week can have been opened long ago.
+    """
+    stored_ids = set(
+        Artifact.objects.filter(repo=repo, type=Artifact.Type.PR).values_list(
+            "artifact_id", flat=True
+        )
+    )
+    for pull in github_repo.get_pulls(state="all"):
+        artifact_id = f"{repo.full_name}:pr:{pull.number}"
+        timestamp = pull.merged_at or pull.created_at
+        if start <= timestamp < end or artifact_id in stored_ids:
+            Artifact.objects.update_or_create(
+                repo=repo,
+                artifact_id=artifact_id,
+                defaults={
+                    "type": Artifact.Type.PR,
+                    "timestamp": timestamp,
+                    **_pull_or_issue_fields(pull),
+                    **_diff_fields(pull.get_files()),
+                },
+            )
+
+
+def _issues_created_between(github_repo, start: datetime, end: datetime) -> list:
+    """The issues created in [start, end), leaving out the PRs GitHub also lists as issues."""
+    # GitHub filters `since` on the updated date, which is never before the created date.
+    # PyGithub labels `since` as UTC without converting it, so it must already be in UTC.
+    since = start.astimezone(timezone.utc)
+    return [
+        issue
+        for issue in github_repo.get_issues(state="all", since=since)
+        if issue.pull_request is None and start <= issue.created_at < end
+    ]
+
+
+def _save_issue(repo: Repo, issue) -> Artifact:
+    artifact, _ = Artifact.objects.update_or_create(
+        repo=repo,
+        artifact_id=f"{repo.full_name}:issue:{issue.number}",
+        defaults={
+            "type": Artifact.Type.ISSUE,
+            "timestamp": issue.created_at,
+            **_pull_or_issue_fields(issue),
+        },
+    )
+    return artifact
+
+
+def _pull_or_issue_fields(item) -> dict[str, str]:
+    author = item.user
+    deleted = author is None or author.login == DELETED_ACCOUNT_LOGIN
+    return {
+        "url": item.html_url,
+        "title": item.title,
+        # GitHub sends a null body when there's no description.
+        "body": item.body or "",
+        "author_login": "" if deleted else author.login,
+    }
 
 
 def _match_co_authors(
@@ -121,12 +190,12 @@ def _student_login(email: str, students: list[tuple[str, str]]) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def _diff_text(commit) -> str:
+def _diff_fields(files) -> dict:
     # GitHub sends no patch for binary files, so those are listed by name only.
-    return "".join(
-        f"--- a/{file.filename}\n+++ b/{file.filename}\n{file.patch or ''}\n"
-        for file in commit.files
+    diff = "".join(
+        f"--- a/{file.filename}\n+++ b/{file.filename}\n{file.patch or ''}\n" for file in files
     )
+    return {"diff": diff[:MAX_DIFF_CHARS], "diff_truncated": len(diff) > MAX_DIFF_CHARS}
 
 
 def student_week_artifacts(user: User, team: Team, week_start: date) -> list[Artifact]:
