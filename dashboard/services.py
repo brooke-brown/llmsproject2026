@@ -1,16 +1,22 @@
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.core.exceptions import PermissionDenied
 from django.db.models import Case, Exists, OuterRef, Prefetch, Value, When
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from core.models import Course, Enrollment, Team, TeamMembership
+from ingest import services as ingest_services
 from ingest.models import Artifact
+from summaries import services as summaries_services
+from summaries.llm import LLMError
 from summaries.models import Claim, Summary
 
+from . import flags
 from .models import Flag
 
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
+MONDAY = 0  # date.weekday() counts from Monday.
 
 
 def flags_in_display_order():
@@ -139,3 +145,73 @@ def course_projects_with_teams(course):
         )
     )
     return course.projects.order_by("id").prefetch_related(Prefetch("teams", queryset=teams))
+
+
+class GenerationError(Exception):
+    """A summary couldn't be generated. The message is shown to the user as is."""
+
+
+def get_team_student_for_staff(user, team_id, student_id):
+    """The team and one of its students, or 404 if either is missing and 403 if the
+    user isn't the course's staff. Staff is checked first, so membership isn't leaked."""
+    team = get_team_for_staff(user, team_id)
+    membership = get_object_or_404(
+        TeamMembership.objects.select_related("user"), team=team, user_id=student_id
+    )
+    return team, membership.user
+
+
+def reporting_today(now=None):
+    """Today's date in the reporting time zone."""
+    return (now or timezone.now()).astimezone(ingest_services.REPORTING_TIME_ZONE).date()
+
+
+def last_completed_week_start(now=None):
+    """The Monday of the most recent Monday-Sunday week that has fully ended."""
+    today = reporting_today(now)
+    this_monday = today - timedelta(days=today.weekday())
+    return this_monday - timedelta(days=7)
+
+
+def parse_week_start(value, now=None):
+    """The Monday that starts a completed reporting week, from a YYYY-MM-DD string.
+
+    Raises GenerationError, with a message for the user, for anything else.
+    """
+    try:
+        week_start = date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise GenerationError("Pick a week to generate.") from None
+    if week_start.weekday() != MONDAY:
+        raise GenerationError("The week must start on a Monday.")
+    if week_start > last_completed_week_start(now):
+        raise GenerationError("That week hasn't ended yet. Pick a week that's already over.")
+    return week_start
+
+
+def generate_student_summary(student, team, week_start):
+    """Ingest each of the team's repos for the week, write the student's summary, then
+    recompute the team's flags.
+
+    Raises GenerationError naming the step that failed. Flags are only recomputed after
+    a summary is saved, so a failure leaves them as they were.
+    """
+    end = week_end(week_start)
+    for repo in team_repos(team):
+        try:
+            ingest_services.ingest(repo, week_start, end)
+        except Exception:
+            # ingest talks to GitHub, which can fail in many ways. Its error isn't shown,
+            # so nothing from the repo reaches the page.
+            raise GenerationError(
+                f"Couldn't pull GitHub activity for {repo.full_name}. No summary was generated."
+            ) from None
+    try:
+        summary = summaries_services.generate_summary(student, team, week_start)
+    except LLMError as error:
+        # LLMError messages never hold student work, so they are safe to show.
+        raise GenerationError(
+            f"Couldn't write the summary: {error} No summary was generated."
+        ) from None
+    flags.compute_flags(team)
+    return summary
