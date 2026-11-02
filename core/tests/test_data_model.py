@@ -327,10 +327,12 @@ class TeamStructureTests(TestCase):
     def test_team_can_have_more_than_one_repo(self):
         Repo = core_model("Repo")
         team = make_team()
-        Repo.objects.create(team=team, url="https://github.com/acme/app")
-        Repo.objects.create(team=team, url="https://github.com/acme/docs")
+        Repo.objects.create(team=team, url="https://github.com/acme/app", full_name="acme/app")
+        Repo.objects.create(team=team, url="https://github.com/acme/docs", full_name="acme/docs")
         self.assertEqual(Repo.objects.filter(team=team).count(), 2)
 
     def test_repo_requires_a_team(self):
         with self.assertRaises(IntegrityError), transaction.atomic():
-            core_model("Repo").objects.create(url="https://github.com/acme/app")
+            core_model("Repo").objects.create(
+                url="https://github.com/acme/app", full_name="acme/app"
+            )
