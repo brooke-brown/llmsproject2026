@@ -38,4 +38,13 @@ def team(request, team_id):
 @login_required
 def summary(request, summary_id):
     summary = services.get_summary_for_staff(request.user, summary_id)
-    return render(request, "dashboard/summary.html", {"summary": summary})
+    return render(
+        request,
+        "dashboard/summary.html",
+        {
+            "summary": summary,
+            "week_end": services.week_end(summary.week_start),
+            "claims": services.verified_claims(summary),
+            "unverified_count": summary.unverified_count,
+        },
+    )
