@@ -1,0 +1,10 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}{{ summary.user.github_login }}, week of {{ summary.week_start|date:"M j, Y" }} · STRIVE{% endblock %}
+
+{% block content %}
+{# Placeholder until the summary page story (US-17) lands. #}
+<p><a href="{% url 'dashboard:team' summary.team.id %}">{{ summary.team.name }}</a></p>
+<h1>{{ summary.user.get_full_name|default:summary.user.github_login }}: week of {{ summary.week_start|date:"M j, Y" }}</h1>
+<p>The summary page is coming soon.</p>
+{% endblock %}

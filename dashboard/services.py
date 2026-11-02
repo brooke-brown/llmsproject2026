@@ -3,6 +3,7 @@ from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 
 from core.models import Course, Enrollment, Team, TeamMembership
+from summaries.models import Summary
 
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
 
@@ -34,6 +35,29 @@ def get_team_for_staff(user, team_id):
     team = get_object_or_404(Team.objects.select_related("project__course"), pk=team_id)
     check_course_staff(user, team.project.course)
     return team
+
+
+def get_summary_for_staff(user, summary_id):
+    """The summary, or 404 if it doesn't exist and 403 if the user isn't its course's staff."""
+    summary = get_object_or_404(
+        Summary.objects.select_related("user", "team__project__course"), pk=summary_id
+    )
+    check_course_staff(user, summary.team.project.course)
+    return summary
+
+
+def team_repos(team):
+    return team.repos.order_by("full_name")
+
+
+def team_memberships_with_summaries(team):
+    """The team's memberships, each user with `team_summaries` for this team, newest first."""
+    summaries = Summary.objects.filter(team=team).order_by("-week_start")
+    return (
+        team.memberships.select_related("user")
+        .order_by("user__last_name", "user__first_name", "user__github_login")
+        .prefetch_related(Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"))
+    )
 
 
 def course_projects_with_teams(course):

@@ -3,8 +3,26 @@
 {% block title %}{{ team.name }} · STRIVE{% endblock %}
 
 {% block content %}
-{# Placeholder until the team page story lands. #}
 <p><a href="{% url 'dashboard:course_overview' team.project.course.id %}">{{ team.project.course.name }}</a> › {{ team.project.name }}</p>
 <h1>{{ team.name }}</h1>
-<p>The team page is coming soon.</p>
+<p>
+  Repos:
+  {% for repo in repos %}<code>{{ repo.full_name }}</code>{% if not forloop.last %}, {% endif %}{% empty %}none yet{% endfor %}
+</p>
+
+<h2>Students</h2>
+{% for membership in memberships %}
+<article>
+  <header><strong>{{ membership.user.get_full_name|default:membership.user.github_login }}</strong> (<code>{{ membership.user.github_login }}</code>)</header>
+  <ul>
+    {% for summary in membership.user.team_summaries %}
+    <li><a href="{% url 'dashboard:summary' summary.id %}">Week of {{ summary.week_start|date:"M j, Y" }}</a></li>
+    {% empty %}
+    <li>No summaries yet.</li>
+    {% endfor %}
+  </ul>
+</article>
+{% empty %}
+<p>No students on this team yet.</p>
+{% endfor %}
 {% endblock %}
