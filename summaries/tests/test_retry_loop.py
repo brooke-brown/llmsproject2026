@@ -361,3 +361,21 @@ class AttemptStatsTests(RetryTestCase):
         result = self.generate()
 
         self.assertEqual(result.retries, 2)
+
+
+class RetryPromptSizeTests(RetryTestCase):
+    """A retry prompt repeats the artifact list, so it's held to the same size budget."""
+
+    def test_a_retry_prompt_for_a_week_with_many_artifacts_stays_near_the_budget(self):
+        import summaries.prompts as prompts
+        from ingest.services import student_week_artifacts
+
+        for number in range(150):
+            self.add_artifact(f"bulk{number:03d}", diff=f"{number:03d}" + "x" * 5000)
+        artifacts = student_week_artifacts(self.student, self.team, WEEK_START)
+        failing = [(bad(), [])]
+
+        prompt = prompts.build_retry_prompt(artifacts, failing)
+
+        # The failing claims are short, so they add little beyond the artifact list.
+        self.assertLessEqual(len(prompt), prompts.PROMPT_BUDGET + 2000)

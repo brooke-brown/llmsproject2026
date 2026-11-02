@@ -386,3 +386,115 @@ class RegenerationTests(GenerateSummaryTestCase):
         self.run_summary(week_start=QUIET_WEEK)
 
         self.assertEqual(Summary.objects.count(), 2)
+
+
+class RequirementIdsTests(GenerateSummaryTestCase):
+    """Requirement numbers can't be checked until US-14, so none are saved yet.
+
+    The flag rules weight requirement-tied claims, so a number the validator never
+    checked must not reach a verified claim.
+    """
+
+    def claim_with_requirements(self, artifact_id):
+        return Claim(
+            text="Built the task form.",
+            category="feature",
+            artifact_ids=[artifact_id],
+            requirement_ids=[3, 99],
+            significance="minor",
+        )
+
+    def test_a_verified_claim_is_saved_without_requirement_ids(self):
+        self.llm.return_value = [self.claim_with_requirements(PR)]
+
+        claim = self.run_summary().claims.get()
+
+        self.assertEqual(claim.status, "verified")
+        self.assertEqual(claim.requirement_ids, [])
+
+    def test_a_claim_that_could_not_be_verified_is_saved_without_them_too(self):
+        self.llm.return_value = [self.claim_with_requirements(STUDENT_B_PR)]
+
+        claim = self.run_summary().claims.get()
+
+        self.assertEqual(claim.status, "couldnt_verify")
+        self.assertEqual(claim.requirement_ids, [])
+
+
+def prompts():
+    import summaries.prompts as module
+
+    return module
+
+
+BODY_CAP = 2000
+TITLE_CAP = 1000
+MANY_ARTIFACTS = 150
+
+
+class PromptSizeTests(GenerateSummaryTestCase):
+    """The prompt stays a sensible size, however long a body is or many artifacts there are."""
+
+    def test_a_long_body_is_cut_to_the_cap_and_marked(self):
+        self.add_artifact("longbody1", body="A" * BODY_CAP + "Z" * 500)
+
+        self.run_summary()
+
+        self.assertIn("A" * BODY_CAP, self.prompt)
+        self.assertNotIn("Z" * 50, self.prompt)
+        self.assertIn("body truncated", self.prompt)
+
+    def test_a_long_title_is_cut_to_the_cap_and_marked(self):
+        # A commit's title is its whole message, which can be pasted output.
+        self.add_artifact("longtitle1", title="T" * (TITLE_CAP + 500))
+
+        self.run_summary()
+
+        self.assertIn("T" * TITLE_CAP, self.prompt)
+        self.assertNotIn("T" * (TITLE_CAP + 1), self.prompt)
+        self.assertIn("title truncated", self.prompt)
+
+    def test_short_titles_and_bodies_are_not_marked_as_truncated(self):
+        self.run_summary()
+
+        self.assertNotIn("body truncated", self.prompt)
+        self.assertNotIn("title truncated", self.prompt)
+
+    def test_a_week_with_many_artifacts_stays_within_the_prompt_budget(self):
+        for number in range(MANY_ARTIFACTS):
+            self.add_artifact(f"bulk{number:03d}", diff=f"{number:03d}" + "x" * 5000)
+
+        self.run_summary()
+
+        self.assertLessEqual(len(self.prompt), prompts().PROMPT_BUDGET)
+
+    def test_when_there_are_many_artifacts_each_diff_is_shortened_but_keeps_its_start(self):
+        for number in range(MANY_ARTIFACTS):
+            self.add_artifact(f"bulk{number:03d}", diff=f"{number:03d}" + "x" * 5000)
+
+        self.run_summary()
+
+        for number in range(MANY_ARTIFACTS):
+            with self.subTest(artifact=number):
+                self.assertIn(f"{number:03d}" + "x" * 150, self.prompt)
+        self.assertGreaterEqual(self.prompt.count("[diff truncated]"), MANY_ARTIFACTS)
+
+    def test_a_prompt_with_no_diffs_at_all_is_built_without_trouble(self):
+        # Reviews, issues and PRs have no diff, so a week can have none.
+        no_diffs = Artifact.objects.filter(artifact_id__in=[PR, REVIEW, ISSUE])
+
+        prompt = prompts().build_prompt(no_diffs)
+
+        for artifact_id in [PR, REVIEW, ISSUE]:
+            self.assertIn(artifact_id, prompt)
+        self.assertNotIn("diff:", prompt)
+
+    def test_a_prompt_with_no_artifacts_is_just_the_heading(self):
+        self.assertTrue(prompts().build_prompt([]).startswith("This student's artifacts"))
+
+    def test_a_few_artifacts_still_get_the_full_diff_cap(self):
+        self.add_artifact("longdiff2", diff="A" * DIFF_CAP + "B" * 6000)
+
+        self.run_summary()
+
+        self.assertIn("A" * DIFF_CAP, self.prompt)
