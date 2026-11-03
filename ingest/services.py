@@ -36,6 +36,10 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
     it was created. A review counts when it was submitted, whatever the PR's own date, but
     not if it's pending or by the PR's author. Activity from a deleted GitHub account is
     stored with no author login.
+
+    Running again is how a week is refreshed. PRs, reviews and issues stored for any week
+    pick up changes from GitHub, and each stays one row, so claims citing it keep their
+    links. For the same reason, an artifact that's gone from GitHub stays stored.
     """
     start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
     end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
@@ -48,8 +52,7 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
         _save_commit(repo, commit, students)
     _rematch_stored_co_authors(repo, students)
     _save_pulls(repo, github_repo, start, end)
-    for issue in _issues_created_between(github_repo, start, end):
-        _save_issue(repo, issue)
+    _save_issues(repo, github_repo, start, end)
 
     return list(
         Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end).order_by(
@@ -123,11 +126,8 @@ def _save_pulls(repo: Repo, github_repo, start: datetime, end: datetime) -> None
     Updating those moves a PR out of the week it was first stored in once it merges later.
     Every PR is listed, since one merged this week can have been opened long ago.
     """
-    stored_ids = set(
-        Artifact.objects.filter(repo=repo, type=Artifact.Type.PR).values_list(
-            "artifact_id", flat=True
-        )
-    )
+    stored_ids = _stored_ids(repo, Artifact.Type.PR)
+    stored_review_ids = _stored_ids(repo, Artifact.Type.REVIEW)
     for pull in github_repo.get_pulls(state="all"):
         artifact_id = f"{repo.full_name}:pr:{pull.number}"
         timestamp = pull.merged_at or pull.created_at
@@ -142,11 +142,25 @@ def _save_pulls(repo: Repo, github_repo, start: datetime, end: datetime) -> None
                     **_diff_fields(pull.get_files()),
                 },
             )
-        _save_reviews(repo, pull, start, end)
+        _save_reviews(repo, pull, start, end, stored_review_ids)
 
 
-def _save_reviews(repo: Repo, pull, start: datetime, end: datetime) -> None:
-    """Saves a PR's reviews submitted in [start, end), leaving out any by the PR's author."""
+def _stored_ids(repo: Repo, artifact_type: str) -> set[str]:
+    return set(
+        Artifact.objects.filter(repo=repo, type=artifact_type).values_list(
+            "artifact_id", flat=True
+        )
+    )
+
+
+def _save_reviews(
+    repo: Repo, pull, start: datetime, end: datetime, stored_ids: set[str]
+) -> None:
+    """Saves a PR's reviews submitted in [start, end), and updates any already stored.
+
+    Updating those picks up a review dismissed or edited after its own week. Reviews by
+    the PR's author are left out.
+    """
     # Deleted accounts all share one login, so two of them aren't known to be one person.
     pull_author = _credited_login(pull.user).lower()
     for review in pull.get_reviews():
@@ -154,10 +168,12 @@ def _save_reviews(repo: Repo, pull, start: datetime, end: datetime) -> None:
         if review.state == PENDING_REVIEW_STATE or submitted is None:
             continue
         reviewer = _credited_login(review.user)
-        if start <= submitted < end and (not reviewer or reviewer.lower() != pull_author):
+        artifact_id = f"{repo.full_name}:review:{review.id}"
+        in_week_or_stored = start <= submitted < end or artifact_id in stored_ids
+        if in_week_or_stored and (not reviewer or reviewer.lower() != pull_author):
             Artifact.objects.update_or_create(
                 repo=repo,
-                artifact_id=f"{repo.full_name}:review:{review.id}",
+                artifact_id=artifact_id,
                 defaults={
                     "type": Artifact.Type.REVIEW,
                     "url": review.html_url,
@@ -170,29 +186,27 @@ def _save_reviews(repo: Repo, pull, start: datetime, end: datetime) -> None:
             )
 
 
-def _issues_created_between(github_repo, start: datetime, end: datetime) -> list:
-    """The issues created in [start, end), leaving out the PRs GitHub also lists as issues."""
-    # GitHub filters `since` on the updated date, which is never before the created date.
-    # PyGithub labels `since` as UTC without converting it, so it must already be in UTC.
-    since = start.astimezone(timezone.utc)
-    return [
-        issue
-        for issue in github_repo.get_issues(state="all", since=since)
-        if issue.pull_request is None and start <= issue.created_at < end
-    ]
+def _save_issues(repo: Repo, github_repo, start: datetime, end: datetime) -> None:
+    """Saves the issues created in [start, end), and updates any already stored.
 
-
-def _save_issue(repo: Repo, issue) -> Artifact:
-    artifact, _ = Artifact.objects.update_or_create(
-        repo=repo,
-        artifact_id=f"{repo.full_name}:issue:{issue.number}",
-        defaults={
-            "type": Artifact.Type.ISSUE,
-            "timestamp": issue.created_at,
-            **_pull_or_issue_fields(issue),
-        },
-    )
-    return artifact
+    Every issue is listed, since a stored one can have been edited before this week, which
+    GitHub's `since` would filter out. The PRs GitHub also lists as issues are left out.
+    """
+    stored_ids = _stored_ids(repo, Artifact.Type.ISSUE)
+    for issue in github_repo.get_issues(state="all"):
+        artifact_id = f"{repo.full_name}:issue:{issue.number}"
+        if issue.pull_request is None and (
+            start <= issue.created_at < end or artifact_id in stored_ids
+        ):
+            Artifact.objects.update_or_create(
+                repo=repo,
+                artifact_id=artifact_id,
+                defaults={
+                    "type": Artifact.Type.ISSUE,
+                    "timestamp": issue.created_at,
+                    **_pull_or_issue_fields(issue),
+                },
+            )
 
 
 def _pull_or_issue_fields(item) -> dict[str, str]:
