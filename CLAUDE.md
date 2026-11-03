@@ -55,7 +55,7 @@ These are the interfaces between people. Changing them silently breaks someone e
   - Issue: created date
 - **`Requirement` model** in `core/`: `project`, `number`, `text`
 - **`Repo.full_name`** in `core/` is `owner/repo`, required and unique per team. An artifact's ID must start with its repo's `full_name`. Only repo setup (US-1) reads `Repo.url` to fill this in; everything else uses `full_name`.
-- **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field.
+- **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field. `Artifact.review_state` holds GitHub's state for a review, such as `APPROVED`, and is empty for other types.
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
   - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`

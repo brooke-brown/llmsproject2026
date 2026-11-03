@@ -175,6 +175,27 @@ class SummaryPageClaimTests(SummaryPageFixture):
             html=True,
         )
 
+    def test_shows_a_cited_reviews_state_in_words(self):
+        review = make_artifact(
+            self.repo,
+            "review",
+            "77",
+            "https://github.com/sample-org/app/pull/12#pullrequestreview-77",
+        )
+        review.review_state = "CHANGES_REQUESTED"
+        review.save()
+        make_claim(self.summary, "Reviewed the login form", [review], category="review")
+
+        response = self.get_summary_page()
+
+        self.assertContains(response, "(changes requested)")
+
+    def test_shows_no_state_for_artifacts_that_arent_reviews(self):
+        response = self.get_summary_page()
+
+        self.assertContains(response, "sample-org/app:pr:12")
+        self.assertNotContains(response, "()")
+
     def test_links_come_from_the_artifacts_not_the_cited_id_strings(self):
         # A cited ID with no matching artifact can't be linked, so it isn't shown.
         self.fix_claim.artifact_ids = [self.fix.artifact_id, "sample-org/app:pr:999"]

@@ -19,7 +19,7 @@
   <p>{{ claim.text }}</p>
   <p>
     <small>Verified against GitHub:</small>
-    {% for artifact in claim.artifacts.all %}<a href="{{ artifact.url }}">{{ artifact.artifact_id }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}
+    {% for artifact in claim.artifacts.all %}<a href="{{ artifact.url }}">{{ artifact.artifact_id }}</a>{% if artifact.review_state %} ({{ artifact.review_state_label }}){% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}
   </p>
   <footer>
     <small>

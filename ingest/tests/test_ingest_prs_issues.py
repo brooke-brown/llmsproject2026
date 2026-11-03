@@ -76,8 +76,9 @@ def fake_pull(
     updated=None,
     login=STUDENT,
     files=None,
+    reviews=(),
 ):
-    """A PR as PyGithub lists it. Its changed files need a separate get_files() call."""
+    """A PR as PyGithub lists it. Its files and reviews each need a separate call."""
     state = "closed" if merged or closed else "open"
     updated = updated or merged or created
     user = github_user(login)
@@ -95,6 +96,7 @@ def fake_pull(
         created_at=created,
         updated_at=updated,
         get_files=lambda: iter(changed_files),
+        get_reviews=lambda: iter(reviews),
         as_issue=SimpleNamespace(
             number=number,
             html_url=url,

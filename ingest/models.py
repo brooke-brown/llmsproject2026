@@ -46,6 +46,8 @@ class Artifact(models.Model):
     unmatched_co_authors = models.JSONField(default=list, blank=True)
     diff = models.TextField(blank=True)
     diff_truncated = models.BooleanField(default=False)
+    # GitHub's value for a review, such as APPROVED. Empty for every other type.
+    review_state = models.CharField(max_length=20, blank=True)
 
     class Meta:
         constraints = [
@@ -71,6 +73,11 @@ class Artifact(models.Model):
         prefix = f"{self.repo.full_name}:{self.type}:"
         if not self.artifact_id.startswith(prefix):
             raise ValidationError({"artifact_id": f"This artifact's ID must start with {prefix}"})
+
+    @property
+    def review_state_label(self) -> str:
+        """The review state as a page shows it: CHANGES_REQUESTED is "changes requested"."""
+        return self.review_state.replace("_", " ").lower()
 
     def __str__(self):
         return self.artifact_id
