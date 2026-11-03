@@ -119,6 +119,23 @@ def team_memberships_with_summaries(team):
     )
 
 
+def add_contribution_shares(team, memberships):
+    """Give each of the team's memberships `contribution_share`, the student's whole-percent
+    share of the team's requirement-tied work, and return the memberships and the week the
+    shares are for.
+
+    It's the share the low-share flag rule uses, rounded the same way as flag reasons.
+    Before there's anything to compare, the week and every share are None.
+    """
+    memberships = list(memberships)
+    shares = flags.requirement_shares(team)
+    week, shares = shares if shares is not None else (None, {})
+    for membership in memberships:
+        share = shares.get(membership.user_id)
+        membership.contribution_share = None if share is None else round(share * 100)
+    return memberships, week
+
+
 def _has_flag(severity):
     """True for a team with at least one flag of this severity, inside a Team query."""
     return Exists(Flag.objects.filter(team=OuterRef("pk"), severity=severity))

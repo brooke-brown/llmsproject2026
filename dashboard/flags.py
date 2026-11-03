@@ -16,16 +16,18 @@ FLAG_BELOW = Fraction(1, 2)
 WARNING_BELOW = Fraction(3, 4)
 
 
-def low_requirement_share(team):
-    """Flag students whose weighted share of requirement-tied work is low.
+def requirement_shares(team):
+    """Each student's weighted share of the team's requirement-tied work, as
+    (week_start, {user ID: Fraction}), or None if there's nothing to compare.
 
-    Only the latest week in which every student on the team has a summary is checked,
-    so a missing summary never raises a flag. A student's score is the sum of their
-    verified, requirement-tied claims weighted by significance.
+    Only the latest week in which every student on the team has a summary counts, so a
+    missing summary never skews a share. A student's score is the sum of their verified,
+    requirement-tied claims weighted by significance. It's None for a team with no
+    students, no such week, or no requirement-tied work that week.
     """
     students = [membership.user for membership in team.memberships.select_related("user")]
-    if len(students) < 2:
-        return []
+    if not students:
+        return None
     week = (
         Summary.objects.filter(team=team, user__in=students)
         .values("week_start")
@@ -36,7 +38,7 @@ def low_requirement_share(team):
         .first()
     )
     if week is None:
-        return []
+        return None
 
     scores = {student.id: 0 for student in students}
     claims = Claim.objects.filter(
@@ -47,11 +49,22 @@ def low_requirement_share(team):
             scores[user_id] += SIGNIFICANCE_WEIGHTS[significance]
     total = sum(scores.values())
     if total == 0:
+        return None
+    return week, {user_id: Fraction(score, total) for user_id, score in scores.items()}
+
+
+def low_requirement_share(team):
+    """Flag students whose weighted share of requirement-tied work is low, using
+    requirement_shares."""
+    students = [membership.user for membership in team.memberships.select_related("user")]
+    shares = requirement_shares(team)
+    if len(students) < 2 or shares is None:
         return []
+    week, shares = shares
 
     flags = []
     for student in students:
-        share = Fraction(scores[student.id], total)
+        share = shares[student.id]
         of_equal_share = share * len(students)
         if of_equal_share < FLAG_BELOW:
             severity = Flag.Severity.FLAG

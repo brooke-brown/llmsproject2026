@@ -32,6 +32,9 @@ def course_overview(request, course_id):
 @login_required
 def team(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
+    memberships, share_week = services.add_contribution_shares(
+        team, services.team_memberships_with_summaries(team)
+    )
     return render(
         request,
         "dashboard/team.html",
@@ -39,7 +42,8 @@ def team(request, team_id):
             "team": team,
             "repos": services.team_repos(team),
             "team_flags": services.team_wide_flags(team),
-            "memberships": services.team_memberships_with_summaries(team),
+            "memberships": memberships,
+            "share_week": share_week,
         },
     )
 
