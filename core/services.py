@@ -3,6 +3,8 @@ import re
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from pydantic import BaseModel
+from pypdf import PdfReader
+from pypdf.errors import FileNotDecryptedError
 
 from core.models import Project, Requirement
 from summaries.llm import LLMError, generate_structured
@@ -48,6 +50,33 @@ class RequirementImportError(Exception):
 class RequirementList(BaseModel):
     # Plain strings, so the LLM can't assign numbers: they come from the order.
     requirements: list[str]
+
+
+def extract_pdf_text(file) -> str:
+    """Return the text of every page in an uploaded PDF, or raise RequirementImportError.
+
+    One unreadable page rejects the whole file, since importing the rest would look like
+    success with requirements silently missing.
+    """
+    try:
+        pages = [page.extract_text() for page in PdfReader(file).pages]
+    except FileNotDecryptedError:
+        raise RequirementImportError(
+            "This PDF is password-protected. Remove the password or paste its text instead."
+        ) from None
+    # Malformed files make pypdf raise far more than its own error types, such as
+    # KeyError or ValueError, and anything it raises here means the file can't be read.
+    except Exception:
+        raise RequirementImportError(
+            "This file couldn't be read as a PDF. It may be corrupt or another type of file."
+        ) from None
+
+    text = "\n".join(pages)
+    if not text.strip():
+        raise RequirementImportError(
+            "This PDF has no text to read, so it may be a scanned copy. Paste its text instead."
+        )
+    return text
 
 
 def import_requirements(project: Project, text: str) -> list[Requirement]:

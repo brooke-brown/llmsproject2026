@@ -2,7 +2,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 
 from core.models import Repo
-from core.services import github_repo_full_name
+from core.services import RequirementImportError, extract_pdf_text, github_repo_full_name
 
 DUPLICATE_REPO_MESSAGE = "This team already has this repo."
 
@@ -78,16 +78,37 @@ class RepoInlineFormSet(forms.BaseInlineFormSet):
 
 
 class RequirementImportForm(forms.Form):
+    pdf = forms.FileField(
+        label="Requirements PDF",
+        required=False,
+        widget=forms.FileInput(attrs={"accept": ".pdf,application/pdf"}),
+        help_text="Upload the project's requirements as a PDF, or paste them below.",
+    )
     # Not stripped, so the LLM and the source check see exactly what was pasted.
     text = forms.CharField(
         label="Requirements text",
+        required=False,
         strip=False,
         widget=forms.Textarea(attrs={"rows": 20, "cols": 80}),
         help_text="Paste the project's requirements. Each one must stay worded as written here.",
     )
 
-    def clean_text(self):
-        text = self.cleaned_data["text"]
-        if not text.strip():
-            raise ValidationError("Paste the project's requirements.")
-        return text
+    def clean(self):
+        """Leave the document to import in `text`, whichever way it arrived."""
+        cleaned_data = super().clean()
+        if "pdf" in self.errors:
+            return cleaned_data
+
+        pdf = cleaned_data.get("pdf")
+        has_text = bool(cleaned_data.get("text", "").strip())
+        if pdf and has_text:
+            # Using one and ignoring the other could import the wrong document.
+            self.add_error(None, "Upload a PDF or paste text, not both.")
+        elif pdf:
+            try:
+                cleaned_data["text"] = extract_pdf_text(pdf)
+            except RequirementImportError as error:
+                self.add_error("pdf", str(error))
+        elif not has_text:
+            self.add_error("text", "Upload a PDF or paste the project's requirements.")
+        return cleaned_data
