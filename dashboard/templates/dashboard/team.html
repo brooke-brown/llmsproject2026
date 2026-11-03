@@ -14,11 +14,14 @@
 {% endfor %}
 
 <h2>Students</h2>
+{% if share_week %}
+<p><small>Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.</small></p>
+{% endif %}
 {% for membership in memberships %}
 <article>
   <header>
     <strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.get_full_name|default:membership.user.github_login }}</a>{% else %}{{ membership.user.get_full_name|default:membership.user.github_login }}{% endif %}</strong>
-    (<code>{{ membership.user.github_login }}</code>)
+    (<code>{{ membership.user.github_login }}</code>){% if membership.contribution_share is not None %} · <strong>{{ membership.contribution_share }}%</strong>{% endif %}
   </header>
   {% for flag in membership.user.team_flags %}
   <p><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
