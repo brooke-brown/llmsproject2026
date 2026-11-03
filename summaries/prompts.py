@@ -116,6 +116,8 @@ def _head(artifact) -> str:
         f"type: {artifact.type}",
         f"date: {when}",
     ]
+    if artifact.review_state:
+        lines.append(f"review state: {artifact.review_state}")
     if artifact.title:
         lines.extend(_capped("title", artifact.title, TITLE_CAP))
     if artifact.body:

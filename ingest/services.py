@@ -12,6 +12,8 @@ REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
 MAX_DIFF_CHARS = 100_000
 # GitHub's placeholder author for activity from a deleted account.
 DELETED_ACCOUNT_LOGIN = "ghost"
+# A review that's been started but not submitted.
+PENDING_REVIEW_STATE = "PENDING"
 # Matched against a whole line, so a mention inside a sentence isn't a trailer.
 CO_AUTHOR_TRAILER = re.compile(
     r"co-authored-by:(?P<name>[^<>]*)<(?P<email>[^<>\s@]+@[^<>\s@]+)>\s*", re.IGNORECASE
@@ -23,13 +25,15 @@ NOREPLY_EMAIL = re.compile(
 
 
 def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
-    """Collects a repo's commits, PRs and issues for a week and returns all its artifacts for it.
+    """Collects a repo's commits, PRs, reviews and issues for a week and returns its artifacts.
 
     The week runs from the start of week_start through the end of week_end, in the
     reporting time zone. Commits come from every branch, and merge commits are skipped.
     Co-authors are matched against the students on the repo's team at the time of the run.
     A PR counts when it merged, or when it was created if unmerged. An issue counts when
-    it was created. Activity from a deleted GitHub account is stored with no author login.
+    it was created. A review counts when it was submitted, whatever the PR's own date, but
+    not if it's pending or by the PR's author. Activity from a deleted GitHub account is
+    stored with no author login.
     """
     start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
     end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
@@ -116,6 +120,32 @@ def _save_pulls(repo: Repo, github_repo, start: datetime, end: datetime) -> None
                     **_diff_fields(pull.get_files()),
                 },
             )
+        _save_reviews(repo, pull, start, end)
+
+
+def _save_reviews(repo: Repo, pull, start: datetime, end: datetime) -> None:
+    """Saves a PR's reviews submitted in [start, end), leaving out any by the PR's author."""
+    # Deleted accounts all share one login, so two of them aren't known to be one person.
+    pull_author = _credited_login(pull.user).lower()
+    for review in pull.get_reviews():
+        submitted = review.submitted_at
+        if review.state == PENDING_REVIEW_STATE or submitted is None:
+            continue
+        reviewer = _credited_login(review.user)
+        if start <= submitted < end and (not reviewer or reviewer.lower() != pull_author):
+            Artifact.objects.update_or_create(
+                repo=repo,
+                artifact_id=f"{repo.full_name}:review:{review.id}",
+                defaults={
+                    "type": Artifact.Type.REVIEW,
+                    "url": review.html_url,
+                    "timestamp": submitted,
+                    # GitHub sends a null body when the reviewer wrote nothing.
+                    "body": review.body or "",
+                    "author_login": reviewer,
+                    "review_state": review.state,
+                },
+            )
 
 
 def _issues_created_between(github_repo, start: datetime, end: datetime) -> list:
@@ -144,15 +174,20 @@ def _save_issue(repo: Repo, issue) -> Artifact:
 
 
 def _pull_or_issue_fields(item) -> dict[str, str]:
-    author = item.user
-    deleted = author is None or author.login == DELETED_ACCOUNT_LOGIN
     return {
         "url": item.html_url,
         "title": item.title,
         # GitHub sends a null body when there's no description.
         "body": item.body or "",
-        "author_login": "" if deleted else author.login,
+        "author_login": _credited_login(item.user),
     }
+
+
+def _credited_login(github_user) -> str:
+    """The user's login, or an empty string for a deleted account, which earns no credit."""
+    if github_user is None or github_user.login == DELETED_ACCOUNT_LOGIN:
+        return ""
+    return github_user.login
 
 
 def _match_co_authors(

@@ -53,7 +53,8 @@
     "url": "https://github.com/sample-strive-org/team-a-app/pull/2#pullrequestreview-1001",
     "timestamp": "2026-10-29T16:00:00Z",
     "body": "Approved. The done button works as described.",
-    "author_login": "sample-student-a"
+    "author_login": "sample-student-a",
+    "review_state": "APPROVED"
   }},
   {"model": "ingest.artifact", "pk": 4, "fields": {
     "repo": 1,
