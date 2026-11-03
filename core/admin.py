@@ -74,7 +74,10 @@ class ProjectAdmin(admin.ModelAdmin):
             raise PermissionDenied
         project = get_object_or_404(Project, pk=project_id)
 
-        form = RequirementImportForm(request.POST if request.method == "POST" else None)
+        if request.method == "POST":
+            form = RequirementImportForm(request.POST, request.FILES)
+        else:
+            form = RequirementImportForm()
         if form.is_valid():
             try:
                 requirements = import_requirements(project, form.cleaned_data["text"])
