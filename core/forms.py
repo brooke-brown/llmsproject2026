@@ -75,3 +75,19 @@ class RepoInlineFormSet(forms.BaseInlineFormSet):
             if full_name in seen:
                 raise ValidationError(DUPLICATE_REPO_MESSAGE)
             seen.add(full_name)
+
+
+class RequirementImportForm(forms.Form):
+    # Not stripped, so the LLM and the source check see exactly what was pasted.
+    text = forms.CharField(
+        label="Requirements text",
+        strip=False,
+        widget=forms.Textarea(attrs={"rows": 20, "cols": 80}),
+        help_text="Paste the project's requirements. Each one must stay worded as written here.",
+    )
+
+    def clean_text(self):
+        text = self.cleaned_data["text"]
+        if not text.strip():
+            raise ValidationError("Paste the project's requirements.")
+        return text

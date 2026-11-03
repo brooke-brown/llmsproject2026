@@ -1,0 +1,8 @@
+{% extends "admin/change_form.html" %}
+
+{% block object-tools-items %}
+{% if perms.core.add_requirement %}
+<li><a href="{% url 'admin:core_project_import_requirements' original.pk %}">Import requirements</a></li>
+{% endif %}
+{{ block.super }}
+{% endblock %}
