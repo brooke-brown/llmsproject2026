@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.db.models import Case, Exists, OuterRef, Prefetch, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -198,18 +199,27 @@ def generate_student_summary(student, team, week_start):
     recompute the team's flags.
 
     Raises GenerationError naming the step that failed. Flags are only recomputed after
-    a summary is saved, so a failure leaves them as they were.
+    a summary is saved, so a failure leaves them as they were. Ingesting the team's repos
+    is all-or-nothing, so a failure on one leaves the others as they were too.
     """
     end = week_end(week_start)
-    for repo in team_repos(team):
-        try:
-            ingest_services.ingest(repo, week_start, end)
-        except Exception:
-            # ingest talks to GitHub, which can fail in many ways. Its error isn't shown,
-            # so nothing from the repo reaches the page.
-            raise GenerationError(
-                f"Couldn't pull GitHub activity for {repo.full_name}. No summary was generated."
-            ) from None
+    with transaction.atomic():
+        for repo in team_repos(team):
+            try:
+                ingest_services.ingest(repo, week_start, end)
+            except ingest_services.IngestError as error:
+                # IngestError messages are written for users and never hold the token.
+                raise GenerationError(
+                    f"Couldn't pull GitHub activity for {repo.full_name}: {error} "
+                    "No summary was generated."
+                ) from None
+            except Exception:
+                # Anything else is unexpected. Its error isn't shown, so nothing from the
+                # repo reaches the page.
+                raise GenerationError(
+                    f"Couldn't pull GitHub activity for {repo.full_name}. "
+                    "No summary was generated."
+                ) from None
     try:
         summary = summaries_services.generate_summary(student, team, week_start)
     except LLMError as error:

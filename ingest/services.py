@@ -3,8 +3,9 @@ import re
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from django.db import transaction
 from django.db.models import Exists, OuterRef, QuerySet
-from github import Auth, Github
+from github import Auth, Github, GithubException, RateLimitExceededException
 
 from core.models import Repo, Team, TeamMembership, User
 from ingest.models import Artifact
@@ -25,6 +26,22 @@ NOREPLY_EMAIL = re.compile(
 )
 
 
+class IngestError(Exception):
+    """GitHub activity couldn't be collected. The message is safe to show to a user."""
+
+
+class BadTokenError(IngestError):
+    """GITHUB_TOKEN is missing, or GitHub won't accept it for this request."""
+
+
+class RepoNotFoundError(IngestError):
+    """GitHub has no such repo, or won't show it to this token."""
+
+
+class RateLimitError(IngestError):
+    """GitHub's rate limit was reached."""
+
+
 def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
     """Collects a repo's commits, PRs, reviews and issues for a week and returns its artifacts.
 
@@ -40,25 +57,57 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
     Running again is how a week is refreshed. PRs, reviews and issues stored for any week
     pick up changes from GitHub, and each stays one row, so claims citing it keep their
     links. For the same reason, an artifact that's gone from GitHub stays stored.
+
+    The run is one transaction, so a failure anywhere leaves the stored data as it was. An
+    error from GitHub is raised as an IngestError or one of its subclasses. Its message is
+    written here and never copied from GitHub, so it can't carry the token.
     """
     start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
     end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
 
-    github_repo = Github(auth=Auth.Token(os.environ["GITHUB_TOKEN"])).get_repo(repo.full_name)
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise BadTokenError("GITHUB_TOKEN isn't set.")
+    # PyGithub's default retry sleeps until a rate limit resets, which would hang the request.
+    client = Github(auth=Auth.Token(token), retry=None)
     students = list(
         User.objects.filter(team_memberships__team=repo.team).values_list("github_login", "email")
     )
-    for commit in _commits_authored_between(github_repo, start, end):
-        _save_commit(repo, commit, students)
-    _rematch_stored_co_authors(repo, students)
-    _save_pulls(repo, github_repo, start, end)
-    _save_issues(repo, github_repo, start, end)
+    try:
+        with transaction.atomic():
+            github_repo = client.get_repo(repo.full_name)
+            for commit in _commits_authored_between(github_repo, start, end):
+                _save_commit(repo, commit, students)
+            _rematch_stored_co_authors(repo, students)
+            _save_pulls(repo, github_repo, start, end)
+            _save_issues(repo, github_repo, start, end)
+    except GithubException as error:
+        # `from None` keeps GitHub's response, which could echo the token, out of tracebacks.
+        raise _ingest_error(error, repo) from None
 
     return list(
         Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end).order_by(
             "timestamp", "pk"
         )
     )
+
+
+def _ingest_error(error: GithubException, repo: Repo) -> IngestError:
+    # Rate limits come first, because GitHub can send them as a 403. PyGithub only recognizes
+    # those, so a 429 arrives as a plain GithubException.
+    if isinstance(error, RateLimitExceededException) or error.status == 429:
+        return RateLimitError("GitHub's rate limit was reached. Try again later.")
+    if error.status in (401, 403):
+        return BadTokenError(
+            f"GitHub didn't accept GITHUB_TOKEN for {repo.full_name}. "
+            "Check that it's valid and can read this repo."
+        )
+    if error.status == 404:
+        return RepoNotFoundError(
+            f"GitHub couldn't find {repo.full_name}. "
+            "Check the repo's name, and that GITHUB_TOKEN can read it if it's private."
+        )
+    return IngestError(f"GitHub returned an error (status {error.status}). Try again later.")
 
 
 def _commits_authored_between(github_repo, start: datetime, end: datetime) -> list:
