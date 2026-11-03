@@ -28,7 +28,7 @@ LIVE_TEAM = "Team Live"
 LIVE_STUDENTS = ["todbukh", "brooke-brown", "akshitatiwari132"]
 
 # Invented people and repos for the second team. The sample-org owner doesn't exist on
-# GitHub, so "Generate summary" can't pull real data for this team.
+# GitHub, so "Generate summaries" can't pull real data for this team.
 FAKE_TEAM = "Team Sample"
 FAKE_REPO = "sample-org/team-sample-app"
 FAKE_STUDENTS = ["sample-ada", "sample-grace"]

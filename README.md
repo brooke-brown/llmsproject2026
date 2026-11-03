@@ -24,10 +24,10 @@ STRIVE pulls a student team's GitHub activity, has an LLM write a weekly summary
 
 ## How it works
 
-Clicking **Generate summary** for a student and week runs this pipeline:
+Clicking **Generate summaries** for a team and week ingests the team's repos once, then writes a summary for each student. For each student, it runs this pipeline:
 
 ```
-Generate summary
+Generate summaries
   │
   ▼
 ingest               pull commits, PRs, reviews and issues from each of the team's repos
@@ -48,10 +48,10 @@ validate             plain Python checks each claim against the stored GitHub da
                      └─ still fail ─► drop   save the summary and a ValidationRun
                                              │
                                              ▼
-                                     recompute the team's flags
+                                     recompute the team's flags, once every student has succeeded
 ```
 
-Staff then browse **course overview → team → summary**. The summary page shows verified claims with their GitHub links, plus an "N couldn't be verified" note if any were dropped.
+Staff then browse **course overview → team → summary**. The overview shows which teams are flagged, and the team page shows which student a flag is about. The summary page shows verified claims with their GitHub links, plus an "N couldn't be verified" note if any were dropped.
 
 ### What's collected
 
@@ -107,7 +107,7 @@ Open <http://127.0.0.1:8000/> and log in as `sample-instructor`, using your `SEE
 | Course and project | `CS 4501, Fall 2026` with `Project 1` and two sample requirements |
 | Staff | `sample-instructor` and `sample-ta`, who log in with `SEED_PASSWORD` |
 | `Team Live` | This repo (`brooke-brown/llmsproject2026`) with the group's three GitHub logins. Summaries work here if `GITHUB_TOKEN` can read the repo. |
-| `Team Sample` | An invented repo and students. **Its repo doesn't exist on GitHub, so Generate summary fails here** with a "couldn't find" message. |
+| `Team Sample` | An invented repo and students. **Its repo doesn't exist on GitHub, so Generate summaries fails here** with a "couldn't find" message. |
 
 Students get no password, because the alpha has no student pages.
 
@@ -126,8 +126,8 @@ Documented in [`.env.example`](.env.example). Keep real values in `.env`, which 
 
 | Variable | Needed for | Notes |
 |---|---|---|
-| `GITHUB_TOKEN` | Generate summary | Must be able to read the team's repos, including private ones |
-| `LLM_API_KEY` | Generate summary, requirements import | Anthropic API key |
+| `GITHUB_TOKEN` | Generate summaries | Must be able to read the team's repos, including private ones |
+| `LLM_API_KEY` | Generate summaries, requirements import | Anthropic API key |
 | `LLM_MODEL` | Optional | Defaults to `claude-opus-5-5` |
 | `SEED_PASSWORD` | `manage.py seed` | The command refuses to run if it's empty or still `replace-me` |
 | `DJANGO_SECRET_KEY` | Deployments | Falls back to an insecure development key when unset |
@@ -154,13 +154,14 @@ Good to know:
 
 ### Generating summaries
 
-On a team page, pick a week and click **Generate summary** next to a student.
+On the course overview, pick a week for a team and click **Generate summaries**.
 
 - The date must be a **Monday** that starts a week that has already ended. It defaults to the most recent completed week.
-- Each click runs inside the web request and ingests all of the team's repos, so it can take a while. Each LLM call can take up to 2 minutes, and a summary can make up to 3 of them.
-- Generating the same week again replaces that summary's claims.
+- Each click runs inside the web request, ingesting all of the team's repos once and then writing each student's summary in turn, so it can take a while. Each LLM call can take up to 2 minutes, and a summary can make up to 3 of them.
+- Generating the same week again regenerates the whole team's summaries, using fresh GitHub data.
 - A student with no activity gets a "No activity that week" summary, with no LLM call.
-- If ingest or the LLM fails, the page says which step failed and any earlier summary stays as it was.
+- If ingest fails, the message names the repo, nothing changes and no LLM calls are made.
+- If a student's summary fails, the other students are still processed, and the failed student keeps any earlier summary for the week. The message names who failed, and the team gets a **Retry failed summaries** button that writes only those summaries again, without another ingest. This is separate from the automatic retries of claims that fail the validator.
 
 ### Pages
 
@@ -168,8 +169,8 @@ On a team page, pick a week and click **Generate summary** next to a student.
 |---|---|
 | `/accounts/login/`, `/accounts/logout/` | Log in and out |
 | `/` | Your courses. Goes straight to the course if you only have one. |
-| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams |
-| `/teams/<id>/` | Repos, flags, students, their summaries, and the Generate summary button |
+| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, a Flag or Warning label, and the Generate summaries button |
+| `/teams/<id>/` | Repos, flags with their reasons, and students, whose names link to their newest summary, with all their summaries |
 | `/summaries/<id>/` | Verified claims with GitHub links, and the "couldn't be verified" note |
 | `/admin/` | Setup, plus read-only views of artifacts, summaries, claims, validation runs and flags |
 
@@ -216,7 +217,7 @@ Defined in [`summaries/schemas.py`](summaries/schemas.py). This is a [shared con
 
 ## Flags
 
-Flags are recomputed after each summary is saved, and replace the team's earlier flags. There's one rule so far, `low-requirement-share` in [`dashboard/flags.py`](dashboard/flags.py).
+Flags are recomputed once every student's summary has succeeded, and replace the team's earlier flags. After a partial failure they stay as they were until a retry or a full run succeeds. There's one rule so far, `low-requirement-share` in [`dashboard/flags.py`](dashboard/flags.py).
 
 Each student's score is the sum of their verified, requirement-tied claims, weighted **minor 1, moderate 2, major 3**. Their share of the team's total is then compared with an equal share:
 
@@ -226,7 +227,7 @@ Each student's score is the sum of their verified, requirement-tied claims, weig
 | 50% to below 75% | **Warning** | About 17% to below 25% |
 | 75% or more | Nothing | 25% or more |
 
-The rule only looks at the latest week in which **every student on the team has a summary**, so a missing summary never raises a flag. **To see flags, generate the same week for every student on the team.** No flag is raised if a team has fewer than two students or no requirement-tied work that week.
+The rule only looks at the latest week in which **every student on the team has a summary**, so a missing summary never raises a flag. No flag is raised if a team has fewer than two students or no requirement-tied work that week.
 
 Flags describe observable activity, not character.
 
@@ -260,7 +261,7 @@ Each app has one owner, and changes outside your own app go through its owner. S
 | [`core/`](core/) | Todd | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, setup admin, `seed` command |
 | [`ingest/`](ingest/) | Todd | `Artifact` model, GitHub ingest, co-author parsing, unattributed commits, sample fixture |
 | [`summaries/`](summaries/) | Akshita | `Summary`, `Claim`, `ValidationRun`, LLM client, prompts, claim schema, validator, retry loop |
-| [`dashboard/`](dashboard/) | Brooke | Views, templates, `Flag` model and rules, Generate summary button |
+| [`dashboard/`](dashboard/) | Brooke | Views, templates, `Flag` model and rules, Generate summaries button |
 | [`strive/`](strive/) | | Django settings and root URLs |
 | [`docs/`](docs/) | | The [STRIVE pitch](docs/readme-startupSelected.md) |
 | [`directions/`](directions/) | | Archive of the startup ideas we considered and didn't pick. Kept for documentation only. |

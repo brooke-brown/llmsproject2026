@@ -17,9 +17,15 @@ def home(request):
 @login_required
 def course_overview(request, course_id):
     course = services.get_course_for_staff(request.user, course_id)
-    projects = services.course_projects_with_teams(course)
     return render(
-        request, "dashboard/course_overview.html", {"course": course, "projects": projects}
+        request,
+        "dashboard/course_overview.html",
+        {
+            "course": course,
+            "projects": services.course_projects_with_teams(course),
+            "default_week_start": services.last_completed_week_start(),
+            "retry_team_ids": services.team_ids_to_retry(request.session),
+        },
     )
 
 
@@ -34,22 +40,41 @@ def team(request, team_id):
             "repos": services.team_repos(team),
             "team_flags": services.team_wide_flags(team),
             "memberships": services.team_memberships_with_summaries(team),
-            "default_week_start": services.last_completed_week_start(),
         },
     )
 
 
+def _show_generation(request, generation):
+    """Remember who to retry, say how the run went, and return to the course overview."""
+    services.remember_retry(request.session, generation)
+    add_message = messages.success if generation.succeeded else messages.error
+    add_message(request, generation.message)
+    return redirect("dashboard:course_overview", course_id=generation.team.project.course_id)
+
+
 @login_required
 @require_POST
-def generate_summary(request, team_id, user_id):
-    team, student = services.get_team_student_for_staff(request.user, team_id, user_id)
+def generate_team_summaries(request, team_id):
+    team = services.get_team_for_staff(request.user, team_id)
     try:
         week_start = services.parse_week_start(request.POST.get("week_start"))
-        summary = services.generate_student_summary(student, team, week_start)
+        generation = services.generate_team_summaries(team, week_start)
     except services.GenerationError as error:
-        messages.error(request, str(error))
-        return redirect("dashboard:team", team_id=team.id)
-    return redirect("dashboard:summary", summary_id=summary.id)
+        # The overview lists every team, so the message says which one it's about.
+        messages.error(request, f"{team.name}: {error}")
+        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+    return _show_generation(request, generation)
+
+
+@login_required
+@require_POST
+def retry_failed_summaries(request, team_id):
+    team = services.get_team_for_staff(request.user, team_id)
+    generation = services.retry_failed_summaries(team, request.session)
+    if generation is None:
+        messages.info(request, f"{team.name} has no failed summaries to retry.")
+        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+    return _show_generation(request, generation)
 
 
 @login_required
