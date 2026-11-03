@@ -1,7 +1,7 @@
-"""The LLM client: sends a prompt to Claude and returns the claims it writes.
+"""The LLM client: sends a prompt to Claude and returns its checked, structured reply.
 
-The reply is requested as structured output and checked against the claim schema, so
-a reply that doesn't fit raises LLMError instead of returning partial claims.
+The reply is requested as structured output and checked against a Pydantic schema, so
+a reply that doesn't fit raises LLMError instead of returning partial results.
 
 The prompt and the reply contain student work, so nothing here logs them and no error
 message repeats them. Errors are raised with `from None` so a chained validation error
@@ -33,7 +33,15 @@ class ClaimList(BaseModel):
 
 
 def generate_claims(prompt: str, *, system: str = "", client=None) -> list[Claim]:
-    """Send `prompt` to the LLM and return the claims it wrote.
+    """Send `prompt` to the LLM and return the claims it wrote."""
+    reply = generate_structured(prompt, ClaimList, system=system, client=client)
+    return list(reply.claims)
+
+
+def generate_structured[T: BaseModel](
+    prompt: str, output_format: type[T], *, system: str = "", client=None
+) -> T:
+    """Send `prompt` to the LLM and return its reply as an `output_format` instance.
 
     `client` is for tests. Without it a client is built from LLM_API_KEY, and the model
     comes from LLM_MODEL.
@@ -45,7 +53,7 @@ def generate_claims(prompt: str, *, system: str = "", client=None) -> list[Claim
         "model": _model(),
         "max_tokens": MAX_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
-        "output_format": ClaimList,
+        "output_format": output_format,
     }
     if system:
         request["system"] = system
@@ -71,10 +79,10 @@ def generate_claims(prompt: str, *, system: str = "", client=None) -> list[Claim
         raise LLMError("The LLM's reply was cut off at the token limit.")
     if response.parsed_output is None:
         raise LLMError(_SCHEMA_MESSAGE)
-    return list(response.parsed_output.claims)
+    return response.parsed_output
 
 
-_SCHEMA_MESSAGE = "The LLM's reply didn't match the claim schema."
+_SCHEMA_MESSAGE = "The LLM's reply didn't match the expected schema."
 
 
 def _build_client():

@@ -1,5 +1,7 @@
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_POST
 
 from . import services
 
@@ -30,12 +32,36 @@ def team(request, team_id):
         {
             "team": team,
             "repos": services.team_repos(team),
+            "team_flags": services.team_wide_flags(team),
             "memberships": services.team_memberships_with_summaries(team),
+            "default_week_start": services.last_completed_week_start(),
         },
     )
 
 
 @login_required
+@require_POST
+def generate_summary(request, team_id, user_id):
+    team, student = services.get_team_student_for_staff(request.user, team_id, user_id)
+    try:
+        week_start = services.parse_week_start(request.POST.get("week_start"))
+        summary = services.generate_student_summary(student, team, week_start)
+    except services.GenerationError as error:
+        messages.error(request, str(error))
+        return redirect("dashboard:team", team_id=team.id)
+    return redirect("dashboard:summary", summary_id=summary.id)
+
+
+@login_required
 def summary(request, summary_id):
     summary = services.get_summary_for_staff(request.user, summary_id)
-    return render(request, "dashboard/summary.html", {"summary": summary})
+    return render(
+        request,
+        "dashboard/summary.html",
+        {
+            "summary": summary,
+            "week_end": services.week_end(summary.week_start),
+            "claims": services.verified_claims(summary),
+            "unverified_count": summary.unverified_count,
+        },
+    )

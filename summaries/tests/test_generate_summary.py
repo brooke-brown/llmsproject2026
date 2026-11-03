@@ -234,6 +234,17 @@ class PromptTests(GenerateSummaryTestCase):
         self.assertIn("Tasks disappear after a page refresh", self.prompt)  # An issue title.
         self.assertIn("Approved. The done button work", self.prompt)  # A review's body.
 
+    def test_the_prompt_gives_a_reviews_state(self):
+        self.run_summary()
+
+        self.assertIn("review state: APPROVED", self.prompt)
+
+    def test_the_prompt_gives_no_state_for_other_artifacts(self):
+        self.run_summary()
+
+        # Student A has five artifacts this week, and only one is a review.
+        self.assertEqual(self.prompt.count("review state:"), 1)
+
     def test_the_prompt_includes_a_commits_diff(self):
         commit = Artifact.objects.get(artifact_id=COMMIT, repo__full_name=TEAM_A_REPO)
 

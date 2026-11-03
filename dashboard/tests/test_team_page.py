@@ -214,27 +214,3 @@ class TeamPageAccessTests(TeamPageFixture):
         self.assertRedirects(
             response, f"{reverse('login')}?next={url}", fetch_redirect_response=False
         )
-
-
-class SummaryPlaceholderAccessTests(TeamPageFixture):
-    """The summary page is a placeholder until US-17, but must already be staff-only."""
-
-    def get_summary(self, user, summary_id):
-        self.client.force_login(user)
-        return self.client.get(summary_url(summary_id))
-
-    def test_instructor_can_open_a_summary(self):
-        response = self.get_summary(self.instructor, self.ada_oct_26.id)
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, f'href="{team_url(self.team.id)}"')
-
-    def test_student_gets_403(self):
-        response = self.get_summary(self.ada, self.ada_oct_26.id)
-
-        self.assertEqual(response.status_code, 403)
-
-    def test_missing_summary_returns_404(self):
-        response = self.get_summary(self.instructor, self.ada_oct_26.id + 1000)
-
-        self.assertEqual(response.status_code, 404)

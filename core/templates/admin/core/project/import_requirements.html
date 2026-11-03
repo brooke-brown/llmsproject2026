@@ -1,0 +1,27 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:core_project_changelist' %}">Projects</a>
+  &rsaquo; <a href="{% url 'admin:core_project_change' project.pk %}">{{ project.name }}</a>
+  &rsaquo; Import requirements
+</div>
+{% endblock %}
+
+{% block content %}
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <p>A project's requirements can only be imported once, because claims point to them by number.</p>
+  {{ form.pdf.errors }}
+  <p>{{ form.pdf.label_tag }}</p>
+  <p>{{ form.pdf }}</p>
+  <p class="help">{{ form.pdf.help_text }}</p>
+  {{ form.text.errors }}
+  <p>{{ form.text.label_tag }}</p>
+  <p>{{ form.text }}</p>
+  <p class="help">{{ form.text.help_text }}</p>
+  <input type="submit" value="Split into requirements" class="default">
+</form>
+{% endblock %}

@@ -26,6 +26,9 @@
     </nav>
   </header>
   <main class="container">
+    {% for message in messages %}
+    <p role="alert"><mark>{{ message }}</mark></p>
+    {% endfor %}
     {% block content %}{% endblock %}
   </main>
 </body>

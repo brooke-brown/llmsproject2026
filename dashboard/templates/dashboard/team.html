@@ -9,11 +9,24 @@
   Repos:
   {% for repo in repos %}<code>{{ repo.full_name }}</code>{% if not forloop.last %}, {% endif %}{% empty %}none yet{% endfor %}
 </p>
+{% for flag in team_flags %}
+<p><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
+{% endfor %}
 
 <h2>Students</h2>
 {% for membership in memberships %}
 <article>
   <header><strong>{{ membership.user.get_full_name|default:membership.user.github_login }}</strong> (<code>{{ membership.user.github_login }}</code>)</header>
+  {% for flag in membership.user.team_flags %}
+  <p><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
+  {% endfor %}
+  <form action="{% url 'dashboard:generate_summary' team.id membership.user.id %}" method="post">
+    {% csrf_token %}
+    <fieldset role="group">
+      <input type="date" name="week_start" value="{{ default_week_start|date:'Y-m-d' }}" max="{{ default_week_start|date:'Y-m-d' }}" aria-label="Week starting Monday" required>
+      <button type="submit">Generate summary</button>
+    </fieldset>
+  </form>
   <ul>
     {% for summary in membership.user.team_summaries %}
     <li><a href="{% url 'dashboard:summary' summary.id %}">Week of {{ summary.week_start|date:"M j, Y" }}</a></li>
