@@ -3,9 +3,10 @@ import re
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from django.db.models import Exists, OuterRef, QuerySet
 from github import Auth, Github
 
-from core.models import Repo, Team, User
+from core.models import Repo, Team, TeamMembership, User
 from ingest.models import Artifact
 
 REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
@@ -29,7 +30,8 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
 
     The week runs from the start of week_start through the end of week_end, in the
     reporting time zone. Commits come from every branch, and merge commits are skipped.
-    Co-authors are matched against the students on the repo's team at the time of the run.
+    Co-authors are matched against the students on the repo's team at the time of the run,
+    on every stored commit, so a corrected login reaches commits from earlier weeks too.
     A PR counts when it merged, or when it was created if unmerged. An issue counts when
     it was created. A review counts when it was submitted, whatever the PR's own date, but
     not if it's pending or by the PR's author. Activity from a deleted GitHub account is
@@ -44,6 +46,7 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
     )
     for commit in _commits_authored_between(github_repo, start, end):
         _save_commit(repo, commit, students)
+    _rematch_stored_co_authors(repo, students)
     _save_pulls(repo, github_repo, start, end)
     for issue in _issues_created_between(github_repo, start, end):
         _save_issue(repo, issue)
@@ -93,6 +96,25 @@ def _save_commit(repo: Repo, commit, students: list[tuple[str, str]]) -> Artifac
         },
     )
     return artifact
+
+
+def _rematch_stored_co_authors(repo: Repo, students: list[tuple[str, str]]) -> None:
+    """Updates co-author credit on the repo's stored commits from their saved messages.
+
+    Commits older than the week being ingested aren't fetched again, so a login fixed in
+    admin would otherwise never reach them.
+    """
+    changed = []
+    commits = Artifact.objects.filter(repo=repo, type=Artifact.Type.COMMIT).only(
+        "title", "co_author_logins", "unmatched_co_authors"
+    )
+    for commit in commits:
+        logins, unmatched = _match_co_authors(commit.title, students)
+        if logins != commit.co_author_logins or unmatched != commit.unmatched_co_authors:
+            commit.co_author_logins = logins
+            commit.unmatched_co_authors = unmatched
+            changed.append(commit)
+    Artifact.objects.bulk_update(changed, ["co_author_logins", "unmatched_co_authors"])
 
 
 def _save_pulls(repo: Repo, github_repo, start: datetime, end: datetime) -> None:
@@ -240,9 +262,7 @@ def student_week_artifacts(user: User, team: Team, week_start: date) -> list[Art
     author_login is its reviewer). Logins are compared ignoring case. The week runs for
     seven days from week_start, in the reporting time zone.
     """
-    # Built from dates, because a week with a clock change isn't exactly 168 hours long.
-    start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
-    end = datetime.combine(week_start + timedelta(days=7), time.min, tzinfo=REPORTING_TIME_ZONE)
+    start, end = _week_bounds(week_start)
     artifacts = Artifact.objects.filter(
         repo__team=team, timestamp__gte=start, timestamp__lt=end
     ).order_by("timestamp", "pk")
@@ -256,3 +276,33 @@ def student_week_artifacts(user: User, team: Team, week_start: date) -> list[Art
         if artifact.author_login.lower() == login
         or login in (co_author.lower() for co_author in artifact.co_author_logins)
     ]
+
+
+def unattributed_commits(repo: Repo, week_start: date) -> list[Artifact]:
+    """A repo's commits in a reporting week whose author matches no one on its team.
+
+    The week runs for seven days from week_start, in the reporting time zone.
+    """
+    start, end = _week_bounds(week_start)
+    artifacts = Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end)
+    return list(only_unattributed_commits(artifacts).order_by("timestamp", "pk"))
+
+
+def only_unattributed_commits(artifacts: QuerySet[Artifact]) -> QuerySet[Artifact]:
+    """Narrows artifacts to commits with no GitHub login, or a login not on the repo's team.
+
+    This reads the team as it is now, so a login fixed in admin applies straight away. It
+    looks only at the commit's author: a student co-author is still credited separately.
+    """
+    on_team = TeamMembership.objects.filter(
+        team=OuterRef("repo__team"), user__github_login__iexact=OuterRef("author_login")
+    )
+    return artifacts.filter(~Exists(on_team), type=Artifact.Type.COMMIT)
+
+
+def _week_bounds(week_start: date) -> tuple[datetime, datetime]:
+    """The start and end, exclusive, of the seven days from week_start."""
+    # Built from dates, because a week with a clock change isn't exactly 168 hours long.
+    start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
+    end = datetime.combine(week_start + timedelta(days=7), time.min, tzinfo=REPORTING_TIME_ZONE)
+    return start, end
