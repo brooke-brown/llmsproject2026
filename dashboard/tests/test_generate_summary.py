@@ -20,6 +20,8 @@ from django.utils.html import escape
 from core.models import Course, Enrollment, Project, Repo, Team, TeamMembership
 from dashboard import services
 from dashboard.models import Flag
+from ingest import services as ingest_services
+from ingest.models import Artifact
 from summaries.llm import LLMError
 from summaries.models import Claim, Summary
 
@@ -338,6 +340,82 @@ class GenerateFailureTests(GenerateSummaryFixture):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "No summary was generated.")
+
+
+class FailedRefreshTests(GenerateSummaryFixture):
+    """US-8 (#24): a TA can tell why a refresh failed, and a failure changes nothing."""
+
+    def fail_ingest_on_last_repo(self, error):
+        """Stores an artifact for each repo before the last one, then fails on the last."""
+        last_repo = list(services.team_repos(self.team))[-1]
+
+        def ingest(repo, week_start, week_end):
+            if repo == last_repo:
+                raise error
+            Artifact.objects.create(
+                repo=repo,
+                artifact_id=f"{repo.full_name}:pr:1",
+                type=Artifact.Type.PR,
+                url=f"https://github.com/{repo.full_name}/pull/1",
+                timestamp=NOW,
+            )
+            return []
+
+        self.ingest.side_effect = ingest
+
+    def test_each_failure_shows_its_own_message_and_names_the_repo(self):
+        for failure in (
+            ingest_services.BadTokenError,
+            ingest_services.RepoNotFoundError,
+            ingest_services.RateLimitError,
+            ingest_services.IngestError,
+        ):
+            with self.subTest(failure.__name__):
+                message = f"The reason is {failure.__name__}."
+                self.ingest.side_effect = failure(message)
+
+                response = self.post(follow=True)
+
+                self.assertRedirects(response, team_url(self.team.id))
+                self.assertContains(response, message)
+                self.assertContains(response, "sample-org/app")
+                self.assertContains(response, "No summary was generated.")
+                self.generate.assert_not_called()
+
+    def test_an_unexpected_failure_keeps_its_details_off_the_page(self):
+        self.ingest.side_effect = RuntimeError("sample-secret-detail")
+
+        response = self.post(follow=True)
+
+        self.assertContains(response, "Couldn&#x27;t pull GitHub activity")
+        self.assertNotContains(response, "sample-secret-detail")
+
+    def test_a_failure_on_a_later_repo_leaves_earlier_repos_unchanged(self):
+        for failure in (ingest_services.RateLimitError("Rate limited."), RuntimeError("Oops.")):
+            with self.subTest(type(failure).__name__):
+                self.fail_ingest_on_last_repo(failure)
+                self.ingest.reset_mock()
+
+                self.post(follow=True)
+
+                self.assertEqual(self.ingest.call_count, 2)
+                self.assertEqual(Artifact.objects.count(), 0)
+
+    def test_a_summary_failure_keeps_the_refreshed_activity(self):
+        # Only ingest is all-or-nothing. The week was collected correctly, and holding the
+        # transaction open through the LLM call would block other writes for no benefit.
+        self.ingest.side_effect = lambda repo, *dates: Artifact.objects.create(
+            repo=repo,
+            artifact_id=f"{repo.full_name}:pr:1",
+            type=Artifact.Type.PR,
+            url=f"https://github.com/{repo.full_name}/pull/1",
+            timestamp=NOW,
+        )
+        self.generate.side_effect = LLMError("The LLM request timed out.")
+
+        self.post(follow=True)
+
+        self.assertEqual(Artifact.objects.count(), 2)
 
 
 class RegenerateTests(GenerateSummaryFixture):
