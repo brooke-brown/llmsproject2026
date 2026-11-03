@@ -110,47 +110,58 @@ class OverviewOrderTests(ShowFlagsFixture):
 
 
 class OverviewFlagContentTests(ShowFlagsFixture):
-    def test_flagged_team_shows_its_label_and_reason(self):
+    """US-22 (#83): the overview shows one label per team and leaves the reasons to the
+    team page, so an instructor clicks into a team to see which student a flag is about."""
+
+    def test_flagged_team_shows_its_label_but_not_the_reason(self):
         reason = "Ada Sample did 10% of the team's requirement-tied work."
         make_flag(self.alpha, Severity.FLAG, reason, user=self.ada)
 
         team = article_containing(self.get_overview(), "Team Alpha")
 
-        self.assertIn("Flag", team)
-        self.assertIn(escape(reason), team)
+        self.assertIn("<mark>Flag</mark>", team)
+        self.assertNotIn(escape(reason), team)
 
-    def test_warned_team_shows_its_label_and_reason(self):
+    def test_warned_team_shows_its_label_but_not_the_reason(self):
         make_flag(self.beta, Severity.WARNING, "Beta did less this week")
 
         team = article_containing(self.get_overview(), "Team Beta")
 
-        self.assertIn("Warning", team)
-        self.assertIn("Beta did less this week", team)
+        self.assertIn("<mark>Warning</mark>", team)
+        self.assertNotIn("Beta did less this week", team)
 
-    def test_team_shows_every_flag_reason(self):
-        make_flag(self.alpha, Severity.FLAG, "First reason", user=self.ada)
+    def test_team_with_a_flag_and_a_warning_shows_one_flag_label(self):
+        make_flag(self.alpha, Severity.WARNING, "First reason", user=self.ada)
+        make_flag(self.alpha, Severity.FLAG, "Second reason", user=self.grace)
+
+        team = article_containing(self.get_overview(), "Team Alpha")
+
+        self.assertEqual(team.count("<mark>"), 1)
+        self.assertIn("<mark>Flag</mark>", team)
+
+    def test_team_with_several_warnings_shows_one_warning_label(self):
+        make_flag(self.alpha, Severity.WARNING, "First reason", user=self.ada)
         make_flag(self.alpha, Severity.WARNING, "Second reason", user=self.grace)
 
         team = article_containing(self.get_overview(), "Team Alpha")
 
-        self.assertIn("First reason", team)
-        self.assertIn("Second reason", team)
+        self.assertEqual(team.count("<mark>"), 1)
+        self.assertIn("<mark>Warning</mark>", team)
 
     def test_team_with_no_flags_shows_no_label(self):
         make_flag(self.delta, Severity.FLAG, "Delta reason")
 
         team = article_containing(self.get_overview(), "Team Alpha")
 
-        self.assertNotIn("Flag", team)
-        self.assertNotIn("Warning", team)
+        self.assertNotIn("<mark>", team)
 
-    def test_a_flag_appears_only_under_its_own_team(self):
+    def test_a_label_appears_only_under_its_own_team(self):
         make_flag(self.delta, Severity.FLAG, "Delta reason")
 
         content = self.get_overview()
 
-        self.assertIn("Delta reason", article_containing(content, "Team Delta"))
-        self.assertNotIn("Delta reason", article_containing(content, "Team Alpha"))
+        self.assertIn("<mark>Flag</mark>", article_containing(content, "Team Delta"))
+        self.assertNotIn("<mark>", article_containing(content, "Team Alpha"))
 
     def test_flags_from_another_course_never_appear(self):
         other_course = Course.objects.create(name="CS 3240, Fall 2026")
@@ -158,7 +169,7 @@ class OverviewFlagContentTests(ShowFlagsFixture):
         other_team = Team.objects.create(project=other_project, name="Team Elsewhere")
         make_flag(other_team, Severity.FLAG, "Elsewhere reason")
 
-        self.assertNotIn("Elsewhere reason", self.get_overview())
+        self.assertNotIn("<mark>", self.get_overview())
 
 
 class TeamPageFlagTests(ShowFlagsFixture):

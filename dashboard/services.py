@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from django.core.exceptions import PermissionDenied
@@ -6,7 +7,7 @@ from django.db.models import Case, Exists, OuterRef, Prefetch, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from core.models import Course, Enrollment, Requirement, Team, TeamMembership
+from core.models import Course, Enrollment, Requirement, Team, TeamMembership, User
 from ingest import services as ingest_services
 from ingest.models import Artifact
 from summaries import services as summaries_services
@@ -18,6 +19,7 @@ from .models import Flag
 
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
 MONDAY = 0  # date.weekday() counts from Monday.
+RETRY_SESSION_KEY = "failed_summaries"  # {team ID: {"week_start": ..., "student_ids": [...]}}
 
 
 def flags_in_display_order():
@@ -123,11 +125,12 @@ def _has_flag(severity):
 
 
 def course_projects_with_teams(course):
-    """The course's projects, each with its requirements by number, and its teams, their
-    students and their flags.
+    """The course's projects, each with its requirements by number, and its teams and their
+    students.
 
     Within a project, flagged teams come first, then warned teams, then the rest, each
-    group sorted by name.
+    group sorted by name. Each team's `flag_rank` is 0 if it has a flag, 1 if its worst is a
+    warning, and 2 otherwise.
     """
     memberships = TeamMembership.objects.select_related("user").order_by(
         "user__last_name", "user__first_name", "user__github_login"
@@ -141,10 +144,7 @@ def course_projects_with_teams(course):
             )
         )
         .order_by("flag_rank", "name")
-        .prefetch_related(
-            Prefetch("memberships", queryset=memberships),
-            Prefetch("flags", queryset=flags_in_display_order()),
-        )
+        .prefetch_related(Prefetch("memberships", queryset=memberships))
     )
     return course.projects.order_by("id").prefetch_related(
         Prefetch("teams", queryset=teams),
@@ -154,16 +154,6 @@ def course_projects_with_teams(course):
 
 class GenerationError(Exception):
     """A summary couldn't be generated. The message is shown to the user as is."""
-
-
-def get_team_student_for_staff(user, team_id, student_id):
-    """The team and one of its students, or 404 if either is missing and 403 if the
-    user isn't the course's staff. Staff is checked first, so membership isn't leaked."""
-    team = get_team_for_staff(user, team_id)
-    membership = get_object_or_404(
-        TeamMembership.objects.select_related("user"), team=team, user_id=student_id
-    )
-    return team, membership.user
 
 
 def reporting_today(now=None):
@@ -194,14 +184,63 @@ def parse_week_start(value, now=None):
     return week_start
 
 
-def generate_student_summary(student, team, week_start):
-    """Ingest each of the team's repos for the week, write the student's summary, then
-    recompute the team's flags.
+def student_name(student):
+    return student.get_full_name() or student.github_login
 
-    Raises GenerationError naming the step that failed. Flags are only recomputed after
-    a summary is saved, so a failure leaves them as they were. Ingesting the team's repos
-    is all-or-nothing, so a failure on one leaves the others as they were too.
-    """
+
+@dataclass(frozen=True)
+class SummaryFailure:
+    student: User
+    reason: str  # Shown to staff, so it never holds student work.
+
+
+@dataclass(frozen=True)
+class TeamGeneration:
+    """How one run of writing a team's summaries went."""
+
+    team: Team
+    week_start: date
+    attempted: int
+    failures: list[SummaryFailure]
+
+    @property
+    def succeeded(self):
+        return not self.failures
+
+    @property
+    def message(self):
+        week = f"the week of {self.week_start:%b} {self.week_start.day}, {self.week_start.year}"
+        if not self.attempted:
+            return (
+                f"Nobody left to retry on {self.team.name} for {week}: the students whose "
+                "summaries failed have left the team."
+            )
+        if self.succeeded:
+            students = "1 student" if self.attempted == 1 else f"{self.attempted} students"
+            return f"Generated summaries for {students} on {self.team.name} for {week}."
+        done = self.attempted - len(self.failures)
+        failed = "; ".join(
+            f"{student_name(failure.student)} ({failure.reason})" for failure in self.failures
+        )
+        return (
+            f"Generated {done} of {self.attempted} summaries for {self.team.name} for {week}. "
+            f"Couldn't generate: {failed}. Flags weren't updated."
+        )
+
+
+def _team_students(team, only_ids=None):
+    """The team's students in display order, limited to `only_ids` if it's given."""
+    memberships = team.memberships.select_related("user").order_by(
+        "user__last_name", "user__first_name", "user__github_login"
+    )
+    if only_ids is not None:
+        memberships = memberships.filter(user_id__in=only_ids)
+    return [membership.user for membership in memberships]
+
+
+def _ingest_team_week(team, week_start):
+    """Ingest each of the team's repos for the week, or raise GenerationError naming the
+    repo. It's all-or-nothing, so a failure on one repo leaves the others as they were."""
     end = week_end(week_start)
     with transaction.atomic():
         for repo in team_repos(team):
@@ -211,21 +250,83 @@ def generate_student_summary(student, team, week_start):
                 # IngestError messages are written for users and never hold the token.
                 raise GenerationError(
                     f"Couldn't pull GitHub activity for {repo.full_name}: {error} "
-                    "No summary was generated."
+                    "No summaries were generated."
                 ) from None
             except Exception:
                 # Anything else is unexpected. Its error isn't shown, so nothing from the
                 # repo reaches the page.
                 raise GenerationError(
                     f"Couldn't pull GitHub activity for {repo.full_name}. "
-                    "No summary was generated."
+                    "No summaries were generated."
                 ) from None
-    try:
-        summary = summaries_services.generate_summary(student, team, week_start)
-    except LLMError as error:
-        # LLMError messages never hold student work, so they are safe to show.
-        raise GenerationError(
-            f"Couldn't write the summary: {error} No summary was generated."
-        ) from None
-    flags.compute_flags(team)
-    return summary
+
+
+def _write_summaries(team, students, week_start):
+    """Write each student's summary, carrying on past a failure, and recompute the team's
+    flags only if none failed.
+
+    A partial run could leave a failed student's old summary next to everyone's new one, so
+    flags wait until every student has succeeded.
+    """
+    failures = []
+    for student in students:
+        try:
+            summaries_services.generate_summary(student, team, week_start)
+        except LLMError as error:
+            # LLMError messages never hold student work, so they are safe to show.
+            failures.append(SummaryFailure(student, str(error)))
+        except Exception:
+            # Anything else is unexpected. Its error isn't shown, so no student work can
+            # reach the page.
+            failures.append(SummaryFailure(student, "an unexpected error"))
+    if not failures:
+        flags.compute_flags(team)
+    return TeamGeneration(team, week_start, len(students), failures)
+
+
+def generate_team_summaries(team, week_start):
+    """Ingest the team's repos once, then write a summary for each student on the team.
+
+    Raises GenerationError, with nothing run, for a team with no students, and for a failed
+    ingest, with no LLM calls made. Otherwise returns a TeamGeneration, which lists any
+    students whose summaries failed. They keep any earlier summary for the week.
+    """
+    students = _team_students(team)
+    if not students:
+        raise GenerationError("This team has no students yet, so nothing was generated.")
+    _ingest_team_week(team, week_start)
+    return _write_summaries(team, students, week_start)
+
+
+def retry_failed_summaries(team, session):
+    """Write summaries again for only the students whose summaries failed, or return None
+    if the session has nothing to retry for this team.
+
+    Ingest doesn't run again, so every student's summary for the week uses the same GitHub
+    data. Anyone who has left the team since is skipped.
+    """
+    retry = session.get(RETRY_SESSION_KEY, {}).get(str(team.id))
+    if retry is None:
+        return None
+    students = _team_students(team, only_ids=retry["student_ids"])
+    return _write_summaries(team, students, date.fromisoformat(retry["week_start"]))
+
+
+def remember_retry(session, generation):
+    """Keep this team's failed students in the session, replacing any it had, or clear them
+    if none failed."""
+    retries = session.get(RETRY_SESSION_KEY, {})
+    key = str(generation.team.id)
+    if generation.failures:
+        retries[key] = {
+            "week_start": generation.week_start.isoformat(),
+            "student_ids": [failure.student.id for failure in generation.failures],
+        }
+    else:
+        retries.pop(key, None)
+    session[RETRY_SESSION_KEY] = retries
+
+
+def team_ids_to_retry(session):
+    """The IDs of the teams with failed summaries to retry in this session."""
+    return {int(team_id) for team_id in session.get(RETRY_SESSION_KEY, {})}

@@ -1,7 +1,7 @@
 """Tests for US-7 (#23): refreshing a week safely.
 
 These reuse the US-2, US-4 and US-5 fakes, so nothing here touches the network. A refresh
-is another `ingest` run, which is what the "Generate summary" button does.
+is another `ingest` run, which is what the "Generate summaries" button does.
 
 Ingest has saved with update_or_create since US-2, so most of these guard behavior it
 already has. The ones that drive new work are in LaterRefreshTests: an issue or review

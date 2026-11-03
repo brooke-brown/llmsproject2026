@@ -24,9 +24,11 @@
   {% for team in project.teams.all %}
   <article>
     <header><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></header>
-    {% for flag in team.flags.all %}
-    <p><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
-    {% endfor %}
+    {% if team.flag_rank == 0 %}
+    <p><mark>Flag</mark></p>
+    {% elif team.flag_rank == 1 %}
+    <p><mark>Warning</mark></p>
+    {% endif %}
     <ul>
       {% for membership in team.memberships.all %}
       <li>{{ membership.user.get_full_name|default:membership.user.github_login }} (<code>{{ membership.user.github_login }}</code>)</li>
@@ -34,6 +36,19 @@
       <li>No students on this team yet.</li>
       {% endfor %}
     </ul>
+    <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post">
+      {% csrf_token %}
+      <fieldset role="group">
+        <input type="date" name="week_start" value="{{ default_week_start|date:'Y-m-d' }}" max="{{ default_week_start|date:'Y-m-d' }}" aria-label="Week starting Monday" required>
+        <button type="submit">Generate summaries</button>
+      </fieldset>
+    </form>
+    {% if team.id in retry_team_ids %}
+    <form action="{% url 'dashboard:retry_failed_summaries' team.id %}" method="post">
+      {% csrf_token %}
+      <button type="submit" class="secondary">Retry failed summaries</button>
+    </form>
+    {% endif %}
   </article>
   {% empty %}
   <p>No teams in this project yet.</p>

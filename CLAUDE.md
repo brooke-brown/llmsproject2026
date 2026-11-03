@@ -30,7 +30,7 @@ Each person owns one app. **Only edit files in your own app** unless the task sa
 | `core/` | Todd | `User` (custom, has `github_login`), `Course`, `Enrollment`, `Project`, `Team`, `TeamMembership`, `Repo`, `Requirement`, requirements PDF upload + extraction (pypdf) + LLM split, admin, seed command |
 | `ingest/` | Todd | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
 | `summaries/` | Akshita | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
-| `dashboard/` | Brooke | Views, templates, `Flag` model + rules, "Generate summary" button. Brooke also owns the deploy and Tuesday's demo script and interview questions. |
+| `dashboard/` | Brooke | Views, templates, `Flag` model + rules, "Generate summaries" button. Brooke also owns the deploy and Tuesday's demo script and interview questions. |
 
 ## Shared contracts: do not change without team agreement
 
@@ -91,10 +91,10 @@ Flag             → Team
 **In:**
 - Admin-based setup; repo ingest by URL + token, including co-author trailers and PR review credit
 - Requirements PDF (or pasted text) → `Requirement` rows editable in admin; requirement tags + significance on claims; simple per-project requirement table
-- "Generate summary" button, which calls `ingest`, then `generate_summary`
+- "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo, then `generate_summary` once per student; flags are recomputed once every student has succeeded
 - Validator, retry, drop + "N couldn't be verified" note, `ValidationRun` logging
 - 1–2 flag rules, based on share of requirement-tied claims weighted by significance
-- Pages: course overview (teams, flagged ones first) → team (students and their summaries) → summary (claims with GitHub links and the unverified note)
+- Pages: course overview (teams, flagged ones first, labels only) → team (flag reasons, students and their summaries) → summary (claims with GitHub links and the unverified note)
 
 **Fallback:** if the core pipeline isn't working end to end by Monday midday, cut requirements.
 

@@ -163,6 +163,37 @@ class TeamPageSummaryTests(TeamPageFixture):
         self.assertNotContains(response, "Week of Sep 28, 2026")
 
 
+class TeamPageStudentLinkTests(TeamPageFixture):
+    """US-22 (#83): each student's name leads to their newest summary."""
+
+    def test_a_students_name_links_to_their_newest_summary(self):
+        response = self.get_team_page()
+
+        self.assertContains(
+            response, f'<a href="{summary_url(self.ada_oct_26.id)}">Ada Sample</a>', html=True
+        )
+
+    def test_the_link_ignores_the_students_summaries_on_other_teams(self):
+        TeamMembership.objects.create(user=self.ada, team=self.other_team)
+        elsewhere = Summary.objects.create(
+            team=self.other_team, user=self.ada, week_start=date(2026, 11, 2)
+        )
+
+        response = self.get_team_page()
+
+        self.assertContains(
+            response, f'<a href="{summary_url(self.ada_oct_26.id)}">Ada Sample</a>', html=True
+        )
+        self.assertNotContains(response, f'href="{summary_url(elsewhere.id)}"')
+
+    def test_a_student_with_no_summaries_is_plain_text_and_says_so(self):
+        content = self.get_team_page().content.decode()
+
+        self.assertIn("<strong>Grace Example</strong>", content)
+        self.assertNotIn(">Grace Example</a>", content)
+        self.assertIn("No summaries yet.", content)
+
+
 class TeamPageAccessTests(TeamPageFixture):
     def test_instructor_enrolled_in_course_sees_the_team_page(self):
         response = self.get_team_page(self.instructor)
