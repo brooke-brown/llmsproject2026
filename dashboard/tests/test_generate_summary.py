@@ -152,14 +152,6 @@ class DefaultWeekTests(TestCase):
 
         self.assertEqual(services.last_completed_week_start(now), date(2026, 10, 19))
 
-    @mock.patch.dict("os.environ", {"STRIVE_ALLOW_CURRENT_WEEK": "1"})
-    def test_allowing_the_current_week_makes_it_this_weeks_monday(self):
-        self.assertEqual(self.week_start_at(2026, 11, 5, 15, 0), date(2026, 11, 2))
-
-    @mock.patch.dict("os.environ", {"STRIVE_ALLOW_CURRENT_WEEK": "0"})
-    def test_any_other_setting_keeps_the_last_completed_week(self):
-        self.assertEqual(self.week_start_at(2026, 11, 5, 15, 0), LAST_WEEK)
-
 
 class GenerateButtonTests(TeamGenerationFixture):
     def test_each_team_on_the_overview_has_one_generate_form(self):
@@ -349,17 +341,6 @@ class GenerateValidationTests(TeamGenerationFixture):
         self.assert_rejected(date(2026, 11, 2), "That week hasn't ended yet.")
 
     def test_future_week_is_rejected(self):
-        self.assert_rejected(date(2026, 11, 9), "That week hasn't ended yet.")
-
-    @mock.patch.dict("os.environ", {"STRIVE_ALLOW_CURRENT_WEEK": "1"})
-    def test_current_week_can_be_generated_when_allowed(self):
-        self.post(week_start=date(2026, 11, 2))
-
-        self.ingest.assert_any_call(self.app, date(2026, 11, 2), date(2026, 11, 8))
-        self.generate.assert_any_call(self.ada, self.team, date(2026, 11, 2))
-
-    @mock.patch.dict("os.environ", {"STRIVE_ALLOW_CURRENT_WEEK": "1"})
-    def test_future_week_is_still_rejected_when_the_current_week_is_allowed(self):
         self.assert_rejected(date(2026, 11, 9), "That week hasn't ended yet.")
 
     def test_missing_week_is_rejected(self):
