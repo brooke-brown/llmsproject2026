@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STRIVE UI mockups</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 1280px; padding: 28px; background: #fff; color: #1a2233; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { margin: 0 0 4px; font-size: 24px; }
+  p { margin: 0 0 20px; color: #566072; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
+  .option h2 { margin: 8px 0 2px; font-size: 17px; }
+  .option a { color: #1c58b0; }
+  .option p { margin: 0; }
+  .frame { display: block; position: relative; height: 270px; overflow: hidden; border: 1px solid #cfd4dc; border-radius: 6px; }
+  .frame iframe { position: absolute; top: 0; left: 0; width: 1280px; height: 900px; border: 0; transform: scale(.3); transform-origin: 0 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<h1>STRIVE UI mockups</h1>
+<p>Static, clickable, and using invented sample data. Each one covers login, courses, course overview, team and summary.</p>
+<div class="grid">
+  <div class="option">
+    <a class="frame" href="a-triage.html" aria-label="Open mockup A"><iframe src="a-triage.html" title="Mockup A preview" tabindex="-1"></iframe></a>
+    <h2><a href="a-triage.html">A: Triage</a></h2>
+    <p>Dense tables and a sidebar. Built for a TA going through many teams each week.</p>
+  </div>
+  <div class="option">
+    <a class="frame" href="b-brief.html" aria-label="Open mockup B"><iframe src="b-brief.html" title="Mockup B preview" tabindex="-1"></iframe></a>
+    <h2><a href="b-brief.html">B: The Brief</a></h2>
+    <p>A readable report with its sources in the margin. Built for trusting and citing a summary.</p>
+  </div>
+  <div class="option">
+    <a class="frame" href="c-balance.html" aria-label="Open mockup C"><iframe src="c-balance.html" title="Mockup C preview" tabindex="-1"></iframe></a>
+    <h2><a href="c-balance.html">C: Balance</a></h2>
+    <p>Dark team cards and a share chart. Built to make imbalance visible at a glance.</p>
+  </div>
+</div>
+</body>
+</html>

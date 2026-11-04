@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup A: Triage · STRIVE</title>
+<style>
+  /* Screen switching for the mockup only: no JS, just URL fragments. */
+  .screen { display: none; scroll-margin-top: 34px; }
+  .screen:target { display: block; }
+  body:not(:has(.screen:target)) #overview { display: block; }
+  .mockbar { position: sticky; top: 0; z-index: 10; display: flex; gap: 14px; align-items: center; overflow-x: auto; white-space: nowrap; padding: 8px 16px; background: #000; color: #bbb; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  .mockbar a { color: #fff; }
+  .mockbar span:first-child { color: #ffb86b; }
+
+  /* The design */
+  :root {
+    --bg: #f4f5f7; --surface: #fff; --ink: #1a2233; --muted: #566072; --line: #dfe3e9;
+    --navy: #232d4b; --orange: #e57200; --link: #1c58b0;
+    --flag: #a92015; --flag-bg: #fde8e6; --warn: #7d5100; --warn-bg: #fcefcf;
+    --ok: #1a6644; --ok-bg: #e2f3ea; --none: #566072; --none-bg: #eaecf0;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+  code { font: 12.5px var(--mono); color: var(--muted); }
+  h1 { margin: 0; font-size: 22px; line-height: 1.25; letter-spacing: -.01em; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+
+  .app { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: calc(100vh - 34px); }
+  .side { display: flex; flex-direction: column; gap: 20px; padding: 18px 14px; background: var(--navy); color: #cfd5e4; }
+  .side a { color: inherit; }
+  .brand { display: block; font-weight: 700; font-size: 15px; letter-spacing: .08em; color: #fff !important; }
+  .brand::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 8px; background: var(--orange); }
+  .side h2 { margin: 0 0 6px 8px; color: #93a0bd; font-size: 11px; }
+  .side ul { margin: 0; padding: 0; list-style: none; }
+  .side li a { display: block; padding: 5px 8px; border-radius: 4px; }
+  .side li a:hover { background: #2f3a5e; text-decoration: none; }
+  .side li a[aria-current] { background: #36426b; color: #fff; font-weight: 600; }
+  .side .who { margin-top: auto; padding: 0 8px; font-size: 13px; }
+  .side .who button { display: block; margin-top: 4px; padding: 0; border: 0; background: none; color: #93a0bd; font: inherit; cursor: pointer; }
+  .side .who button:hover { color: #fff; text-decoration: underline; }
+
+  main { padding: 20px 28px 48px; max-width: 1180px; }
+  .crumbs { margin-bottom: 4px; color: var(--muted); font-size: 13px; }
+  .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .sub { margin: 2px 0 0; color: var(--muted); }
+
+  .msg { display: flex; gap: 10px; margin: 0 0 14px; padding: 9px 12px; border: 1px solid; border-radius: 4px; }
+  .msg.err { border-color: #f1b8b2; background: var(--flag-bg); color: #6d150e; }
+  .msg.info { border-color: var(--line); background: var(--none-bg); color: var(--ink); }
+  .msg b { white-space: nowrap; }
+
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .counts { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); }
+  .counts b { color: var(--ink); }
+  label.week { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  select { padding: 5px 8px; border: 1px solid #b9c0cb; border-radius: 4px; background: #fff; color: var(--ink); font: inherit; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 8px 14px; border-bottom: 1px solid var(--line); background: #fafbfc; color: var(--muted); font-size: 12px; font-weight: 600; text-align: left; white-space: nowrap; }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: #fafbfd; }
+  .team a { font-weight: 600; }
+  .team { white-space: nowrap; }
+  .team code { display: block; }
+  .right { text-align: right; white-space: nowrap; }
+
+  .tag { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 3px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .tag.flag { background: var(--flag-bg); color: var(--flag); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok); }
+  .tag.none { background: var(--none-bg); color: var(--none); }
+  .judge { display: inline-block; margin: 0 4px 4px 0; padding: 0 7px; border: 1px dashed #8b94a5; border-radius: 3px; font-size: 12.5px; }
+
+  button.btn { padding: 5px 12px; border: 1px solid var(--navy); border-radius: 4px; background: var(--navy); color: #fff; font: 600 13px system-ui, sans-serif; cursor: pointer; }
+  button.btn:hover { background: #33406a; }
+  button.btn.ghost { background: #fff; color: var(--navy); }
+  button.btn.ghost:hover { background: #eef0f5; }
+  button + button { margin-left: 4px; }
+
+  details.reqs { margin-top: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+  details.reqs summary { padding: 10px 14px; font-weight: 600; cursor: pointer; }
+  details.reqs summary span { color: var(--muted); font-weight: 400; }
+  details.reqs table { border-top: 1px solid var(--line); }
+
+  .flags { margin: 0 0 16px; padding: 12px 14px; border: 1px solid #f1b8b2; border-radius: 6px; background: var(--flag-bg); }
+  .flags p { display: flex; gap: 10px; align-items: baseline; margin: 0; }
+  .flags p + p { margin-top: 6px; }
+  .matrix td.name { white-space: nowrap; }
+  .matrix td.name strong { display: block; }
+  .matrix td a { font-weight: 500; }
+  .dim { color: var(--muted); }
+  .cell small { display: block; color: var(--flag); font-size: 12px; }
+  .note { margin: 8px 2px 0; color: var(--muted); font-size: 12.5px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px; color: var(--muted); font-size: 12.5px; }
+  .pager { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .pager a, .pager span.off { padding: 3px 9px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+  .pager span.off { color: #aab1bd; }
+  .claim-cat { display: block; margin-bottom: 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .ev { display: block; margin-bottom: 4px; }
+  .ev::before { content: "✓ "; color: var(--ok); font-weight: 700; }
+  .ev em { display: block; margin-left: 15px; color: var(--muted); font-size: 12.5px; font-style: normal; }
+
+  .login { display: grid; place-items: center; min-height: calc(100vh - 34px); background: var(--navy); }
+  .login form { width: 340px; padding: 26px; border-radius: 6px; background: #fff; }
+  .login .brand { margin-bottom: 18px; color: var(--navy) !important; font-size: 18px; }
+  .login label { display: block; margin-bottom: 12px; font-weight: 600; font-size: 13px; }
+  .login input { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid #b9c0cb; border-radius: 4px; font: inherit; }
+  .login button { width: 100%; padding: 8px; }
+
+  @media (max-width: 800px) {
+    .app { grid-template-columns: minmax(0, 1fr); }
+    .side { flex-direction: row; flex-wrap: wrap; align-items: center; }
+    .side .who { margin: 0 0 0 auto; }
+    main { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="mockbar">
+  <span>MOCKUP A · sample data · this bar isn't part of the design</span>
+  <a href="#login">Log in</a><a href="#courses">Courses</a><a href="#overview">Course overview</a><a href="#team">Team</a><a href="#summary">Summary</a><a href="#summary-none">No-activity summary</a><a href="index.html">All mockups</a>
+</div>
+
+<section class="screen" id="login">
+  <div class="login">
+    <form action="#courses">
+      <span class="brand">STRIVE</span>
+      <label>Username <input autocomplete="off"></label>
+      <label>Password <input type="password" autocomplete="off"></label>
+      <button class="btn" type="submit">Log in</button>
+    </form>
+  </div>
+</section>
+
+<section class="screen" id="courses">
+  <div class="app">
+    <aside class="side">
+      <a class="brand" href="#courses">STRIVE</a>
+      <div class="who">sample-instructor <button type="button">Log out</button></div>
+    </aside>
+    <main>
+      <div class="head"><h1>Your courses</h1></div>
+      <div class="panel">
+        <table>
+          <thead><tr><th scope="col">Course</th><th scope="col">Your role</th><th scope="col">Teams</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+            <tr><td class="team"><a href="#overview">CS 4501, Fall 2026</a></td><td>Instructor</td><td>6</td><td><span class="tag flag">⚑ 1 flag</span> <span class="tag warn">▲ 1 warning</span></td></tr>
+            <tr><td class="team"><a href="#overview">CS 3240, Fall 2026</a></td><td>TA</td><td>14</td><td><span class="tag ok">✓ No flags</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</section>
+
+<section class="screen" id="overview">
+  <div class="app">
+    <aside class="side">
+      <a class="brand" href="#courses">STRIVE</a>
+      <div>
+        <h2>CS 4501, Fall 2026</h2>
+        <ul>
+          <li><a href="#overview" aria-current="page">Project 2: Course planner</a></li>
+          <li><a href="#overview">Project 1: Study groups</a></li>
+        </ul>
+      </div>
+      <div class="who">sample-instructor <button type="button">Log out</button></div>
+    </aside>
+    <main>
+      <div class="head">
+        <div>
+          <h1>Project 2: Course planner</h1>
+          <p class="sub">CS 4501, Fall 2026 · flagged teams first</p>
+        </div>
+      </div>
+
+      <p class="msg err" role="alert"><b>Team Cedar:</b> <span>Generated 3 of 4 summaries for the week of Oct 26, 2026. Couldn't generate: Noor Haddad (the LLM request timed out). Flags weren't updated.</span></p>
+
+      <!-- One form around the table: one week picker, one button per team using formaction. -->
+      <form class="panel" onsubmit="return false">
+        <div class="toolbar">
+          <div class="counts">
+            <span><b>1</b> flagged</span><span><b>1</b> warning</span><span><b>2</b> no flags</span><span><b>1</b> incomplete</span><span><b>1</b> not generated</span>
+          </div>
+          <label class="week">Week to generate
+            <select name="week_start">
+              <option>Oct 26 – Nov 1, 2026</option>
+              <option>Oct 19 – Oct 25, 2026</option>
+              <option>Oct 12 – Oct 18, 2026</option>
+            </select>
+          </label>
+        </div>
+        <table>
+          <thead><tr><th scope="col">Team</th><th scope="col">Status</th><th scope="col">Students</th><th scope="col">Latest week</th><th scope="col" class="right">Summaries</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="team"><a href="#team">Team Harbor</a><code>sample-org/harbor-planner</code></td>
+              <td><span class="tag flag">⚑ Flag</span></td>
+              <td>Iris Okafor, Priya Raman, Daniel Reyes, Theo Walsh</td>
+              <td>Oct 26</td>
+              <td class="right"><button class="btn ghost">Generate</button></td>
+            </tr>
+            <tr>
+              <td class="team"><a href="#team">Team Juniper</a><code>sample-org/juniper-plan</code></td>
+              <td><span class="tag warn">▲ Warning</span></td>
+              <td>Amara Bell, Luca Ferri, Hana Sato</td>
+              <td>Oct 26</td>
+              <td class="right"><button class="btn ghost">Generate</button></td>
+            </tr>
+            <tr>
+              <td class="team"><a href="#team">Team Alder</a><code>sample-org/alder-app</code></td>
+              <td><span class="tag ok">✓ No flags</span></td>
+              <td>Sam Whitfield, Elena Marsh, Kofi Addo</td>
+              <td>Oct 26</td>
+              <td class="right"><button class="btn ghost">Generate</button></td>
+            </tr>
+            <tr>
+              <td class="team"><a href="#team">Team Birch</a><code>sample-org/birch-web</code><code>sample-org/birch-api</code></td>
+              <td><span class="tag ok">✓ No flags</span></td>
+              <td>Jonah Lindqvist, Mei Chen, Tara Quinn, Omar Saleh</td>
+              <td>Oct 26</td>
+              <td class="right"><button class="btn ghost">Generate</button></td>
+            </tr>
+            <tr>
+              <td class="team"><a href="#team">Team Cedar</a><code>sample-org/cedar-planner</code></td>
+              <td><span class="tag none">○ Incomplete</span></td>
+              <td>Noor Haddad, Felix Brandt, Ana Duarte, Wes Tran</td>
+              <td>Oct 19 <span class="dim">(Oct 26: 3 of 4)</span></td>
+              <td class="right"><button class="btn">Retry failed</button> <button class="btn ghost">Generate</button></td>
+            </tr>
+            <tr>
+              <td class="team"><a href="#team">Team Willow</a><code>sample-org/willow-plan</code></td>
+              <td><span class="tag none">– Not generated</span></td>
+              <td>Rosa Vega, Ben Aronson, Lila Stone</td>
+              <td class="dim">None yet</td>
+              <td class="right"><button class="btn ghost">Generate</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </form>
+
+      <details class="reqs">
+        <summary>Requirements <span>· 6 for this project</span></summary>
+        <table>
+          <thead><tr><th scope="col">#</th><th scope="col">Requirement</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Students can create an account and log in.</td></tr>
+            <tr><td>2</td><td>Students can search the course catalog by department, term and keyword.</td></tr>
+            <tr><td>3</td><td>Students can add and remove courses from a saved plan.</td></tr>
+            <tr><td>4</td><td>The plan warns about time conflicts between saved courses.</td></tr>
+            <tr><td>5</td><td>Students can export a saved plan as a calendar file.</td></tr>
+            <tr><td>6</td><td>Advisors can review and comment on a student's plan.</td></tr>
+          </tbody>
+        </table>
+      </details>
+    </main>
+  </div>
+</section>
+
+<section class="screen" id="team">
+  <div class="app">
+    <aside class="side">
+      <a class="brand" href="#courses">STRIVE</a>
+      <div>
+        <h2>CS 4501, Fall 2026</h2>
+        <ul>
+          <li><a href="#overview" aria-current="page">Project 2: Course planner</a></li>
+          <li><a href="#overview">Project 1: Study groups</a></li>
+        </ul>
+      </div>
+      <div class="who">sample-instructor <button type="button">Log out</button></div>
+    </aside>
+    <main>
+      <div class="crumbs"><a href="#overview">Project 2: Course planner</a> ›</div>
+      <div class="head">
+        <div>
+          <h1>Team Harbor <span class="tag flag">⚑ Flag</span></h1>
+          <p class="sub"><code>sample-org/harbor-planner</code> · 4 students</p>
+        </div>
+      </div>
+
+      <div class="flags">
+        <p><span class="tag flag" style="background:#fff">⚑ Flag</span> <span>Theo Walsh did 5% of the team's requirement-tied work in the week of Oct 26 (an equal share is 25%).</span></p>
+      </div>
+
+      <div class="panel">
+        <table class="matrix">
+          <thead><tr><th scope="col">Student</th><th scope="col">Oct 26 – Nov 1</th><th scope="col">Oct 19 – Oct 25</th><th scope="col">Oct 12 – Oct 18</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="name"><strong>Theo Walsh <span class="tag flag">⚑</span></strong><code>theo-walsh</code></td>
+              <td class="cell"><a href="#summary">3 claims</a><small>1 couldn't be verified</small></td>
+              <td class="cell"><a href="#summary">2 claims</a></td>
+              <td class="cell"><a href="#summary">4 claims</a></td>
+            </tr>
+            <tr>
+              <td class="name"><strong>Iris Okafor</strong><code>iris-okafor</code></td>
+              <td class="cell"><a href="#summary">6 claims</a></td>
+              <td class="cell"><a href="#summary">5 claims</a></td>
+              <td class="cell"><a href="#summary">4 claims</a></td>
+            </tr>
+            <tr>
+              <td class="name"><strong>Priya Raman</strong><code>priya-raman</code></td>
+              <td class="cell"><a href="#summary">5 claims</a></td>
+              <td class="cell"><a href="#summary">5 claims</a></td>
+              <td class="cell dim">No summary</td>
+            </tr>
+            <tr>
+              <td class="name"><strong>Daniel Reyes</strong><code>daniel-reyes</code></td>
+              <td class="cell"><a href="#summary">4 claims</a></td>
+              <td class="cell"><a href="#summary">3 claims</a></td>
+              <td class="cell"><a href="#summary-none">No activity</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Flagged students first, then by name. Each cell opens that student's summary for that week.</p>
+    </main>
+  </div>
+</section>
+
+<section class="screen" id="summary">
+  <div class="app">
+    <aside class="side">
+      <a class="brand" href="#courses">STRIVE</a>
+      <div>
+        <h2>CS 4501, Fall 2026</h2>
+        <ul>
+          <li><a href="#overview" aria-current="page">Project 2: Course planner</a></li>
+          <li><a href="#overview">Project 1: Study groups</a></li>
+        </ul>
+      </div>
+      <div class="who">sample-instructor <button type="button">Log out</button></div>
+    </aside>
+    <main>
+      <div class="crumbs"><a href="#overview">Project 2: Course planner</a> › <a href="#team">Team Harbor</a> ›</div>
+      <div class="head">
+        <div>
+          <h1>Theo Walsh</h1>
+          <p class="sub"><code>theo-walsh</code> · week of Oct 26 – Nov 1, 2026</p>
+        </div>
+        <nav class="pager" aria-label="Other weeks"><a href="#summary">‹ Previous week</a><span class="off">Next week ›</span></nav>
+      </div>
+
+      <p class="msg info" role="status"><b>1 couldn't be verified.</b> <span>Claims whose GitHub evidence didn't check out are left out of this summary.</span></p>
+
+      <div class="legend">
+        <span><b style="color:var(--ok)">✓</b> Verified fact, checked against stored GitHub data</span>
+        <span><span class="judge" style="margin:0">dashed</span> LLM judgment, not verified</span>
+      </div>
+
+      <div class="panel">
+        <table>
+          <thead><tr><th scope="col" style="width:42%">Claim</th><th scope="col" style="width:32%">GitHub evidence</th><th scope="col">LLM judgment</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="claim-cat">Bug fix</span>Fixed catalog search returning no results for lowercase department codes.</td>
+              <td>
+                <span class="ev"><a href="#summary">PR #44</a> Normalize department codes in search</span>
+                <span class="ev"><a href="#summary"><code>3fa9c1e</code></a> Make department lookup case-insensitive <em>Co-authored with priya-raman</em></span>
+              </td>
+              <td><span class="judge">Minor</span><span class="judge" title="Students can search the course catalog by department, term and keyword.">Req 2: catalog search</span></td>
+            </tr>
+            <tr>
+              <td><span class="claim-cat">Review</span>Reviewed the time-conflict PR and requested changes to how overlapping meeting times are compared.</td>
+              <td><span class="ev"><a href="#summary">Review 2291840</a> Changes requested</span></td>
+              <td><span class="judge">Moderate</span><span class="judge">Not tied to a requirement</span></td>
+            </tr>
+            <tr>
+              <td><span class="claim-cat">Refactor</span>Moved the project's test settings into one shared file.</td>
+              <td><span class="ev"><a href="#summary">PR #46</a> Share test settings across apps</span></td>
+              <td><span class="judge">Minor</span><span class="judge">Not tied to a requirement</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</section>
+
+<section class="screen" id="summary-none">
+  <div class="app">
+    <aside class="side">
+      <a class="brand" href="#courses">STRIVE</a>
+      <div>
+        <h2>CS 4501, Fall 2026</h2>
+        <ul>
+          <li><a href="#overview" aria-current="page">Project 2: Course planner</a></li>
+          <li><a href="#overview">Project 1: Study groups</a></li>
+        </ul>
+      </div>
+      <div class="who">sample-instructor <button type="button">Log out</button></div>
+    </aside>
+    <main>
+      <div class="crumbs"><a href="#overview">Project 2: Course planner</a> › <a href="#team">Team Harbor</a> ›</div>
+      <div class="head">
+        <div>
+          <h1>Daniel Reyes</h1>
+          <p class="sub"><code>daniel-reyes</code> · week of Oct 12 – Oct 18, 2026</p>
+        </div>
+        <nav class="pager" aria-label="Other weeks"><span class="off">‹ Previous week</span><a href="#summary">Next week ›</a></nav>
+      </div>
+      <div class="panel" style="padding:28px 14px; text-align:center; color:var(--muted)">No activity that week.</div>
+    </main>
+  </div>
+</section>
+</body>
+</html>

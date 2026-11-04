@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup C: Balance · STRIVE</title>
+<style>
+  /* Screen switching for the mockup only: no JS, just URL fragments. */
+  .screen { display: none; scroll-margin-top: 34px; }
+  .screen:target { display: block; }
+  body:not(:has(.screen:target)) #overview { display: block; }
+  .mockbar { position: sticky; top: 0; z-index: 10; display: flex; gap: 14px; align-items: center; overflow-x: auto; white-space: nowrap; padding: 8px 16px; background: #000; color: #bbb; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  .mockbar a { color: #fff; }
+  .mockbar span:first-child { color: #ffb86b; }
+
+  /* The design */
+  :root {
+    --bg: #111418; --panel: #1a1f26; --panel2: #222832; --line: #303844;
+    --ink: #eef1f5; --muted: #a5afbc; --accent: #9db2ff; --on-accent: #0e1320;
+    --flag: #ff9182; --flag-bg: #3c1f1d; --warn: #f2c14e; --warn-bg: #3a2f14;
+    --ok: #74d6a5; --ok-bg: #16322a; --none-bg: #2a303a;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Avenir Next", "Segoe UI", system-ui, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  code { font: 12.5px var(--mono); color: var(--muted); }
+  h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 600; }
+  h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+
+  .top { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding: 12px 28px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .top .brand { color: var(--ink); font-weight: 700; letter-spacing: .1em; }
+  .top .brand i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; background: var(--accent); }
+  .top .crumb { color: var(--muted); }
+  .top .who { margin-left: auto; color: var(--muted); }
+  .top button { margin-left: 10px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--muted); font: inherit; cursor: pointer; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 24px 28px 56px; }
+
+  .msg { margin: 0 0 18px; padding: 10px 14px; border-radius: 8px; background: var(--flag-bg); color: #ffd9d3; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+  .headrow { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; justify-content: space-between; margin-bottom: 18px; }
+  .week { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  select { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--ink); font: inherit; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 18px; }
+  .tabs a { padding: 5px 12px; border-radius: 999px; color: var(--muted); font-size: 14px; }
+  .tabs a[aria-current] { background: var(--panel2); color: var(--ink); font-weight: 600; }
+
+  .tag { display: inline-flex; gap: 5px; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .tag.flag { background: var(--flag-bg); color: var(--flag); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok); }
+  .tag.none { background: var(--none-bg); color: var(--muted); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .card { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .card.flag { border-color: #7d3a33; }
+  .card.warn { border-color: #6b5720; }
+  .card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .card h3 { margin: 0; font-size: 18px; font-weight: 600; }
+  .card h3 a { color: var(--ink); }
+  .card .latest { color: var(--muted); font-size: 13px; }
+  .people { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; }
+  .card .foot { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
+  button.btn { flex: 1; padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--ink); font: 600 13.5px "Avenir Next", "Segoe UI", system-ui, sans-serif; cursor: pointer; }
+  button.btn:hover { border-color: var(--accent); }
+  button.btn.primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+
+  .rail { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); position: sticky; top: 48px; }
+  .rail ol { margin: 0; padding: 0; list-style: none; font-size: 13.5px; }
+  .rail li { display: grid; grid-template-columns: 20px 1fr; gap: 4px; padding: 7px 0; border-top: 1px solid var(--line); color: var(--ink); }
+  .rail li b { color: var(--muted); font-weight: 600; }
+
+  .chart { padding: 18px 20px; margin: 18px 0 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .chart h2 { margin-bottom: 2px; color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 16px; }
+  .chart .why { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }
+  .bar-row { position: relative; display: grid; grid-template-columns: 150px minmax(0, 1fr) 118px; gap: 12px; align-items: center; padding: 6px 0; }
+  .bar-row:hover { background: #ffffff08; }
+  .bar-row a { color: var(--ink); font-weight: 500; }
+  .track { position: relative; height: 12px; }
+  .equal { position: absolute; top: -8px; bottom: -8px; left: 50%; border-left: 1px dashed #6d7786; }
+  .fill { position: absolute; left: 0; top: 0; height: 12px; border-radius: 0 4px 4px 0; background: var(--accent); }
+  .fill.low { background: var(--flag); }
+  .val { font-variant-numeric: tabular-nums; font-size: 14px; }
+  .val .tag { margin-left: 4px; }
+  .axis { display: grid; grid-template-columns: 150px minmax(0, 1fr) 118px; gap: 12px; color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .axis div { position: relative; height: 18px; }
+  .axis div span { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+
+  .findings { display: grid; gap: 8px; margin-top: 16px; }
+  .finding { display: flex; gap: 10px; align-items: baseline; padding: 10px 14px; border-radius: 8px; background: var(--flag-bg); color: #ffd9d3; }
+
+  .weeks { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .pills a, .pills span { display: inline-block; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+  .pills span { color: var(--muted); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+  .stat { padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .stat b { display: block; font-size: 26px; font-weight: 600; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13.5px; }
+  .stat.alert { border-color: #7d3a33; }
+
+  .keynote { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
+  .claim { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px 24px; padding: 16px 18px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .claim .cat { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .claim p { margin: 0 0 10px; font-size: 16.5px; }
+  .ev { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 13.5px; }
+  .ev li { padding: 3px 10px; border-radius: 8px; background: var(--ok-bg); }
+  .ev a { color: #bdf0d6; font-weight: 600; }
+  .ev span { color: var(--muted); }
+  .llm { padding-left: 16px; border-left: 1px dashed #6d7786; font-size: 13.5px; }
+  .llm h3 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .pips { display: inline-flex; gap: 3px; margin-right: 6px; vertical-align: 1px; }
+  .pips i { width: 12px; height: 8px; border: 1px dashed #8e98a6; border-radius: 2px; }
+  .pips i.on { border-style: solid; border-color: var(--ink); background: var(--ink); }
+  .llm p { margin: 6px 0 0; font-size: 13.5px; color: var(--muted); }
+
+  .login { display: grid; place-items: center; min-height: 80vh; }
+  .login form { width: 360px; padding: 28px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+  .login .brand { display: block; margin-bottom: 20px; font-weight: 700; letter-spacing: .1em; font-size: 18px; }
+  .login .brand i { display: inline-block; width: 11px; height: 11px; margin-right: 8px; border-radius: 50%; background: var(--accent); }
+  .login label { display: block; margin-bottom: 12px; font-size: 13.5px; font-weight: 600; }
+  .login input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--ink); font: inherit; }
+  .login button { width: 100%; }
+
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: 1fr; }
+    .rail { position: static; }
+    .claim { grid-template-columns: 1fr; }
+    .llm { padding: 10px 0 0; border-left: 0; border-top: 1px dashed #6d7786; }
+    .bar-row, .axis { grid-template-columns: 100px minmax(0, 1fr) 96px; }
+  }
+</style>
+</head>
+<body>
+<div class="mockbar">
+  <span>MOCKUP C · sample data · this bar isn't part of the design</span>
+  <a href="#login">Log in</a><a href="#courses">Courses</a><a href="#overview">Course overview</a><a href="#team">Team</a><a href="#summary">Summary</a><a href="#summary-none">No-activity summary</a><a href="index.html">All mockups</a>
+</div>
+
+<section class="screen" id="login">
+  <div class="login">
+    <form action="#courses">
+      <span class="brand"><i></i>STRIVE</span>
+      <label>Username <input autocomplete="off"></label>
+      <label>Password <input type="password" autocomplete="off"></label>
+      <button class="btn primary" type="submit">Log in</button>
+    </form>
+  </div>
+</section>
+
+<section class="screen" id="courses">
+  <header class="top"><a class="brand" href="#courses"><i></i>STRIVE</a><span class="who">sample-instructor <button type="button">Log out</button></span></header>
+  <div class="page">
+    <h1 style="margin-bottom:18px">Your courses</h1>
+    <div class="cards">
+      <div class="card"><div class="row"><h3><a href="#overview">CS 4501, Fall 2026</a></h3></div><p class="people">Instructor · 6 teams</p><div class="foot" style="gap:6px"><span class="tag flag">⚑ 1 flag</span><span class="tag warn">▲ 1 warning</span></div></div>
+      <div class="card"><div class="row"><h3><a href="#overview">CS 3240, Fall 2026</a></h3></div><p class="people">TA · 14 teams</p><div class="foot"><span class="tag ok">✓ No flags</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="overview">
+  <header class="top"><a class="brand" href="#courses"><i></i>STRIVE</a><span class="crumb">CS 4501, Fall 2026</span><span class="who">sample-instructor <button type="button">Log out</button></span></header>
+  <div class="page">
+    <p class="msg" role="alert"><b>Team Cedar:</b> Generated 3 of 4 summaries for the week of Oct 26, 2026. Couldn't generate: Noor Haddad (the LLM request timed out). Flags weren't updated.</p>
+
+    <nav class="tabs" aria-label="Projects"><a href="#overview" aria-current="page">Project 2: Course planner</a><a href="#overview">Project 1: Study groups</a></nav>
+
+    <div class="layout">
+      <!-- One form around the cards: one week picker, one button per team using formaction. -->
+      <form onsubmit="return false">
+        <div class="headrow">
+          <h1>Teams</h1>
+          <label class="week">Week to generate
+            <select name="week_start"><option>Oct 26 – Nov 1, 2026</option><option>Oct 19 – Oct 25, 2026</option><option>Oct 12 – Oct 18, 2026</option></select>
+          </label>
+        </div>
+        <div class="cards">
+          <article class="card flag">
+            <div class="row"><h3><a href="#team">Team Harbor</a></h3><span class="tag flag">⚑ Flag</span></div>
+            <ul class="people"><li>Iris Okafor</li><li>Priya Raman</li><li>Daniel Reyes</li><li>Theo Walsh</li></ul>
+            <div class="latest">Latest week: Oct 26</div>
+            <div class="foot"><button class="btn">Generate summaries</button></div>
+          </article>
+          <article class="card warn">
+            <div class="row"><h3><a href="#team">Team Juniper</a></h3><span class="tag warn">▲ Warning</span></div>
+            <ul class="people"><li>Amara Bell</li><li>Luca Ferri</li><li>Hana Sato</li></ul>
+            <div class="latest">Latest week: Oct 26</div>
+            <div class="foot"><button class="btn">Generate summaries</button></div>
+          </article>
+          <article class="card">
+            <div class="row"><h3><a href="#team">Team Alder</a></h3><span class="tag ok">✓ No flags</span></div>
+            <ul class="people"><li>Sam Whitfield</li><li>Elena Marsh</li><li>Kofi Addo</li></ul>
+            <div class="latest">Latest week: Oct 26</div>
+            <div class="foot"><button class="btn">Generate summaries</button></div>
+          </article>
+          <article class="card">
+            <div class="row"><h3><a href="#team">Team Birch</a></h3><span class="tag ok">✓ No flags</span></div>
+            <ul class="people"><li>Jonah Lindqvist</li><li>Mei Chen</li><li>Tara Quinn</li><li>Omar Saleh</li></ul>
+            <div class="latest">Latest week: Oct 26</div>
+            <div class="foot"><button class="btn">Generate summaries</button></div>
+          </article>
+          <article class="card">
+            <div class="row"><h3><a href="#team">Team Cedar</a></h3><span class="tag none">○ Incomplete</span></div>
+            <ul class="people"><li>Noor Haddad</li><li>Felix Brandt</li><li>Ana Duarte</li><li>Wes Tran</li></ul>
+            <div class="latest">Oct 26: 3 of 4 done. Flags are from Oct 19.</div>
+            <div class="foot"><button class="btn primary">Retry failed</button><button class="btn">Generate</button></div>
+          </article>
+          <article class="card">
+            <div class="row"><h3><a href="#team">Team Willow</a></h3><span class="tag none">– Not generated</span></div>
+            <ul class="people"><li>Rosa Vega</li><li>Ben Aronson</li><li>Lila Stone</li></ul>
+            <div class="latest">No summaries yet</div>
+            <div class="foot"><button class="btn">Generate summaries</button></div>
+          </article>
+        </div>
+      </form>
+
+      <aside class="rail">
+        <h2>Requirements</h2>
+        <ol>
+          <li><b>1</b>Students can create an account and log in.</li>
+          <li><b>2</b>Students can search the course catalog by department, term and keyword.</li>
+          <li><b>3</b>Students can add and remove courses from a saved plan.</li>
+          <li><b>4</b>The plan warns about time conflicts between saved courses.</li>
+          <li><b>5</b>Students can export a saved plan as a calendar file.</li>
+          <li><b>6</b>Advisors can review and comment on a student's plan.</li>
+        </ol>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="team">
+  <header class="top"><a class="brand" href="#courses"><i></i>STRIVE</a><span class="crumb"><a href="#overview">CS 4501 · Project 2</a> › Team Harbor</span><span class="who">sample-instructor <button type="button">Log out</button></span></header>
+  <div class="page">
+    <div class="headrow" style="margin-bottom:0">
+      <div>
+        <h1>Team Harbor</h1>
+        <code>sample-org/harbor-planner</code>
+      </div>
+      <span class="tag flag">⚑ Flag</span>
+    </div>
+
+    <section class="chart" aria-labelledby="c-chart-title">
+      <h2 id="c-chart-title">Share of requirement-tied work, week of Oct 26</h2>
+      <p class="why">Verified claims tied to a requirement, weighted by significance. The requirement mapping and significance are LLM judgments.</p>
+      <div class="bar-row" title="Iris Okafor: 40% of the team's requirement-tied work">
+        <a href="#summary">Iris Okafor</a>
+        <div class="track"><div class="equal"></div><div class="fill" style="width:80%"></div></div>
+        <span class="val">40%</span>
+      </div>
+      <div class="bar-row" title="Priya Raman: 30% of the team's requirement-tied work">
+        <a href="#summary">Priya Raman</a>
+        <div class="track"><div class="equal"></div><div class="fill" style="width:60%"></div></div>
+        <span class="val">30%</span>
+      </div>
+      <div class="bar-row" title="Daniel Reyes: 25% of the team's requirement-tied work">
+        <a href="#summary">Daniel Reyes</a>
+        <div class="track"><div class="equal"></div><div class="fill" style="width:50%"></div></div>
+        <span class="val">25%</span>
+      </div>
+      <div class="bar-row" title="Theo Walsh: 5% of the team's requirement-tied work, flagged">
+        <a href="#summary">Theo Walsh</a>
+        <div class="track"><div class="equal"></div><div class="fill low" style="width:10%"></div></div>
+        <span class="val">5% <span class="tag flag">⚑ Flag</span></span>
+      </div>
+      <div class="axis"><span></span><div><span>Equal share: 25%</span></div><span></span></div>
+      <div class="findings">
+        <div class="finding"><span class="tag flag" style="background:#00000033">⚑ Flag</span><span>Theo Walsh did 5% of the team's requirement-tied work in the week of Oct 26 (an equal share is 25%).</span></div>
+      </div>
+    </section>
+
+    <h2>Summaries by student</h2>
+    <div class="weeks">
+      <article class="card flag">
+        <div class="row"><h3>Theo Walsh</h3><span class="tag flag">⚑ Flag</span></div>
+        <code>theo-walsh</code>
+        <ul class="pills"><li><a href="#summary">Oct 26 · 3 claims</a></li><li><a href="#summary">Oct 19 · 2 claims</a></li><li><a href="#summary">Oct 12 · 4 claims</a></li></ul>
+      </article>
+      <article class="card">
+        <div class="row"><h3>Iris Okafor</h3></div>
+        <code>iris-okafor</code>
+        <ul class="pills"><li><a href="#summary">Oct 26 · 6 claims</a></li><li><a href="#summary">Oct 19 · 5 claims</a></li><li><a href="#summary">Oct 12 · 4 claims</a></li></ul>
+      </article>
+      <article class="card">
+        <div class="row"><h3>Priya Raman</h3></div>
+        <code>priya-raman</code>
+        <ul class="pills"><li><a href="#summary">Oct 26 · 5 claims</a></li><li><a href="#summary">Oct 19 · 5 claims</a></li><li><span>Oct 12 · no summary</span></li></ul>
+      </article>
+      <article class="card">
+        <div class="row"><h3>Daniel Reyes</h3></div>
+        <code>daniel-reyes</code>
+        <ul class="pills"><li><a href="#summary">Oct 26 · 4 claims</a></li><li><a href="#summary">Oct 19 · 3 claims</a></li><li><a href="#summary-none">Oct 12 · no activity</a></li></ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="summary">
+  <header class="top"><a class="brand" href="#courses"><i></i>STRIVE</a><span class="crumb"><a href="#overview">CS 4501 · Project 2</a> › <a href="#team">Team Harbor</a> › Theo Walsh</span><span class="who">sample-instructor <button type="button">Log out</button></span></header>
+  <div class="page" style="max-width:1000px">
+    <div class="headrow" style="margin-bottom:0">
+      <div>
+        <h1>Theo Walsh</h1>
+        <code>theo-walsh</code>
+      </div>
+      <ul class="pills" aria-label="Other weeks"><li><a href="#summary" style="background:var(--panel2); color:var(--ink)">Oct 26 – Nov 1</a></li><li><a href="#summary">Oct 19</a></li><li><a href="#summary">Oct 12</a></li></ul>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>3</b><span>Verified claims</span></div>
+      <div class="stat"><b>1</b><span>Tied to a requirement</span></div>
+      <div class="stat alert"><b>1</b><span>Couldn't be verified, and left out of this summary</span></div>
+    </div>
+
+    <p class="keynote">Green links are verified against stored GitHub data. Dashed sections are LLM judgments.</p>
+
+    <article class="claim">
+      <div>
+        <span class="cat">Bug fix</span>
+        <p>Fixed catalog search returning no results for lowercase department codes.</p>
+        <ul class="ev">
+          <li><a href="#summary">✓ PR #44</a> <span>Normalize department codes in search</span></li>
+          <li><a href="#summary">✓ 3fa9c1e</a> <span>Case-insensitive lookup, co-authored with priya-raman</span></li>
+        </ul>
+      </div>
+      <div class="llm">
+        <h3>LLM judgment</h3>
+        <span class="pips" aria-hidden="true"><i class="on"></i><i></i><i></i></span>Minor
+        <p>Requirement 2: Students can search the course catalog by department, term and keyword.</p>
+      </div>
+    </article>
+    <article class="claim">
+      <div>
+        <span class="cat">Review</span>
+        <p>Reviewed the time-conflict PR and requested changes to how overlapping meeting times are compared.</p>
+        <ul class="ev"><li><a href="#summary">✓ Review 2291840</a> <span>Changes requested</span></li></ul>
+      </div>
+      <div class="llm">
+        <h3>LLM judgment</h3>
+        <span class="pips" aria-hidden="true"><i class="on"></i><i class="on"></i><i></i></span>Moderate
+        <p>Not tied to a requirement</p>
+      </div>
+    </article>
+    <article class="claim">
+      <div>
+        <span class="cat">Refactor</span>
+        <p>Moved the project's test settings into one shared file.</p>
+        <ul class="ev"><li><a href="#summary">✓ PR #46</a> <span>Share test settings across apps</span></li></ul>
+      </div>
+      <div class="llm">
+        <h3>LLM judgment</h3>
+        <span class="pips" aria-hidden="true"><i class="on"></i><i></i><i></i></span>Minor
+        <p>Not tied to a requirement</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="screen" id="summary-none">
+  <header class="top"><a class="brand" href="#courses"><i></i>STRIVE</a><span class="crumb"><a href="#overview">CS 4501 · Project 2</a> › <a href="#team">Team Harbor</a> › Daniel Reyes</span><span class="who">sample-instructor <button type="button">Log out</button></span></header>
+  <div class="page" style="max-width:1000px">
+    <div class="headrow">
+      <div><h1>Daniel Reyes</h1><code>daniel-reyes</code></div>
+      <ul class="pills" aria-label="Other weeks"><li><a href="#summary">Oct 26</a></li><li><a href="#summary">Oct 19</a></li><li><a href="#summary-none" style="background:var(--panel2); color:var(--ink)">Oct 12 – Oct 18</a></li></ul>
+    </div>
+    <div class="stat" style="padding:32px; text-align:center; color:var(--muted)">No activity that week.</div>
+  </div>
+</section>
+</body>
+</html>
