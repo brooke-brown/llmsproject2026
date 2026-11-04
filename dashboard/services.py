@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import Case, Exists, OuterRef, Prefetch, Value, When
+from django.db.models import Case, Count, Exists, Max, OuterRef, Prefetch, Q, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -32,6 +32,30 @@ def staff_courses(user):
     return Course.objects.filter(
         enrollments__user=user, enrollments__role__in=STAFF_ROLES
     ).order_by("name")
+
+
+def course_cards(user):
+    """The courses the user staffs, each with `role_label` and counts of its teams, so the
+    course picker can show where to look first."""
+    enrollments = (
+        Enrollment.objects.filter(user=user, role__in=STAFF_ROLES)
+        .select_related("course")
+        .order_by("course__name")
+    )
+    courses = []
+    for enrollment in enrollments:
+        course = enrollment.course
+        teams = Team.objects.filter(project__course=course)
+        course.role_label = enrollment.get_role_display()
+        course.team_count = teams.count()
+        course.flagged_count = teams.filter(_has_flag(Flag.Severity.FLAG)).count()
+        course.warned_count = (
+            teams.filter(_has_flag(Flag.Severity.WARNING))
+            .exclude(_has_flag(Flag.Severity.FLAG))
+            .count()
+        )
+        courses.append(course)
+    return courses
 
 
 def check_course_staff(user, course):
@@ -92,6 +116,22 @@ def verified_claims(summary):
     return claims
 
 
+def student_weeks(summary):
+    """All of this student's summaries for the team, newest first, for the week switcher."""
+    return Summary.objects.filter(team=summary.team, user=summary.user).order_by("-week_start")
+
+
+def team_status(team):
+    """'flag' or 'warning' for a flagged team, 'ok' for one that has summaries and no flags,
+    and 'none' for one nothing has been generated for yet."""
+    severities = set(Flag.objects.filter(team=team).values_list("severity", flat=True))
+    if Flag.Severity.FLAG in severities:
+        return "flag"
+    if Flag.Severity.WARNING in severities:
+        return "warning"
+    return "ok" if Summary.objects.filter(team=team).exists() else "none"
+
+
 def team_repos(team):
     return team.repos.order_by("full_name")
 
@@ -104,7 +144,11 @@ def team_wide_flags(team):
 def team_memberships_with_summaries(team):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
     and `team_flags` about them."""
-    summaries = Summary.objects.filter(team=team).order_by("-week_start")
+    summaries = (
+        Summary.objects.filter(team=team)
+        .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
+        .order_by("-week_start")
+    )
     return (
         team.memberships.select_related("user")
         .order_by("user__last_name", "user__first_name", "user__github_login")
@@ -133,6 +177,10 @@ def add_contribution_shares(team, memberships):
     for membership in memberships:
         share = shares.get(membership.user_id)
         membership.contribution_share = None if share is None else round(share * 100)
+        # An equal share is drawn at the middle of the track, so the bar is twice the share.
+        membership.contribution_bar = (
+            None if share is None else min(membership.contribution_share * 2, 100)
+        )
     return memberships, week
 
 
@@ -154,6 +202,7 @@ def course_projects_with_teams(course):
     )
     teams = (
         Team.objects.annotate(
+            latest_week=Max("summaries__week_start"),
             flag_rank=Case(
                 When(_has_flag(Flag.Severity.FLAG), then=Value(0)),
                 When(_has_flag(Flag.Severity.WARNING), then=Value(1)),
