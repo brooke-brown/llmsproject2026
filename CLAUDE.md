@@ -89,8 +89,8 @@ Flag             → Team
 ## Alpha scope
 
 **In:**
-- Admin-based setup; repo ingest by URL + token, including co-author trailers and PR review credit
-- Requirements PDF (or pasted text) → `Requirement` rows editable in admin; requirement tags + significance on claims; simple per-project requirement table
+- Setup: instructors create and rename projects and manage requirements from the course overview; courses, enrollments, teams, repos and deleting a project stay in admin. Repo ingest by URL + token, including co-author trailers and PR review credit
+- Requirements PDF (or pasted text) → `Requirement` rows an instructor can edit on the project's requirements page or in admin; requirement tags + significance on claims; simple per-project requirement table
 - "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo, then `generate_summary` once per student; flags are recomputed once every student has succeeded
 - Validator, retry, drop + "N couldn't be verified" note, `ValidationRun` logging
 - 1–2 flag rules, based on share of requirement-tied claims weighted by significance

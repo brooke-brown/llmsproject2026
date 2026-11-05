@@ -1,7 +1,11 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
+from django.utils.translation import ngettext
 from django.views.decorators.http import require_POST
+
+from core import services as setup
+from core.forms import RequirementImportForm
 
 from . import services
 
@@ -25,6 +29,7 @@ def course_overview(request, course_id):
             "projects": services.course_projects_with_teams(course),
             "default_week_start": services.last_completed_week_start(),
             "retry_team_ids": services.team_ids_to_retry(request.session),
+            "can_set_up": services.is_course_instructor(request.user, course),
         },
     )
 
@@ -98,4 +103,109 @@ def summary(request, summary_id):
             "unverified_count": summary.unverified_count,
             "weeks": services.student_weeks(summary),
         },
+    )
+
+
+@login_required
+@require_POST
+def project_create(request, course_id):
+    course = services.get_course_for_instructor(request.user, course_id)
+    try:
+        project = setup.create_project(course, request.POST.get("name", ""))
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(request, f"Created {project.name}.")
+    return redirect("dashboard:course_overview", course_id=course.id)
+
+
+@login_required
+@require_POST
+def project_rename(request, project_id):
+    project = services.get_project_for_instructor(request.user, project_id)
+    try:
+        setup.rename_project(project, request.POST.get("name", ""))
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(request, f"Renamed the project to {project.name}.")
+    return redirect("dashboard:course_overview", course_id=project.course_id)
+
+
+def _render_requirements(request, project, import_form=None):
+    return render(
+        request,
+        "dashboard/project_requirements.html",
+        {
+            "project": project,
+            "requirements": project.requirements.order_by("number"),
+            "import_form": import_form or RequirementImportForm(),
+        },
+    )
+
+
+@login_required
+def project_requirements(request, project_id):
+    project = services.get_project_for_instructor(request.user, project_id)
+    return _render_requirements(request, project)
+
+
+@login_required
+@require_POST
+def requirements_import(request, project_id):
+    project = services.get_project_for_instructor(request.user, project_id)
+    # Checked first, so a refused import doesn't spend time reading the PDF.
+    if project.requirements.exists():
+        messages.error(request, setup.ALREADY_HAS_REQUIREMENTS)
+        return redirect("dashboard:project_requirements", project_id=project.id)
+
+    form = RequirementImportForm(request.POST, request.FILES)
+    if form.is_valid():
+        try:
+            requirements = setup.import_requirements(project, form.cleaned_data["text"])
+        except setup.RequirementImportError as error:
+            # Not a form error: if another import just won, the page has no form to show it.
+            messages.error(request, str(error))
+        else:
+            count = len(requirements)
+            noun = ngettext("requirement", "requirements", count)
+            messages.success(request, f"Imported {count} {noun}.")
+            return redirect("dashboard:project_requirements", project_id=project.id)
+    # Rendered here rather than redirected, so the pasted text is still there to try again.
+    return _render_requirements(request, project, form)
+
+
+def _change_requirement(request, project_id, change, *args):
+    """Run a change, say if it was refused, and return to the requirements page."""
+    try:
+        change(*args)
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+    return redirect("dashboard:project_requirements", project_id=project_id)
+
+
+@login_required
+@require_POST
+def requirement_add(request, project_id):
+    project = services.get_project_for_instructor(request.user, project_id)
+    text = request.POST.get("text", "")
+    return _change_requirement(request, project.id, setup.add_requirement, project, text)
+
+
+@login_required
+@require_POST
+def requirement_edit(request, requirement_id):
+    requirement = services.get_requirement_for_instructor(request.user, requirement_id)
+    text = request.POST.get("text", "")
+    return _change_requirement(
+        request, requirement.project_id, setup.edit_requirement, requirement, text
+    )
+
+
+@login_required
+@require_POST
+def requirement_delete(request, requirement_id):
+    requirement = services.get_requirement_for_instructor(request.user, requirement_id)
+    return _change_requirement(
+        request, requirement.project_id, setup.delete_requirement, requirement
     )

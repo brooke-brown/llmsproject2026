@@ -7,7 +7,7 @@ from django.db.models import Case, Count, Exists, Max, OuterRef, Prefetch, Q, Va
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from core.models import Course, Enrollment, Requirement, Team, TeamMembership, User
+from core.models import Course, Enrollment, Project, Requirement, Team, TeamMembership, User
 from ingest import services as ingest_services
 from ingest.models import Artifact
 from summaries import services as summaries_services
@@ -65,6 +65,40 @@ def check_course_staff(user, course):
     ).exists()
     if not is_staff:
         raise PermissionDenied
+
+
+def is_course_instructor(user, course):
+    return Enrollment.objects.filter(
+        user=user, course=course, role=Enrollment.Role.INSTRUCTOR
+    ).exists()
+
+
+def check_course_instructor(user, course):
+    """Raise PermissionDenied unless the user is an instructor in this course. Setting up a
+    course is theirs alone, so this is stricter than check_course_staff."""
+    if not is_course_instructor(user, course):
+        raise PermissionDenied
+
+
+def get_course_for_instructor(user, course_id):
+    """The course, or 404 if it doesn't exist and 403 if the user isn't its instructor."""
+    course = get_object_or_404(Course, pk=course_id)
+    check_course_instructor(user, course)
+    return course
+
+
+def get_project_for_instructor(user, project_id):
+    project = get_object_or_404(Project.objects.select_related("course"), pk=project_id)
+    check_course_instructor(user, project.course)
+    return project
+
+
+def get_requirement_for_instructor(user, requirement_id):
+    requirement = get_object_or_404(
+        Requirement.objects.select_related("project__course"), pk=requirement_id
+    )
+    check_course_instructor(user, requirement.project.course)
+    return requirement
 
 
 def get_course_for_staff(user, course_id):
