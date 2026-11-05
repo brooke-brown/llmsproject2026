@@ -10,12 +10,14 @@ passes or fails on its own.
 from datetime import timedelta
 from unittest import mock
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.sessions.models import Session
 from django.db import IntegrityError, OperationalError
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Course, Enrollment, Project, Team
+from core.models import Course, Enrollment, Project, Repo, Team, TeamMembership
 from dashboard import models as dashboard_models
 from ingest import services as ingest_services
 
@@ -95,6 +97,26 @@ class OneRunAtATimeTests(GenerationRunFixture):
         self.assertIn("already being generated", page_messages(response))
         self.generate.assert_not_called()
 
+    def test_a_refusal_doesnt_queue_for_the_database(self):
+        """Waiting for a run's lock would let the second run start once the first has ended."""
+        self.already_running()
+
+        with mock.patch.object(runs(), "create") as create:
+            self.click_generate()
+
+        create.assert_not_called()
+
+    def test_a_refusal_doesnt_write_to_the_session(self):
+        """A write would wait for a run's lock, and could overwrite the run's saved result."""
+        self.already_running()
+        before = Session.objects.get().session_data
+
+        with mock.patch.object(Session, "save") as save:
+            self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+
+        save.assert_not_called()
+        self.assertEqual(Session.objects.get().session_data, before)
+
     def test_a_refused_click_leaves_the_running_record_alone(self):
         run = self.already_running()
 
@@ -123,6 +145,19 @@ class OneRunAtATimeTests(GenerationRunFixture):
 
         self.assertIn("try again", page_messages(response))
         self.ingest.assert_not_called()
+
+
+class WaitingForTheDatabaseTests(TestCase):
+    def test_writes_wait_for_a_runs_transaction_instead_of_failing(self):
+        """Showing a message writes to the session, which a run's GitHub pull would block.
+
+        Two threads can't share a test's transaction, so this checks the settings. The
+        behaviour itself was checked by hand against a running server.
+        """
+        options = settings.DATABASES["default"]["OPTIONS"]
+
+        self.assertGreaterEqual(options["timeout"], 60)
+        self.assertEqual(options["transaction_mode"], "IMMEDIATE")
 
 
 class RunEndsTests(GenerationRunFixture):
@@ -295,6 +330,50 @@ class ComingBackTests(GenerationRunFixture):
         response = came_back.get(overview_url(self.course.id))
 
         self.assertIn("Generated summaries", page_messages(response))
+
+    def test_two_runs_at_once_both_report_their_results(self):
+        """The run that ends last has an old copy of the session, which mustn't win."""
+        repo_owner = make_user("sample-lin", "Lin", "Beta")
+        enroll(repo_owner, self.course, Role.STUDENT)
+        TeamMembership.objects.create(user=repo_owner, team=self.empty_team)
+        Repo.objects.create(
+            team=self.empty_team, url="https://github.com/acme/beta", full_name="acme/beta"
+        )
+        started = []
+
+        def the_other_team_runs_meanwhile(repo, *args):
+            if not started:
+                started.append(repo)
+                self.client.post(
+                    generate_url(self.empty_team.id), {"week_start": LAST_WEEK.isoformat()}
+                )
+            return []
+
+        self.ingest.side_effect = the_other_team_runs_meanwhile
+
+        self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+        response = self.client.get(overview_url(self.course.id))
+
+        self.assertIn("Team Alpha", page_messages(response))
+        self.assertIn("Team Beta", page_messages(response))
+
+    def test_a_failed_run_reports_as_an_error_after_coming_back(self):
+        self.fail_for(self.ada)
+
+        self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+        response = self.client.get(overview_url(self.course.id))
+
+        levels = [message.level_tag for message in response.context["messages"]]
+        self.assertEqual(levels, ["error"])
+
+    def test_the_retry_button_appears_after_a_failed_run(self):
+        self.fail_for(self.ada)
+
+        self.click_generate()
+
+        self.assertContains(
+            self.client.get(overview_url(self.course.id)), retry_url(self.team.id)
+        )
 
     def test_the_message_only_shows_once(self):
         self.click_generate()

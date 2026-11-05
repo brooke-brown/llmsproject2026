@@ -24,6 +24,9 @@ def home(request):
 @login_required
 def course_overview(request, course_id):
     course = services.get_course_for_staff(request.user, course_id)
+    for result in services.take_run_results(request.session):
+        add_message = messages.success if result["succeeded"] else messages.error
+        add_message(request, result["message"])
     return render(
         request,
         "dashboard/course_overview.html",
@@ -90,10 +93,8 @@ def _show_refusal(request, team, error):
 
 
 def _show_generation(request, generation):
-    """Remember who to retry, say how the run went, and return to the course overview."""
-    services.remember_retry(request.session, generation)
-    add_message = messages.success if generation.succeeded else messages.error
-    add_message(request, generation.message)
+    """Keep how the run went for the course overview, and go there."""
+    services.save_run_result(request.session, generation)
     return redirect("dashboard:course_overview", course_id=generation.team.project.course_id)
 
 

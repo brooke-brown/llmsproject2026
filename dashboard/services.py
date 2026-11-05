@@ -38,6 +38,7 @@ MONDAY = 0  # date.weekday() counts from Monday.
 # for each student. A run that dies is cleared after this.
 RUN_MINUTES_FOR_PULL = 10
 RUN_MINUTES_PER_STUDENT = 6
+RESULTS_SESSION_KEY = "run_results"
 RETRY_SESSION_KEY = "failed_summaries"  # {team ID: {"week_start": ..., "student_ids": [...]}}
 
 
@@ -621,6 +622,10 @@ def _team_run(team, student_count):
 def _start_run(team, student_count):
     """Record that the team is generating, or raise GenerationError if it already is."""
     now = timezone.now()
+    # Checked before the transaction, which waits for any other run's lock. A second run that
+    # waited could find the first one finished by then, and start all over again.
+    if GenerationRun.objects.filter(team=team, expires_at__gt=now).exists():
+        raise GenerationError(_already_running_message(team))
     limit = RUN_MINUTES_FOR_PULL + RUN_MINUTES_PER_STUDENT * student_count
     try:
         with transaction.atomic():
@@ -652,6 +657,38 @@ def _finish_run(run):
         run.delete()
     except OperationalError:
         pass
+
+
+def save_run_result(session, generation):
+    """Keep what the overview needs to report on a finished run: its message and who to retry.
+
+    It's in the session, not a message on the response, because the browser may have left by
+    now. A run outlasts other requests, so its copy of the session is out of date. Holding the
+    database's lock while rereading and saving means nothing saved meanwhile is overwritten.
+    """
+    with transaction.atomic():
+        _reread(session)
+        remember_retry(session, generation)
+        results = session.setdefault(RESULTS_SESSION_KEY, [])
+        results.append({"succeeded": generation.succeeded, "message": generation.message})
+        session.save()
+    session.modified = False  # Already saved, so the middleware needn't save an older moment.
+
+
+def take_run_results(session):
+    """Remove and return the results saved by save_run_result."""
+    if RESULTS_SESSION_KEY not in session:
+        return []
+    with transaction.atomic():
+        _reread(session)
+        results = session.pop(RESULTS_SESSION_KEY, [])
+        session.save()
+    session.modified = False
+    return results
+
+
+def _reread(session):
+    session._session_cache = session.load()
 
 
 def generate_team_summaries(team, week_start):
