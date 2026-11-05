@@ -407,8 +407,8 @@ def _has_flag(severity):
 
 
 def course_projects_with_teams(course):
-    """The course's projects, each with its requirements by number, and its teams and their
-    students.
+    """The course's projects, newest first, each with its requirements by number, and its teams
+    and their students.
 
     Within a project, flagged teams come first, then warned teams, then the rest, each
     group sorted by name. Each team's `flag_rank` is 0 if it has a flag, 1 if its worst is a
@@ -434,7 +434,7 @@ def course_projects_with_teams(course):
         )
     )
     projects = list(
-        course.projects.order_by("id").prefetch_related(
+        course.projects.order_by("-id").prefetch_related(
             Prefetch("teams", queryset=teams),
             Prefetch("requirements", queryset=Requirement.objects.order_by("number")),
         )

@@ -89,9 +89,9 @@ class CourseOverviewContentTests(CourseOverviewFixture):
         team_alpha = content.index("Team Alpha")
         project_two = content.index("Project Two")
         team_beta = content.index("Team Beta")
-        self.assertLess(project_one, team_alpha)
-        self.assertLess(team_alpha, project_two)
         self.assertLess(project_two, team_beta)
+        self.assertLess(team_beta, project_one)
+        self.assertLess(project_one, team_alpha)
 
     def test_shows_each_students_name(self):
         response = self.get_overview()
@@ -231,3 +231,17 @@ class HomeLandingTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, f'href="{overview_url(self.course.id)}"')
+
+
+class ProjectOrderTests(CourseOverviewFixture):
+    def test_the_newest_project_is_listed_first(self):
+        self.client.force_login(self.instructor)
+        newest = Project.objects.create(course=self.course, name="Project Newest")
+
+        content = self.client.get(overview_url(self.course.id)).content.decode()
+
+        positions = [
+            content.index(f'id="project-{project.id}"')
+            for project in [newest, self.empty_project, self.project_two, self.project_one]
+        ]
+        self.assertEqual(positions, sorted(positions))

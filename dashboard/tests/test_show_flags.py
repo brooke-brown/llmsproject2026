@@ -104,9 +104,9 @@ class OverviewOrderTests(ShowFlagsFixture):
 
         content = self.get_overview()
 
-        # Project One's teams still come before Project Two's flagged team.
-        self.assertLess(content.index("Team Delta"), content.index("Project Two"))
+        # The newer project comes first, and a flag doesn't move a team out of its project.
         self.assertLess(content.index("Project Two"), content.index("Team Aardvark"))
+        self.assertLess(content.index("Team Aardvark"), content.index("Team Delta"))
 
 
 class OverviewFlagContentTests(ShowFlagsFixture):
