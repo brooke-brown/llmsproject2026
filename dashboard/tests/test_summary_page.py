@@ -154,24 +154,25 @@ class SummaryPageClaimTests(SummaryPageFixture):
         self.assertContains(response, "Added the login form")
         self.assertNotContains(response, "Wrote the README")
 
-    def test_links_every_cited_artifact_with_its_id_as_the_link_text(self):
+    def test_links_every_cited_artifact_with_its_id_on_hover(self):
         response = self.get_summary_page()
 
         self.assertContains(
             response,
-            '<a href="https://github.com/sample-org/app/pull/12">sample-org/app:pr:12</a>',
+            '<a href="https://github.com/sample-org/app/pull/12" title="sample-org/app:pr:12">'
+            "PR 12</a>",
             html=True,
         )
         self.assertContains(
             response,
-            '<a href="https://github.com/sample-org/app/commit/abc123">'
-            "sample-org/app:commit:abc123</a>",
+            '<a href="https://github.com/sample-org/app/commit/abc123" '
+            'title="sample-org/app:commit:abc123">Commit abc123</a>',
             html=True,
         )
         self.assertContains(
             response,
-            '<a href="https://github.com/sample-org/app/commit/def456">'
-            "sample-org/app:commit:def456</a>",
+            '<a href="https://github.com/sample-org/app/commit/def456" '
+            'title="sample-org/app:commit:def456">Commit def456</a>',
             html=True,
         )
 
@@ -188,7 +189,7 @@ class SummaryPageClaimTests(SummaryPageFixture):
 
         response = self.get_summary_page()
 
-        self.assertContains(response, "(changes requested)")
+        self.assertContains(response, "(Changes requested)")
 
     def test_shows_no_state_for_artifacts_that_arent_reviews(self):
         response = self.get_summary_page()
