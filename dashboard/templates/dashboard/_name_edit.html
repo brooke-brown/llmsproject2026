@@ -1,0 +1,7 @@
+<form class="name-edit" action="{{ action }}" method="post">
+  {% csrf_token %}
+  {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+  <input type="text" name="name" value="{{ name }}" maxlength="200" aria-label="Name" required autofocus>
+  <button type="submit" class="primary">Save</button>
+  <a href="{{ cancel_url }}">Cancel</a>
+</form>

@@ -1,0 +1,6 @@
+<form class="compact" action="{% url 'dashboard:team_create' project.id %}" method="post">
+  {% csrf_token %}
+  {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+  <input type="text" name="name" maxlength="200" aria-label="New team name for {{ project.name }}" placeholder="Team name" required>
+  <button type="submit">Add team</button>
+</form>

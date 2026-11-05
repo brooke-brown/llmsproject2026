@@ -1,0 +1,55 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Edit {{ project.name }} · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' project.course_id %}">{{ project.course.name }}</a> / {{ project.name }} / Edit project</span>{% endblock %}
+
+{% block content %}
+{% url 'dashboard:project_setup' project.id as setup_url %}
+<div class="headrow">
+  {% if editing %}
+  {% url 'dashboard:project_rename' project.id as rename_url %}
+  {% include "dashboard/_name_edit.html" with action=rename_url name=project.name cancel_url=setup_url next=setup_url %}
+  {% else %}
+  <div class="titled">
+    <h1>{{ project.name }}</h1>
+    <a class="edit-link" href="?edit=1">edit</a>
+  </div>
+  {% endif %}
+  <a role="button" href="{% url 'dashboard:course_overview' project.course_id %}">Done</a>
+</div>
+
+<section class="setup-panel">
+  <h2>Requirements</h2>
+  {% if requirement_count %}
+  <p class="keynote">{{ requirement_count }} requirement{{ requirement_count|pluralize }}.</p>
+  <a href="{% url 'dashboard:project_requirements' project.id %}">Edit requirements</a>
+  {% else %}
+  <p class="keynote">No requirements yet.</p>
+  <a href="{% url 'dashboard:project_requirements' project.id %}">Add requirements</a>
+  {% endif %}
+</section>
+
+<section class="setup-panel">
+  <h2>Teams</h2>
+  {% for team in teams %}
+  <div class="setup-row">
+    <a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a>
+    <span>{% if team.student_count %}{{ team.student_count }} student{{ team.student_count|pluralize }}{% else %}<span class="missing">No students yet</span>{% endif %} · {% if team.repo_count %}{{ team.repo_count }} repo{{ team.repo_count|pluralize }}{% else %}<span class="missing">No repo yet</span>{% endif %}</span>
+  </div>
+  {% empty %}
+  <p class="keynote">No teams yet.</p>
+  {% endfor %}
+  {% include "dashboard/_add_team.html" with next=setup_url %}
+  <p class="keynote">Open a team to add its students and repo.</p>
+</section>
+
+<section class="setup-panel">
+  <h2>Delete project</h2>
+  <p class="keynote">Deleting a project permanently deletes its requirements, teams, summaries and any activity pulled for them. Students keep their accounts.</p>
+  <form action="{% url 'dashboard:project_delete' project.id %}" method="post" onsubmit="return confirm('Delete {{ project.name|escapejs }}? This permanently deletes its requirements, {{ teams|length }} team{{ teams|length|pluralize }}{% if summary_count %}, {{ summary_count }} summar{{ summary_count|pluralize:"y,ies" }}{% endif %} and any activity pulled for them. Students keep their accounts.')">
+    {% csrf_token %}
+    <button type="submit" class="outline">Delete project</button>
+  </form>
+</section>
+{% endblock %}

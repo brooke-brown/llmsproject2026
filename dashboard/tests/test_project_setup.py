@@ -115,25 +115,26 @@ class NewProjectTests(SetupFixture):
     def create(self, name):
         return self.client.post(create_url(self.course.id), {"name": name}, follow=True)
 
-    def test_overview_offers_a_new_project_form(self):
+    def test_overview_offers_a_new_project_button(self):
         response = self.client.get(overview_url(self.course.id))
 
         self.assertContains(response, "New project")
-        self.assertContains(response, f'action="{create_url(self.course.id)}"')
+        self.assertContains(response, f'href="{create_url(self.course.id)}"')
 
     def test_overview_offers_it_when_the_course_has_no_projects(self):
         Project.objects.filter(course=self.course).delete()
 
         response = self.client.get(overview_url(self.course.id))
 
-        self.assertContains(response, f'action="{create_url(self.course.id)}"')
+        self.assertContains(response, f'href="{create_url(self.course.id)}"')
 
-    def test_new_project_appears_on_the_overview(self):
+    def test_new_project_opens_its_setup_page_and_appears_on_the_overview(self):
         response = self.create("Project Three")
 
-        self.assertRedirects(response, overview_url(self.course.id))
-        self.assertTrue(Project.objects.filter(course=self.course, name="Project Three").exists())
+        project = Project.objects.get(course=self.course, name="Project Three")
+        self.assertRedirects(response, reverse("dashboard:project_setup", args=[project.id]))
         self.assertContains(response, "Project Three")
+        self.assertContains(self.client.get(overview_url(self.course.id)), "Project Three")
 
     def test_surrounding_whitespace_is_removed(self):
         self.create("  Project Three  ")
@@ -194,12 +195,6 @@ class RenameProjectTests(SetupFixture):
 
     def stored_name(self):
         return Project.objects.get(pk=self.project.pk).name
-
-    def test_overview_offers_a_rename_form_per_project(self):
-        response = self.client.get(overview_url(self.course.id))
-
-        self.assertContains(response, f'action="{rename_url(self.project.id)}"')
-        self.assertContains(response, f'action="{rename_url(self.empty_project.id)}"')
 
     def test_rename_changes_the_name_and_keeps_the_requirements(self):
         response = self.rename("Renamed Project")
@@ -279,7 +274,7 @@ class RequirementsPageTests(SetupFixture):
     def test_page_offers_edit_delete_and_add_forms(self):
         response = self.client.get(requirements_url(self.project.id))
 
-        self.assertContains(response, f'action="{edit_url(self.first.id)}"')
+        self.assertContains(response, f'href="?edit={self.first.id}"')
         self.assertContains(response, f'action="{delete_url(self.first.id)}"')
         self.assertContains(response, f'action="{add_url(self.project.id)}"')
 
@@ -424,8 +419,9 @@ class EditRequirementTests(SetupFixture):
         self.assertContains(response, "Log out of every device")
 
     def test_edit_form_has_no_number_field(self):
-        response = self.client.get(requirements_url(self.project.id))
+        response = self.client.get(requirements_url(self.project.id) + f"?edit={self.second.id}")
 
+        self.assertContains(response, f'action="{edit_url(self.second.id)}"')
         self.assertNotContains(response, 'name="number"')
 
     def test_a_submitted_number_is_ignored(self):
@@ -508,8 +504,8 @@ class DeleteRequirementTests(SetupFixture):
         self.assertRedirects(response, requirements_url(self.project.id))
         self.assertEqual(self.numbers(), [1, 5])
         # Matched with its tag, since the top bar has a "Log out" button.
-        self.assertNotContains(response, "Log out</textarea>")
-        self.assertContains(response, "Log in</textarea>")
+        self.assertNotContains(response, "Log out</p>")
+        self.assertContains(response, "Log in</p>")
 
     def test_deleting_one_doesnt_renumber_the_others(self):
         self.delete(self.first)
@@ -578,6 +574,7 @@ class AccessTests(SetupFixture):
         """Every setup request, as (description, method, URL, data)."""
         return [
             ("page", "get", requirements_url(self.project.id), {}),
+            ("new project page", "get", create_url(self.course.id), {}),
             ("create", "post", create_url(self.course.id), {"name": "New"}),
             ("rename", "post", rename_url(self.project.id), {"name": "New"}),
             ("import", "post", import_url(self.empty_project.id), {"text": PASTED}),
@@ -691,7 +688,8 @@ class AccessTests(SetupFixture):
 
     def test_changes_refuse_get(self):
         for description, method, url, _data in self.get_requests():
-            if method == "get":
+            # Creating a project has a page at the same URL, so GET is its form, not a change.
+            if method == "get" or url == create_url(self.course.id):
                 continue
             with self.subTest(request=description):
                 self.assertEqual(self.client.get(url).status_code, 405)

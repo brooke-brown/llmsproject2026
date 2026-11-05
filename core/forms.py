@@ -2,9 +2,12 @@ from django import forms
 from django.core.exceptions import ValidationError
 
 from core.models import Repo
-from core.services import RequirementImportError, extract_pdf_text, github_repo_full_name
-
-DUPLICATE_REPO_MESSAGE = "This team already has this repo."
+from core.services import (
+    DUPLICATE_REPO_MESSAGE,
+    RequirementImportError,
+    extract_pdf_text,
+    github_repo_full_name,
+)
 
 
 class RepoForm(forms.ModelForm):

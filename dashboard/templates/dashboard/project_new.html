@@ -1,0 +1,19 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}New project · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' course.id %}">{{ course.name }}</a> / New project</span>{% endblock %}
+
+{% block content %}
+<div class="headrow"><h1>New project</h1></div>
+<form class="narrow" action="{% url 'dashboard:project_create' course.id %}" method="post">
+  {% csrf_token %}
+  <label for="project-name">Project name</label>
+  <input id="project-name" type="text" name="name" value="{{ name }}" maxlength="200" required autofocus>
+  <p class="form-actions">
+    <button type="submit" class="primary">Create project</button>
+    <a href="{% url 'dashboard:course_overview' course.id %}">Cancel</a>
+  </p>
+</form>
+<p class="keynote">Next you can add the project's requirements and teams.</p>
+{% endblock %}

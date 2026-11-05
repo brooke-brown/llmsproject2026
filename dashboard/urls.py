@@ -20,6 +20,8 @@ urlpatterns = [
     ),
     path("summaries/<int:summary_id>/", views.summary, name="summary"),
     path("courses/<int:course_id>/projects/new/", views.project_create, name="project_create"),
+    path("projects/<int:project_id>/setup/", views.project_setup, name="project_setup"),
+    path("projects/<int:project_id>/delete/", views.project_delete, name="project_delete"),
     path("projects/<int:project_id>/rename/", views.project_rename, name="project_rename"),
     path(
         "projects/<int:project_id>/requirements/",
@@ -42,4 +44,17 @@ urlpatterns = [
         views.requirement_delete,
         name="requirement_delete",
     ),
+    path("projects/<int:project_id>/teams/new/", views.team_create, name="team_create"),
+    path("teams/<int:team_id>/rename/", views.team_rename, name="team_rename"),
+    path("teams/<int:team_id>/delete/", views.team_delete, name="team_delete"),
+    path("teams/<int:team_id>/students/add/", views.student_add, name="student_add"),
+    path("memberships/<int:membership_id>/edit/", views.membership_edit, name="membership_edit"),
+    path(
+        "memberships/<int:membership_id>/remove/",
+        views.membership_remove,
+        name="membership_remove",
+    ),
+    path("teams/<int:team_id>/repos/add/", views.repo_add, name="repo_add"),
+    path("repos/<int:repo_id>/change/", views.repo_change, name="repo_change"),
+    path("repos/<int:repo_id>/remove/", views.repo_remove, name="repo_remove"),
 ]

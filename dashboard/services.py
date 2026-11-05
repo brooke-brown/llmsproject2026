@@ -10,7 +10,17 @@ from django.db.models import Case, Count, Exists, Max, OuterRef, Prefetch, Q, Va
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from core.models import Course, Enrollment, Project, Requirement, Team, TeamMembership, User
+from core.models import (
+    Course,
+    Enrollment,
+    Project,
+    Repo,
+    Requirement,
+    Team,
+    TeamMembership,
+    User,
+)
+from core import services as setup_services
 from ingest import services as ingest_services
 from ingest.models import Artifact
 from summaries import services as summaries_services
@@ -104,6 +114,39 @@ def get_requirement_for_instructor(user, requirement_id):
     return requirement
 
 
+def get_team_for_instructor(user, team_id):
+    team = get_object_or_404(Team.objects.select_related("project__course"), pk=team_id)
+    check_course_instructor(user, team.project.course)
+    return team
+
+
+def get_membership_for_instructor(user, membership_id):
+    membership = get_object_or_404(
+        TeamMembership.objects.select_related("user", "team__project__course"), pk=membership_id
+    )
+    check_course_instructor(user, membership.team.project.course)
+    return membership
+
+
+def get_repo_for_instructor(user, repo_id):
+    repo = get_object_or_404(Repo.objects.select_related("team__project__course"), pk=repo_id)
+    check_course_instructor(user, repo.team.project.course)
+    return repo
+
+
+def parse_id(value):
+    """A database ID from a query string, or None if `value` can't be one."""
+    return int(value) if value and value.isdecimal() else None
+
+
+def project_setup_teams(project):
+    """The project's teams by name, each with its `student_count` and `repo_count`."""
+    return project.teams.annotate(
+        student_count=Count("memberships", distinct=True),
+        repo_count=Count("repos", distinct=True),
+    ).order_by("name")
+
+
 def get_course_for_staff(user, course_id):
     """The course, or 404 if it doesn't exist and 403 if the user isn't its staff."""
     course = get_object_or_404(Course, pk=course_id)
@@ -187,7 +230,20 @@ def team_status(team):
 
 
 def team_repos(team):
-    return team.repos.order_by("full_name")
+    """The team's repos, each with `has_artifacts`, since those can't be changed, and
+    `has_cited_artifacts`, since those can't be removed either."""
+    stored = Artifact.objects.filter(repo=OuterRef("pk"))
+    cited = Claim.objects.filter(artifacts__repo=OuterRef("pk"))
+    return team.repos.annotate(
+        has_artifacts=Exists(stored), has_cited_artifacts=Exists(cited)
+    ).order_by("full_name")
+
+
+def remove_student(membership):
+    """Take a student off their team, then recompute its flags, since the shares change."""
+    with transaction.atomic():
+        setup_services.remove_student(membership)
+        flags.compute_flags(membership.team)
 
 
 def team_wide_flags(team):
@@ -342,7 +398,7 @@ def course_projects_with_teams(course):
             )
         )
         .order_by("flag_rank", "name")
-        .prefetch_related(Prefetch("memberships", queryset=memberships))
+        .prefetch_related(Prefetch("memberships", queryset=memberships), "repos")
     )
     return course.projects.order_by("id").prefetch_related(
         Prefetch("teams", queryset=teams),
@@ -485,13 +541,16 @@ def _write_summaries(team, students, week_start):
 def generate_team_summaries(team, week_start):
     """Ingest the team's repos once, then write a summary for each student on the team.
 
-    Raises GenerationError, with nothing run, for a team with no students, and for a failed
-    ingest, with no LLM calls made. Otherwise returns a TeamGeneration, which lists any
-    students whose summaries failed. They keep any earlier summary for the week.
+    Raises GenerationError, with nothing run, for a team with no students or no repo, and
+    for a failed ingest, with no LLM calls made. Otherwise returns a TeamGeneration, which
+    lists any students whose summaries failed. They keep any earlier summary for the week.
     """
     students = _team_students(team)
     if not students:
         raise GenerationError("This team has no students yet, so nothing was generated.")
+    # Otherwise every student would get a "No activity" summary, which reads like a finding.
+    if not team.repos.exists():
+        raise GenerationError("This team has no repo yet, so nothing was generated.")
     _ingest_team_week(team, week_start)
     return _write_summaries(team, students, week_start)
 

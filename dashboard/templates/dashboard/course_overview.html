@@ -6,30 +6,13 @@
 
 {% block content %}
 {% if can_set_up %}
-<form class="new-project" action="{% url 'dashboard:project_create' course.id %}" method="post">
-  {% csrf_token %}
-  <fieldset role="group">
-    <input type="text" name="name" maxlength="200" aria-label="New project name" placeholder="Project name" required>
-    <button type="submit">New project</button>
-  </fieldset>
-</form>
+<p class="page-actions"><a role="button" class="primary" href="{% url 'dashboard:project_create' course.id %}">New project</a></p>
 {% endif %}
 {% for project in projects %}
 <section class="project" id="project-{{ project.id }}">
   <div class="headrow">
     <h1>{{ project.name }}</h1>
-    {% if can_set_up %}
-    <details class="rename">
-      <summary>Rename</summary>
-      <form action="{% url 'dashboard:project_rename' project.id %}" method="post">
-        {% csrf_token %}
-        <fieldset role="group">
-          <input type="text" name="name" value="{{ project.name }}" maxlength="200" aria-label="Name for {{ project.name }}" required>
-          <button type="submit">Save name</button>
-        </fieldset>
-      </form>
-    </details>
-    {% endif %}
+    {% if can_set_up %}<a href="{% url 'dashboard:project_setup' project.id %}">Edit project</a>{% endif %}
   </div>
   <div class="layout">
     <div>
@@ -49,6 +32,7 @@
             <li>No students on this team yet.</li>
             {% endfor %}
           </ul>
+          {% if not team.repos.all %}<p class="missing">No repo yet.</p>{% endif %}
           <div class="latest">{% if team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% else %}No summaries yet{% endif %}</div>
           <div class="foot">
             <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post">
@@ -70,6 +54,9 @@
       </div>
       {% else %}
       <p>No teams in this project yet.</p>
+      {% endif %}
+      {% if can_set_up %}
+      {% include "dashboard/_add_team.html" %}
       {% endif %}
     </div>
 
