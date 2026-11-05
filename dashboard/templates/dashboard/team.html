@@ -2,39 +2,64 @@
 
 {% block title %}{{ team.name }} · STRIVE{% endblock %}
 
-{% block content %}
-<p><a href="{% url 'dashboard:course_overview' team.project.course.id %}">{{ team.project.course.name }}</a> › {{ team.project.name }}</p>
-<h1>{{ team.name }}</h1>
-<p>
-  Repos:
-  {% for repo in repos %}<code>{{ repo.full_name }}</code>{% if not forloop.last %}, {% endif %}{% empty %}none yet{% endfor %}
-</p>
-{% for flag in team_flags %}
-<p><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
-{% endfor %}
+{% block main_class %}team{% endblock %}
 
-<h2>Students</h2>
-{% if share_week %}
-<p><small>Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.</small></p>
-{% endif %}
-{% for membership in memberships %}
-<article>
-  <header>
-    <strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.get_full_name|default:membership.user.github_login }}</a>{% else %}{{ membership.user.get_full_name|default:membership.user.github_login }}{% endif %}</strong>
-    (<code>{{ membership.user.github_login }}</code>){% if membership.contribution_share is not None %} · <strong>{{ membership.contribution_share }}%</strong>{% endif %}
-  </header>
-  {% for flag in membership.user.team_flags %}
-  <p><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' team.project.course.id %}">{{ team.project.course.name }}</a> · {{ team.project.name }} › {{ team.name }}</span>{% endblock %}
+
+{% block content %}
+<div class="headrow">
+  <div>
+    <h1>{{ team.name }}</h1>
+    {% for repo in repos %}<code>{{ repo.full_name }}</code>{% empty %}<code>no repos yet</code>{% endfor %}
+  </div>
+  {% if team_status == "flag" %}<span class="tag flag">Flag</span>{% elif team_status == "warning" %}<span class="tag warn">Warning</span>{% elif team_status == "ok" %}<span class="tag ok">No flags</span>{% endif %}
+</div>
+
+{% if team_flags %}
+<div class="findings">
+  {% for flag in team_flags %}
+  <p class="finding {{ flag.severity }}"><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
   {% endfor %}
-  <ul>
-    {% for summary in membership.user.team_summaries %}
-    <li><a href="{% url 'dashboard:summary' summary.id %}">Week of {{ summary.week_start|date:"M j, Y" }}</a></li>
-    {% empty %}
-    <li>No summaries yet.</li>
+</div>
+{% endif %}
+
+<h2>Summaries by student</h2>
+<div class="weeks">
+  {% for membership in memberships %}
+  <article class="card">
+    <header class="row">
+      <span><strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.get_full_name|default:membership.user.github_login }}</a>{% else %}{{ membership.user.get_full_name|default:membership.user.github_login }}{% endif %}</strong>
+      <code>{{ membership.user.github_login }}</code></span>{% if membership.contribution_share is not None %}
+      <strong>{{ membership.contribution_share }}%</strong>{% endif %}
+    </header>
+    {% for flag in membership.user.team_flags %}
+    <p class="finding {{ flag.severity }}"><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
     {% endfor %}
-  </ul>
-</article>
-{% empty %}
-<p>No students on this team yet.</p>
-{% endfor %}
+    <ul class="pills">
+      {% for summary in membership.user.team_summaries %}
+      <li><a href="{% url 'dashboard:summary' summary.id %}">Week of {{ summary.week_start|date:"M j, Y" }}<span class="count">{% if summary.claim_count %}{{ summary.claim_count }} claim{{ summary.claim_count|pluralize }}{% elif not summary.artifact_count %}no activity{% else %}no claims{% endif %}</span></a></li>
+      {% empty %}
+      <li>No summaries yet.</li>
+      {% endfor %}
+    </ul>
+  </article>
+  {% empty %}
+  <p>No students on this team yet.</p>
+  {% endfor %}
+</div>
+
+{% if share_week %}
+<section class="chart" aria-labelledby="share-title">
+  <h2 id="share-title">Share of requirement-tied work, week of {{ share_week|date:"M j" }}</h2>
+  <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.</p>
+  {% for membership in memberships %}{% if membership.contribution_share is not None %}
+  <div class="bar-row" title="{{ membership.user.get_full_name|default:membership.user.github_login }}: {{ membership.contribution_share }}% of the team's requirement-tied work">
+    {% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.get_full_name|default:membership.user.github_login }}</a>{% else %}<span>{{ membership.user.get_full_name|default:membership.user.github_login }}</span>{% endif %}
+    <div class="track"><div class="equal"></div><div class="fill{% if membership.user.team_flags %} low{% endif %}" style="width: {{ membership.contribution_bar }}%"></div></div>
+    <span class="val">{{ membership.contribution_share }}%{% if membership.user.team_flags %} <span class="tag {% if membership.user.team_flags.0.severity == 'flag' %}flag{% else %}warn{% endif %}">{{ membership.user.team_flags.0.get_severity_display }}</span>{% endif %}</span>
+  </div>
+  {% endif %}{% endfor %}
+  <div class="axis"><span></span><div><span>Equal share: {{ equal_share }}%</span></div><span></span></div>
+</section>
+{% endif %}
 {% endblock %}

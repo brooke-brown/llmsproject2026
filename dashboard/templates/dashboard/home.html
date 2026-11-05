@@ -1,14 +1,23 @@
 {% extends "dashboard/base.html" %}
 
 {% block content %}
-<h1>Dashboard</h1>
+<h1 style="margin-bottom:18px">Your courses</h1>
 {% if courses %}
-<p>Choose a course:</p>
-<ul>
+<div class="cards">
   {% for course in courses %}
-  <li><a href="{% url 'dashboard:course_overview' course.id %}">{{ course.name }}</a></li>
+  <article class="card">
+    <div class="row"><h3><a href="{% url 'dashboard:course_overview' course.id %}">{{ course.name }}</a></h3></div>
+    <p class="people">{{ course.role_label }} · {{ course.team_count }} team{{ course.team_count|pluralize }}</p>
+    {% if course.team_count %}
+    <div class="tags">
+      {% if course.flagged_count %}<span class="tag flag">{{ course.flagged_count }} flag{{ course.flagged_count|pluralize }}</span>{% endif %}
+      {% if course.warned_count %}<span class="tag warn">{{ course.warned_count }} warning{{ course.warned_count|pluralize }}</span>{% endif %}
+      {% if not course.flagged_count and not course.warned_count %}<span class="tag ok">No flags</span>{% endif %}
+    </div>
+    {% endif %}
+  </article>
   {% endfor %}
-</ul>
+</div>
 {% else %}
 <p>You aren't an instructor or TA in any course yet.</p>
 {% endif %}

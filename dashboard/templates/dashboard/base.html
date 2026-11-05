@@ -1,33 +1,241 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}STRIVE{% endblock %}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.0.6/css/pico.min.css">
+  <style>
+    /* The design from docs/mockups/c-balance.html, on top of Pico's dark theme. Colours go
+       through Pico's own variables, so form controls and tables follow along. */
+    :root[data-theme="dark"] {
+      --bg: #111418; --panel: #1a1f26; --panel2: #222832; --line: #303844;
+      --ink: #eef1f5; --muted: #a5afbc; --accent: #9db2ff; --accent-hover: #b9c7ff; --on-accent: #0e1320;
+      --flag: #ff9182; --flag-bg: #3c1f1d; --flag-line: #7d3a33;
+      --warn: #f2c14e; --warn-bg: #3a2f14; --warn-line: #6b5720;
+      --ok: #74d6a5; --ok-bg: #16322a; --none-bg: #2a303a;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+      --pico-font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+      --pico-font-size: 93.75%;
+      --pico-border-radius: 8px;
+      --pico-background-color: var(--bg);
+      --pico-color: var(--ink);
+      --pico-muted-color: var(--muted);
+      --pico-muted-border-color: var(--line);
+      --pico-primary: var(--accent);
+      --pico-primary-hover: var(--accent-hover);
+      --pico-primary-underline: transparent;
+      --pico-primary-hover-underline: var(--accent);
+      --pico-primary-background: var(--accent);
+      --pico-primary-hover-background: var(--accent-hover);
+      --pico-primary-border: var(--accent);
+      --pico-primary-hover-border: var(--accent-hover);
+      --pico-primary-inverse: var(--on-accent);
+      --pico-secondary-background: var(--accent);
+      --pico-secondary-hover-background: var(--accent-hover);
+      --pico-secondary-border: var(--accent);
+      --pico-secondary-hover-border: var(--accent-hover);
+      --pico-secondary-inverse: var(--on-accent);
+      --pico-card-background-color: var(--panel);
+      --pico-card-border-color: var(--line);
+      --pico-card-box-shadow: none;
+      --pico-card-sectioning-background-color: var(--panel);
+      --pico-form-element-background-color: var(--panel2);
+      --pico-form-element-border-color: var(--line);
+      --pico-form-element-color: var(--ink);
+      --pico-form-element-active-background-color: var(--panel2);
+      --pico-form-element-active-border-color: var(--accent);
+      --pico-form-element-focus-color: var(--accent);
+      --pico-mark-background-color: var(--warn-bg);
+      --pico-mark-color: var(--warn);
+      --pico-table-border-color: var(--line);
+    }
+
+    a { text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .container { max-width: 1240px; }
+    h1 { margin: 0; font-size: 28px; font-weight: 600; line-height: 1.2; }
+    h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+    h3 { margin: 0; font-size: 18px; font-weight: 600; }
+    small { color: var(--muted); }
+    strong, b { font-weight: 600; }
+    code { padding: 0; background: none; font: 12.5px var(--mono); color: var(--muted); }
+
+    /* Top bar */
+    header.top { margin: 0; padding: 0; border-bottom: 1px solid var(--line); }
+    .bar { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding-block: 12px; font-size: 14px; }
+    .bar .brand { display: inline-flex; gap: 8px; align-items: center; color: var(--ink); font-weight: 700; letter-spacing: .1em; }
+    .bar .brand i, article.login .brand i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+    .bar .crumb { color: var(--muted); }
+    .bar .crumb a { color: var(--muted); }
+    .bar .crumb a:hover { color: var(--ink); }
+    .bar .who { display: flex; gap: 10px; align-items: center; margin-left: auto; color: var(--muted); }
+    .bar form { margin: 0; }
+    .bar button { --pico-background-color: transparent; --pico-border-color: var(--line); --pico-color: var(--muted); padding: 3px 10px; font-size: 14px; font-weight: 400; }
+    .bar button:is(:hover, :active, :focus) { --pico-background-color: transparent; --pico-border-color: var(--accent); --pico-color: var(--ink); }
+    main.container { padding-top: 24px; padding-bottom: 56px; }
+
+    /* Messages, tags and notes */
+    .msg { margin: 0 0 18px; padding: 10px 14px; border-radius: 8px; background: var(--flag-bg); color: #ffd9d3; }
+    .msg.success { background: var(--ok-bg); color: #c9f3de; }
+    .msg.warning { background: var(--warn-bg); color: #f6dfa6; }
+    .msg.info { background: var(--panel2); color: var(--ink); }
+    .msg mark, .note mark { display: inline; padding: 0; background: none; color: inherit; font-size: inherit; white-space: normal; }
+    mark, .tag { display: inline-flex; gap: 5px; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+    mark { background: var(--warn-bg); color: var(--warn); }
+    .tag.flag, .card.flag mark, .finding.flag mark { background: var(--flag-bg); color: var(--flag); }
+    .tag.warn, .card.warn mark { background: var(--warn-bg); color: var(--warn); }
+    .tag.ok { background: var(--ok-bg); color: var(--ok); }
+    .tag.none { background: var(--none-bg); color: var(--muted); }
+    .card.flag mark::before, .tag.flag::before, .finding.flag mark::before { content: "⚑"; }
+    .card.warn mark::before, .tag.warn::before, .finding.warning mark::before { content: "▲"; }
+    .tag.ok::before { content: "✓"; }
+    .tag.none::before { content: "○"; }
+    .tag.none.new::before { content: "–"; }
+    .finding { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 0 0 8px; padding: 10px 14px; border-radius: 8px; background: var(--flag-bg); color: #ffd9d3; font-size: 14px; }
+    .finding.warning { background: var(--warn-bg); color: #f6dfa6; }
+    .finding mark { background: #00000033; color: inherit; }
+    .note { margin: 0; font-size: 14px; }
+    .headrow { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; justify-content: space-between; margin-bottom: 18px; }
+    .headrow code { display: block; margin-top: 4px; }
+
+    /* Cards */
+    .cards, .weeks { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    article.card { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: none; }
+    article.card > * { margin: 0; }
+    article.card > header, article.card > footer { padding: 0; border: 0; background: none; }
+    article.card.flag, article.card:has(.finding.flag) { border-color: var(--flag-line); }
+    article.card.warn, article.card:has(.finding.warning) { border-color: var(--warn-line); }
+    .card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .card h3 a { color: var(--ink); }
+    .card > header { font-size: 14px; }
+    .card > header > strong:first-child { font-size: 18px; font-weight: 600; }
+    .card > header a { color: var(--ink); }
+    .card .latest { color: var(--muted); font-size: 13px; }
+    .card .foot, .card .tags { margin-top: auto; }
+    .card .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .card .foot form { margin: 0; }
+    .people { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; }
+    .people li { margin: 0; padding: 0; list-style: none; }
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .pills li { margin: 0; padding: 0; list-style: none; }
+    .pills a, .pills li:not(:has(a)) { display: inline-block; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+    .pills a:hover { border-color: var(--accent); text-decoration: none; }
+    .pills a[aria-current] { background: var(--panel2); color: var(--ink); }
+    .pills li:not(:has(a)) { color: var(--muted); }
+    .pills .count { margin-left: 6px; color: var(--muted); }
+    .pills .count::before { content: "· "; }
+
+    /* Forms and buttons */
+    input, select { margin-bottom: 0; padding: 7px 10px; font: inherit; }
+    button, [type="submit"] { --pico-background-color: var(--panel2); --pico-border-color: var(--line); --pico-color: var(--ink); margin-bottom: 0; padding: 7px 12px; font-size: 13.5px; font-weight: 600; }
+    button:is(:hover, :active, :focus), [type="submit"]:is(:hover, :active, :focus) { --pico-background-color: var(--panel2); --pico-border-color: var(--accent); --pico-color: var(--ink); }
+    button.primary, button.secondary { --pico-background-color: var(--accent); --pico-border-color: var(--accent); --pico-color: var(--on-accent); }
+    button.primary:is(:hover, :active, :focus), button.secondary:is(:hover, :active, :focus) { --pico-background-color: var(--accent-hover); --pico-border-color: var(--accent-hover); --pico-color: var(--on-accent); }
+    fieldset[role="group"] { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; box-shadow: none; }
+    fieldset[role="group"] > input { flex: 1 1 130px; min-width: 0; }
+    fieldset[role="group"] > button { flex: 1 1 auto; white-space: nowrap; }
+    fieldset[role="group"] > :not(:first-child) { margin-left: 0; }
+    fieldset[role="group"] > * { border-radius: var(--pico-border-radius); }
+    .foot form + form { margin-top: 8px; }
+
+    /* Course overview: teams beside the project's requirements */
+    .project { margin-bottom: 36px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+    .rail { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .rail p { margin: 0; color: var(--muted); font-size: 13.5px; }
+    .rail table { --pico-background-color: transparent; margin: 0; border: 0; font-size: 13.5px; }
+    .rail thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .rail tr { display: grid; grid-template-columns: 20px 1fr; gap: 4px; }
+    .rail td { padding: 7px 0; border-bottom: 0; border-top: 1px solid var(--line); background: none; }
+    .rail td:first-child { color: var(--muted); font-weight: 600; }
+
+    /* Team page: the share chart first on screen, though it comes after the students in the page */
+    main.team { display: flex; flex-direction: column; }
+    main.team > .headrow { order: 0; margin-bottom: 0; }
+    main.team > .chart { order: 1; }
+    main.team > .findings { order: 2; margin-top: 16px; }
+    main.team > h2 { order: 3; margin-top: 24px; }
+    main.team > .weeks { order: 4; }
+    .chart { margin: 18px 0 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .chart h2 { margin-bottom: 2px; font-size: 16px; letter-spacing: 0; text-transform: none; color: var(--ink); }
+    .chart .why { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }
+    .bar-row, .axis { display: grid; grid-template-columns: 150px minmax(0, 1fr) 118px; gap: 12px; align-items: center; }
+    .bar-row { padding: 6px 0; }
+    .bar-row:hover { background: #ffffff08; }
+    .bar-row a, .bar-row > span:first-child { color: var(--ink); font-weight: 500; }
+    .track { position: relative; height: 12px; }
+    .equal { position: absolute; top: -8px; bottom: -8px; left: 50%; border-left: 1px dashed #6d7786; }
+    .fill { position: absolute; left: 0; top: 0; height: 12px; border-radius: 0 4px 4px 0; background: var(--accent); }
+    .fill.low { background: var(--flag); }
+    .val { font-variant-numeric: tabular-nums; font-size: 14px; }
+    .val .tag { margin-left: 4px; }
+    .axis { margin-top: 4px; color: var(--muted); font-size: 12.5px; }
+    .axis div { position: relative; height: 18px; }
+    .axis div span { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+
+    /* Summary page */
+    .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+    .stat { padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .stat b { display: block; font-size: 26px; font-weight: 600; line-height: 1.2; }
+    .stat span { color: var(--muted); font-size: 13.5px; }
+    .stat.alert { border-color: var(--flag-line); }
+    .stat.empty { margin-top: 18px; padding: 32px; text-align: center; color: var(--muted); }
+    .keynote { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
+    .claim { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px 24px; margin-bottom: 12px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .claim .cat { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    .claim p { margin: 0 0 10px; font-size: 16.5px; }
+    .claim p.ev { margin: 0; font-size: 13.5px; }
+    .ev { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .ev .chip { min-width: 0; padding: 3px 10px; border-radius: 8px; background: var(--ok-bg); color: var(--muted); overflow-wrap: anywhere; }
+    .ev .chip a { color: #bdf0d6; font-weight: 600; }
+    .llm { padding-left: 16px; border-left: 1px dashed #6d7786; font-size: 13.5px; }
+    .llm h3 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    .llm p { margin: 6px 0 0; font-size: 13.5px; color: var(--muted); }
+    .pips { display: inline-flex; gap: 3px; margin-right: 6px; vertical-align: 1px; }
+    .pips i { width: 12px; height: 8px; border: 1px dashed #8e98a6; border-radius: 2px; }
+    .pips i.on { border-style: solid; border-color: var(--ink); background: var(--ink); }
+
+    /* Pages without a top bar: the login card carries its own brand */
+    article.login { max-width: 360px; margin: 14vh auto 0; padding: 28px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: none; }
+    article.login .brand { display: flex; gap: 8px; align-items: center; margin-bottom: 20px; font-size: 18px; font-weight: 700; letter-spacing: .1em; color: var(--ink); }
+    article.login h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    article.login label { display: block; margin-bottom: 12px; font-size: 13.5px; font-weight: 600; }
+    article.login input { margin-top: 4px; }
+    article.login button { width: 100%; }
+
+    @media (max-width: 960px) {
+      .layout { grid-template-columns: minmax(0, 1fr); }
+      .claim { grid-template-columns: minmax(0, 1fr); }
+      .llm { padding: 10px 0 0; border-left: 0; border-top: 1px dashed #6d7786; }
+      .stats { grid-template-columns: minmax(0, 1fr); }
+      .bar-row, .axis { grid-template-columns: 100px minmax(0, 1fr) 96px; }
+    }
+  </style>
 </head>
 <body>
-  <header class="container">
-    <nav>
-      <ul>
-        <li><a href="{% url 'dashboard:home' %}"><strong>STRIVE</strong></a></li>
-      </ul>
+  {% block topbar %}
+  <header class="top">
+    <div class="bar container">
+      <a class="brand" href="{% url 'dashboard:home' %}"><i></i>STRIVE</a>
+      {% block crumb %}{% endblock %}
       {% if user.is_authenticated %}
-      <ul>
-        <li>{{ user.get_username }}</li>
-        <li>
-          <form action="{% url 'logout' %}" method="post">
-            {% csrf_token %}
-            <button type="submit" class="secondary outline">Log out</button>
-          </form>
-        </li>
-      </ul>
+      <span class="who">
+        {{ user.get_username }}
+        <form action="{% url 'logout' %}" method="post">
+          {% csrf_token %}
+          <button type="submit" class="secondary outline">Log out</button>
+        </form>
+      </span>
       {% endif %}
-    </nav>
+    </div>
   </header>
-  <main class="container">
+  {% endblock %}
+  <main class="container {% block main_class %}{% endblock %}">
     {% for message in messages %}
-    <p role="alert"><mark>{{ message }}</mark></p>
+    <p role="alert" class="msg {{ message.tags }}"><mark>{{ message }}</mark></p>
     {% endfor %}
     {% block content %}{% endblock %}
   </main>
