@@ -8,7 +8,7 @@ from . import services
 
 @login_required
 def home(request):
-    courses = list(services.staff_courses(request.user))
+    courses = services.course_cards(request.user)
     if len(courses) == 1:
         return redirect("dashboard:course_overview", course_id=courses[0].id)
     return render(request, "dashboard/home.html", {"courses": courses})
@@ -44,6 +44,8 @@ def team(request, team_id):
             "team_flags": services.team_wide_flags(team),
             "memberships": memberships,
             "share_week": share_week,
+            "team_status": services.team_status(team),
+            "equal_share": round(100 / len(memberships)) if memberships else None,
         },
     )
 
@@ -84,13 +86,16 @@ def retry_failed_summaries(request, team_id):
 @login_required
 def summary(request, summary_id):
     summary = services.get_summary_for_staff(request.user, summary_id)
+    claims = services.verified_claims(summary)
     return render(
         request,
         "dashboard/summary.html",
         {
             "summary": summary,
             "week_end": services.week_end(summary.week_start),
-            "claims": services.verified_claims(summary),
+            "claims": claims,
+            "tied_count": sum(1 for claim in claims if claim.requirement_ids),
             "unverified_count": summary.unverified_count,
+            "weeks": services.student_weeks(summary),
         },
     )
