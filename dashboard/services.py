@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -94,12 +95,27 @@ def week_end(week_start):
     return week_start + timedelta(days=6)
 
 
+def evidence_label(artifact):
+    """The short text of an artifact's GitHub link, such as "PR 45"."""
+    identifier = artifact.artifact_id.rsplit(":", 1)[-1]
+    if artifact.type == Artifact.Type.COMMIT:
+        return f"Commit {identifier[:7]}"
+    if artifact.type == Artifact.Type.PR:
+        return f"PR {identifier}"
+    if artifact.type == Artifact.Type.ISSUE:
+        return f"Issue {identifier}"
+    # A review's own ID is GitHub's internal one, so its PR number comes from its URL.
+    pull = re.search(r"/pull/(\d+)", artifact.url)
+    return f"Review on PR {pull.group(1)}" if pull else "Review"
+
+
 def verified_claims(summary):
     """The summary's verified claims, the only ones a user may see.
 
-    Each claim has its artifacts prefetched for the GitHub links, and
-    `tagged_requirements`: a (number, text) pair per requirement_id, with text None
-    when the team's project has no requirement with that number.
+    Each claim has its artifacts prefetched for the GitHub links, each with an
+    `evidence_label`, and `tagged_requirements`: a (number, text) pair per distinct
+    requirement_id, sorted by number, with text None when the team's project has no
+    requirement with that number.
     """
     requirements = dict(summary.team.project.requirements.values_list("number", "text"))
     claims = list(
@@ -110,8 +126,10 @@ def verified_claims(summary):
         )
     )
     for claim in claims:
+        for artifact in claim.artifacts.all():
+            artifact.evidence_label = evidence_label(artifact)
         claim.tagged_requirements = [
-            (number, requirements.get(number)) for number in claim.requirement_ids
+            (number, requirements.get(number)) for number in sorted(set(claim.requirement_ids))
         ]
     return claims
 

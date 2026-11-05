@@ -38,13 +38,22 @@
     <p>{{ claim.text }}</p>
     <p class="ev">
       <small>Verified against GitHub:</small>
-      {% for artifact in claim.artifacts.all %}<span class="chip"><a href="{{ artifact.url }}">{{ artifact.artifact_id }}</a>{% if artifact.review_state %} ({{ artifact.review_state_label }}){% endif %}</span>{% endfor %}
+      {% for artifact in claim.artifacts.all %}<span class="chip"><a href="{{ artifact.url }}" title="{{ artifact.artifact_id }}">{{ artifact.evidence_label }}</a>{% if artifact.review_state %} ({{ artifact.review_state_label|capfirst }}){% endif %}</span>{% endfor %}
     </p>
   </div>
   <div class="llm">
     <h3>LLM judgment</h3>
     <span class="pips" aria-hidden="true"><i class="on"></i><i{% if claim.significance != "minor" %} class="on"{% endif %}></i><i{% if claim.significance == "major" %} class="on"{% endif %}></i></span>{{ claim.get_significance_display }}
-    <p>{% for number, text in claim.tagged_requirements %}Requirement {{ number }}{% if text %}: {{ text }}{% endif %}{% if not forloop.last %}; {% endif %}{% empty %}Not tied to a requirement{% endfor %}</p>
+    {% with count=claim.tagged_requirements|length %}{% if count %}
+    <details>
+      <summary>{{ count }} requirement{{ count|pluralize }}</summary>
+      <ul>
+        {% for number, text in claim.tagged_requirements %}<li>Requirement {{ number }}{% if text %}: {{ text }}{% endif %}</li>{% endfor %}
+      </ul>
+    </details>
+    {% else %}
+    <p>Not tied to a requirement</p>
+    {% endif %}{% endwith %}
   </div>
 </article>
 {% empty %}
