@@ -154,6 +154,21 @@
     .rail td { padding: 7px 0; border-bottom: 0; border-top: 1px solid var(--line); background: none; }
     .rail td:first-child { color: var(--muted); font-weight: 600; }
 
+    /* Instructor setup: new project, rename and the requirements page */
+    .new-project { max-width: 480px; margin-bottom: 24px; }
+    details.rename { margin: 0; border: 0; padding: 0; font-size: 13.5px; }
+    details.rename summary { color: var(--muted); }
+    details.rename form { margin: 8px 0 0; }
+    .rail p.rail-action { margin-top: 10px; }
+    .requirement { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
+    .requirement strong { padding-top: 8px; color: var(--muted); }
+    .requirement form { margin: 0; }
+    .requirement textarea, .setup-panel textarea { margin-bottom: 8px; }
+    .setup-panel { margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .setup-panel form { margin: 0; }
+    .errorlist { margin: 0 0 8px; padding: 0; list-style: none; color: var(--flag); font-size: 13.5px; }
+    .errorlist li { list-style: none; }
+
     /* Team page: the share chart first on screen, though it comes after the students in the page */
     main.team { display: flex; flex-direction: column; }
     main.team > .headrow { order: 0; margin-bottom: 0; }

@@ -136,18 +136,20 @@ Documented in [`.env.example`](.env.example). Keep real values in `.env`, which 
 
 ### Setting up a course
 
-Setup happens in the admin at `/admin/`, in this order:
+Do these in this order. Steps 3 and 4 are on the dashboard for any instructor enrolled in the course, with no need for `/admin/`. The rest happen in the admin, as does deleting a project.
 
-1. **Users:** add everyone with their `github_login`, which is how GitHub activity is matched to people. Also set a student's email to the address they use in `Co-authored-by:` trailers (see below).
-2. **Course**, then an **Enrollment** per person as instructor, TA or student.
-3. **Project:** add it to the course.
-4. **Requirements (optional):** open the project and click **Import requirements**, then upload a PDF or paste text. The LLM splits the document, and you can edit the results in admin.
-5. **Team:** add it to the project, with its students and repos. Enter repos as `https://github.com/owner/repo`.
+1. **Users (admin):** add everyone with their `github_login`, which is how GitHub activity is matched to people. Also set a student's email to the address they use in `Co-authored-by:` trailers (see below).
+2. **Course, then an Enrollment per person (admin)** as instructor, TA or student.
+3. **Project (dashboard):** on the course overview, enter a name and click **New project**. Use **Rename** to change it later. Names must be unique within a course, ignoring case.
+4. **Requirements, optional (dashboard):** on the course overview, click **Add requirements** beside the project, then upload a PDF or paste text. The LLM splits the document, and you can then edit, add and delete requirements on that page.
+5. **Team (admin):** add it to the project, with its students and repos. Enter repos as `https://github.com/owner/repo`.
 
 Good to know:
 
-- **Import works once per project.** Claims refer to requirements by number, so a project that already has requirements is refused. That includes the seeded `Project 1`.
+- **Import only works while a project has no requirements.** Claims refer to requirements by number, so a project that already has requirements is refused. That includes the seeded `Project 1`.
 - **The import rejects** scanned PDFs with no text, password-protected PDFs, and any split containing a requirement that isn't word for word in the source.
+- **Requirement numbers don't change.** You can edit a requirement's text but not its number, and deleting one never renumbers the others. A new requirement takes the next number after the project's highest, so a gap stays a gap. If you delete the highest-numbered requirement, the next one you add reuses its number.
+- **A requirement a claim cites can't be deleted** on the dashboard, including one cited only by a claim that couldn't be verified. The admin doesn't enforce this, so don't delete requirements there.
 - **Each student can be on one team per project,** and must be enrolled in the course as a student.
 - **Co-author credit matches on email, never on name.** A trailer counts if it uses the student's GitHub noreply address or the email on their `User`. Seeded students have no email, so only noreply trailers match until you add one.
 - **Commits that match no one on the team** are listed in admin: under **Artifacts**, use the **Unattributed commits** filter.
@@ -169,12 +171,13 @@ On the course overview, pick a week for a team and click **Generate summaries**.
 |---|---|
 | `/accounts/login/`, `/accounts/logout/` | Log in and out |
 | `/` | Your courses. Goes straight to the course if you only have one. |
-| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, a Flag or Warning label, and the Generate summaries button |
+| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, a Flag or Warning label, and the Generate summaries button. Instructors also get New project, Rename and a link to each project's requirements page. |
 | `/teams/<id>/` | Repos, flags with their reasons, and students, whose names link to their newest summary, with all their summaries |
 | `/summaries/<id>/` | Verified claims with GitHub links, and the "couldn't be verified" note |
-| `/admin/` | Setup, plus read-only views of artifacts, summaries, claims, validation runs and flags |
+| `/projects/<id>/requirements/` | Import, edit, add and delete a project's requirements. Instructors only. |
+| `/admin/` | Users, courses, enrollments, teams and repos, plus read-only views of artifacts, summaries, claims, validation runs and flags |
 
-Only instructors and TAs of a course can see its pages.
+Only instructors and TAs of a course can see its pages. Only instructors can create or rename projects and change requirements: TAs don't see these actions and get a 403.
 
 ## Validation
 
@@ -258,10 +261,10 @@ Each app has one owner, and changes outside your own app go through its owner. S
 
 | Path | Owner | Contents |
 |---|---|---|
-| [`core/`](core/) | Todd | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, setup admin, `seed` command |
+| [`core/`](core/) | Todd | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, project and requirement setup logic, setup admin, `seed` command |
 | [`ingest/`](ingest/) | Todd | `Artifact` model, GitHub ingest, co-author parsing, unattributed commits, sample fixture |
 | [`summaries/`](summaries/) | Akshita | `Summary`, `Claim`, `ValidationRun`, LLM client, prompts, claim schema, validator, retry loop |
-| [`dashboard/`](dashboard/) | Brooke | Views, templates, `Flag` model and rules, Generate summaries button |
+| [`dashboard/`](dashboard/) | Brooke | Views, templates, `Flag` model and rules, Generate summaries button, instructor setup pages |
 | [`strive/`](strive/) | | Django settings and root URLs |
 | [`docs/`](docs/) | | The [STRIVE pitch](docs/readme-startupSelected.md) |
 | [`directions/`](directions/) | | Archive of the startup ideas we considered and didn't pick. Kept for documentation only. |

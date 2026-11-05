@@ -5,9 +5,32 @@
 {% block crumb %}<span class="crumb">{{ course.name }}</span>{% endblock %}
 
 {% block content %}
+{% if can_set_up %}
+<form class="new-project" action="{% url 'dashboard:project_create' course.id %}" method="post">
+  {% csrf_token %}
+  <fieldset role="group">
+    <input type="text" name="name" maxlength="200" aria-label="New project name" placeholder="Project name" required>
+    <button type="submit">New project</button>
+  </fieldset>
+</form>
+{% endif %}
 {% for project in projects %}
 <section class="project" id="project-{{ project.id }}">
-  <div class="headrow"><h1>{{ project.name }}</h1></div>
+  <div class="headrow">
+    <h1>{{ project.name }}</h1>
+    {% if can_set_up %}
+    <details class="rename">
+      <summary>Rename</summary>
+      <form action="{% url 'dashboard:project_rename' project.id %}" method="post">
+        {% csrf_token %}
+        <fieldset role="group">
+          <input type="text" name="name" value="{{ project.name }}" maxlength="200" aria-label="Name for {{ project.name }}" required>
+          <button type="submit">Save name</button>
+        </fieldset>
+      </form>
+    </details>
+    {% endif %}
+  </div>
   <div class="layout">
     <div>
       {% if project.teams.all %}
@@ -63,6 +86,9 @@
       </table>
       {% else %}
       <p>No requirements for this project yet.</p>
+      {% endif %}
+      {% if can_set_up %}
+      <p class="rail-action"><a href="{% url 'dashboard:project_requirements' project.id %}">{% if project.requirements.all %}Edit requirements{% else %}Add requirements{% endif %}</a></p>
       {% endif %}
     </aside>
   </div>

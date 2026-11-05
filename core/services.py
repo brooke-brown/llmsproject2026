@@ -2,12 +2,14 @@ import re
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 from pydantic import BaseModel
 from pypdf import PdfReader
 from pypdf.errors import FileNotDecryptedError
 
-from core.models import Project, Requirement
+from core.models import Course, Project, Requirement
 from summaries.llm import LLMError, generate_structured
+from summaries.models import Claim
 
 # GitHub's limits: 39-character owners of letters, digits and hyphens, and 100-character
 # repo names. Matching the whole URL also rejects look-alike hosts, credentials, ports,
@@ -45,6 +47,10 @@ def github_repo_full_name(url: str) -> str:
 
 class RequirementImportError(Exception):
     """Requirements couldn't be imported. The message is written for the instructor."""
+
+
+class ProjectSetupError(Exception):
+    """A project or requirement change was refused. The message is written for the instructor."""
 
 
 class RequirementList(BaseModel):
@@ -116,6 +122,80 @@ def import_requirements(project: Project, text: str) -> list[Requirement]:
             return Requirement.objects.bulk_create(requirements)
     except IntegrityError:
         raise RequirementImportError(ALREADY_HAS_REQUIREMENTS) from None
+
+
+def create_project(course: Course, name: str) -> Project:
+    """Add a project to the course, or raise ProjectSetupError saying why it can't be."""
+    return Project.objects.create(course=course, name=_clean_project_name(course, name))
+
+
+def rename_project(project: Project, name: str) -> Project:
+    """Rename the project, or raise ProjectSetupError saying why it can't be."""
+    project.name = _clean_project_name(project.course, name, renaming=project)
+    project.save(update_fields=["name"])
+    return project
+
+
+def add_requirement(project: Project, text: str) -> Requirement:
+    """Add a requirement numbered after the project's highest, leaving any gaps unfilled."""
+    text = _clean_requirement_text(text)
+    # Two adds at once can pick the same number, and the unique constraint stops the second.
+    try:
+        with transaction.atomic():
+            return Requirement.objects.create(
+                project=project, number=_next_requirement_number(project), text=text
+            )
+    except IntegrityError:
+        raise ProjectSetupError(
+            "Another requirement was added at the same moment, so please try again."
+        ) from None
+
+
+def edit_requirement(requirement: Requirement, text: str) -> Requirement:
+    """Change a requirement's text. Its number never changes, since claims cite it."""
+    requirement.text = _clean_requirement_text(text)
+    requirement.save(update_fields=["text"])
+    return requirement
+
+
+def delete_requirement(requirement: Requirement) -> None:
+    """Delete a requirement, unless a claim cites it. Other requirements keep their numbers."""
+    # Claims that were dropped count too: admin users can still read them.
+    cited = Claim.objects.filter(summary__team__project=requirement.project_id).values_list(
+        "requirement_ids", flat=True
+    )
+    if any(requirement.number in numbers for numbers in cited):
+        raise ProjectSetupError(
+            f"A claim cites this requirement, so number {requirement.number} can't be deleted. "
+            "You can still edit its text."
+        )
+    requirement.delete()
+
+
+def _next_requirement_number(project: Project) -> int:
+    highest = project.requirements.aggregate(Max("number"))["number__max"]
+    return (highest or 0) + 1
+
+
+def _clean_project_name(course: Course, name: str, renaming: Project | None = None) -> str:
+    name = name.strip()
+    if not name:
+        raise ProjectSetupError("Enter a project name.")
+    limit = Project._meta.get_field("name").max_length
+    if len(name) > limit:
+        raise ProjectSetupError(f"A project name must be {limit} characters or fewer.")
+    # Compared in Python because SQLite's iexact only ignores the case of ASCII letters.
+    others = course.projects.exclude(pk=renaming.pk if renaming else None)
+    if name.casefold() in {other.casefold() for other in others.values_list("name", flat=True)}:
+        raise ProjectSetupError(f'This course already has a project with this name: "{name}".')
+    return name
+
+
+def _clean_requirement_text(text: str) -> str:
+    text = text.strip()
+    if not text:
+        raise ProjectSetupError("Enter the requirement's text.")
+    return text
 
 
 def _all_in_source(requirements: list[str], text: str) -> bool:
