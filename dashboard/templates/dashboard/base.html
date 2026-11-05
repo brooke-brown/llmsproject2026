@@ -14,6 +14,8 @@
       --flag: #ff9182; --flag-bg: #3c1f1d; --flag-line: #7d3a33;
       --warn: #f2c14e; --warn-bg: #3a2f14; --warn-line: #6b5720;
       --ok: #74d6a5; --ok-bg: #16322a; --none-bg: #2a303a;
+      /* Pie slices for students with no flag or warning: none of them red or amber. */
+      --pie-1: #9db2ff; --pie-2: #74d6a5; --pie-3: #c39bff; --pie-4: #5fd0e0; --pie-5: #8fa3b8; --pie-6: #6fa8dc;
       --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
       --pico-font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
@@ -162,19 +164,18 @@
     .chart { margin: 18px 0 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
     .chart h2 { margin-bottom: 2px; font-size: 16px; letter-spacing: 0; text-transform: none; color: var(--ink); }
     .chart .why { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }
-    .bar-row, .axis { display: grid; grid-template-columns: 150px minmax(0, 1fr) 118px; gap: 12px; align-items: center; }
-    .bar-row { padding: 6px 0; }
-    .bar-row:hover { background: #ffffff08; }
-    .bar-row a, .bar-row > span:first-child { color: var(--ink); font-weight: 500; }
-    .track { position: relative; height: 12px; }
-    .equal { position: absolute; top: -8px; bottom: -8px; left: 50%; border-left: 1px dashed #6d7786; }
-    .fill { position: absolute; left: 0; top: 0; height: 12px; border-radius: 0 4px 4px 0; background: var(--accent); }
-    .fill.low { background: var(--flag); }
+    .pie-wrap { display: flex; flex-wrap: wrap; gap: 20px 36px; align-items: center; }
+    .pie { flex: none; width: 220px; height: 220px; }
+    .pie .slice { stroke: var(--panel); stroke-width: .6; }
+    .pie-side { flex: 1 1 300px; min-width: 0; }
+    .pie-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 20px; margin: 0 0 14px; padding: 0; list-style: none; }
+    .legend-row { display: flex; gap: 8px; align-items: center; margin: 0; padding: 0; min-width: 0; }
+    .legend-row .name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--ink); font-weight: 500; }
+    .legend-row .name a { color: var(--ink); }
+    .swatch { flex: none; width: 12px; height: 12px; border-radius: 3px; }
+    .swatch.none { border: 1px dashed #8e98a6; }
     .val { font-variant-numeric: tabular-nums; font-size: 14px; }
-    .val .tag { margin-left: 4px; }
-    .axis { margin-top: 4px; color: var(--muted); font-size: 12.5px; }
-    .axis div { position: relative; height: 18px; }
-    .axis div span { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+    .equal-note { margin: 0; color: var(--muted); font-size: 13.5px; }
 
     /* Summary page */
     .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
@@ -216,7 +217,8 @@
       .claim { grid-template-columns: minmax(0, 1fr); }
       .llm { padding: 10px 0 0; border-left: 0; border-top: 1px dashed #6d7786; }
       .stats { grid-template-columns: minmax(0, 1fr); }
-      .bar-row, .axis { grid-template-columns: 100px minmax(0, 1fr) 96px; }
+      .pie-wrap { flex-direction: column; align-items: flex-start; }
+      .pie-side { flex-basis: auto; width: 100%; }
     }
   </style>
 </head>

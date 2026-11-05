@@ -43,6 +43,7 @@ def team(request, team_id):
             "repos": services.team_repos(team),
             "team_flags": services.team_wide_flags(team),
             "memberships": memberships,
+            "legend": services.pie_legend(memberships),
             "share_week": share_week,
             "team_status": services.team_status(team),
             "equal_share": round(100 / len(memberships)) if memberships else None,
