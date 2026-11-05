@@ -245,4 +245,6 @@ class ExistingSummaryTests(ActivityTestCase):
         response = self.client.get(reverse("dashboard:summary", args=[self.summary.pk]))
         self.assertEqual(response.status_code, 200)
         for artifact in Artifact.objects.all():
-            self.assertContains(response, f'<a href="{artifact.url}">{artifact.artifact_id}</a>')
+            self.assertContains(
+                response, f'<a href="{artifact.url}" title="{artifact.artifact_id}">'
+            )
