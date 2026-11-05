@@ -83,6 +83,12 @@ def _redirect_back(request, default):
     return default
 
 
+def _show_refusal(request, team, error):
+    """Say why nothing ran. The overview lists every team, so the message says which one."""
+    messages.error(request, f"{team.name}: {error}")
+    return redirect("dashboard:course_overview", course_id=team.project.course_id)
+
+
 def _show_generation(request, generation):
     """Remember who to retry, say how the run went, and return to the course overview."""
     services.remember_retry(request.session, generation)
@@ -99,9 +105,7 @@ def generate_team_summaries(request, team_id):
         week_start = services.parse_week_start(request.POST.get("week_start"))
         generation = services.generate_team_summaries(team, week_start)
     except services.GenerationError as error:
-        # The overview lists every team, so the message says which one it's about.
-        messages.error(request, f"{team.name}: {error}")
-        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+        return _show_refusal(request, team, error)
     return _show_generation(request, generation)
 
 
@@ -112,8 +116,7 @@ def retry_failed_summaries(request, team_id):
     try:
         generation = services.retry_failed_summaries(team, request.session)
     except services.GenerationError as error:
-        messages.error(request, f"{team.name}: {error}")
-        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+        return _show_refusal(request, team, error)
     if generation is None:
         messages.info(request, f"{team.name} has no failed summaries to retry.")
         return redirect("dashboard:course_overview", course_id=team.project.course_id)

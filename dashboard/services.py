@@ -1,5 +1,6 @@
 import math
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
 from fractions import Fraction
@@ -607,6 +608,16 @@ def generating_team_ids(course):
     )
 
 
+@contextmanager
+def _team_run(team, student_count):
+    """Hold the team's one run for the length of the block, however the block ends."""
+    run = _start_run(team, student_count)
+    try:
+        yield
+    finally:
+        _finish_run(run)
+
+
 def _start_run(team, student_count):
     """Record that the team is generating, or raise GenerationError if it already is."""
     now = timezone.now()
@@ -656,12 +667,9 @@ def generate_team_summaries(team, week_start):
     # Otherwise every student would get a "No activity" summary, which reads like a finding.
     if not team.repos.exists():
         raise GenerationError("This team has no repo yet, so nothing was generated.")
-    run = _start_run(team, len(students))
-    try:
+    with _team_run(team, len(students)):
         _ingest_team_week(team, week_start)
         return _write_summaries(team, students, week_start)
-    finally:
-        _finish_run(run)
 
 
 def retry_failed_summaries(team, session):
@@ -675,11 +683,8 @@ def retry_failed_summaries(team, session):
     if retry is None:
         return None
     students = _team_students(team, only_ids=retry["student_ids"])
-    run = _start_run(team, len(students))
-    try:
+    with _team_run(team, len(students)):
         return _write_summaries(team, students, date.fromisoformat(retry["week_start"]))
-    finally:
-        _finish_run(run)
 
 
 def remember_retry(session, generation):

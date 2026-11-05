@@ -7,7 +7,7 @@ The model and URLs are reached per test rather than at module level, so each cri
 passes or fails on its own.
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -15,11 +15,9 @@ from django.db import IntegrityError, OperationalError
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Enrollment
+from core.models import Course, Enrollment, Project, Team
 from dashboard import models as dashboard_models
-from dashboard import services
 from ingest import services as ingest_services
-from summaries.llm import LLMError
 
 from .test_course_overview import enroll, make_user, overview_url
 from .test_generate_summary import (
@@ -326,8 +324,6 @@ class StatusViewTests(GenerationRunFixture):
         self.assertEqual(self.team_ids(), [])
 
     def test_it_leaves_out_other_courses(self):
-        from core.models import Course, Project, Team
-
         other = Course.objects.create(name="CS 3240, Fall 2026")
         project = Project.objects.create(course=other, name="Other Project")
         self.already_running(Team.objects.create(project=project, name="Other Team"))
