@@ -1,9 +1,10 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
-from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from core import services as setup
 from core.forms import RequirementImportForm
@@ -31,10 +32,18 @@ def course_overview(request, course_id):
             "projects": services.course_projects_with_teams(course),
             "default_week_start": services.last_completed_week_start(),
             "current_week_start": services.current_week_start(),
+            "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),
         },
     )
+
+
+@login_required
+@require_GET
+def course_generating_status(request, course_id):
+    course = services.get_course_for_staff(request.user, course_id)
+    return JsonResponse({"team_ids": services.generating_team_ids(course)})
 
 
 @login_required
@@ -100,7 +109,11 @@ def generate_team_summaries(request, team_id):
 @require_POST
 def retry_failed_summaries(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
-    generation = services.retry_failed_summaries(team, request.session)
+    try:
+        generation = services.retry_failed_summaries(team, request.session)
+    except services.GenerationError as error:
+        messages.error(request, f"{team.name}: {error}")
+        return redirect("dashboard:course_overview", course_id=team.project.course_id)
     if generation is None:
         messages.info(request, f"{team.name} has no failed summaries to retry.")
         return redirect("dashboard:course_overview", course_id=team.project.course_id)

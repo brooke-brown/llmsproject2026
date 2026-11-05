@@ -43,3 +43,19 @@ class Flag(models.Model):
 
     def __str__(self):
         return f"{self.rule} on {self.team}, week of {self.week_start}"
+
+
+class GenerationRun(models.Model):
+    """Marks a team as generating summaries. It exists only while a run is going.
+
+    The link to the team is one-to-one, so the database refuses a second run even if two
+    start at the same moment. If the server dies mid-run nothing removes the row, so it stops
+    counting at `expires_at`.
+    """
+
+    team = models.OneToOneField(Team, on_delete=models.CASCADE, related_name="generation_run")
+    started_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"{self.team} generating since {self.started_at}"

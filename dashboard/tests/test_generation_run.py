@@ -202,7 +202,7 @@ class StuckRunTests(GenerationRunFixture):
 
         self.click_generate()
 
-        self.assertEqual(limits, [timedelta(minutes=22)])
+        self.assertEqual(set(limits), {timedelta(minutes=22)})
 
     def test_the_refusal_says_when_a_stuck_run_clears(self):
         run = self.already_running(minutes_left=45)

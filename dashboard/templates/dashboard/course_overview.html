@@ -39,13 +39,13 @@
               {% csrf_token %}
               <fieldset role="group">
                 <input type="date" name="week_start" value="{{ default_week_start|date:'Y-m-d' }}" min="1970-01-05" step="7" max="{{ current_week_start|date:'Y-m-d' }}" aria-label="Week starting Monday" required>
-                <button type="submit">Generate summaries</button>
+                {% if team.id in generating_team_ids %}<button type="submit" disabled aria-busy="true">Generating…</button>{% else %}<button type="submit">Generate summaries</button>{% endif %}
               </fieldset>
             </form>
             {% if team.id in retry_team_ids %}
             <form action="{% url 'dashboard:retry_failed_summaries' team.id %}" method="post" class="generate-form">
               {% csrf_token %}
-              <button type="submit" class="secondary">Retry failed summaries</button>
+              <button type="submit" class="secondary"{% if team.id in generating_team_ids %} disabled{% endif %}>Retry failed summaries</button>
             </form>
             {% endif %}
           </div>
@@ -83,6 +83,7 @@
 {% empty %}
 <p>No projects in this course yet.</p>
 {% endfor %}
+{% if generating_team_ids %}<div hidden data-generating-status="{% url 'dashboard:course_generating_status' course.id %}" data-team-ids="{{ generating_team_ids|join:',' }}"></div>{% endif %}
 <script>
   // Generating runs inside the request and can take minutes, so show that it's working. Every
   // button is disabled because another click would start a second run and lose this result.
@@ -95,6 +96,20 @@
     clicked.setAttribute("aria-busy", "true");
     clicked.textContent = "Generating…";
   });
+  // A run started earlier is still going, so reload when one of them finishes to show the result.
+  var watcher = document.querySelector("[data-generating-status]");
+  if (watcher) {
+    var watched = watcher.dataset.teamIds.split(",").map(Number);
+    setInterval(function () {
+      fetch(watcher.dataset.generatingStatus)
+        .then(function (response) { return response.json(); })
+        .then(function (status) {
+          var finished = watched.some(function (id) { return status.team_ids.indexOf(id) === -1; });
+          if (finished) location.reload();
+        })
+        .catch(function () {});  // Try again next time.
+    }, 5000);
+  }
   // The back button can restore this page exactly as it was left, spinner included.
   window.addEventListener("pageshow", function (event) {
     if (event.persisted) location.reload();

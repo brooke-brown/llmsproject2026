@@ -5,10 +5,11 @@ from datetime import date, timedelta
 from fractions import Fraction
 
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Case, Count, Exists, Max, OuterRef, Prefetch, Q, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.formats import date_format
 
 from core.models import (
     Course,
@@ -28,10 +29,14 @@ from summaries.llm import LLMError
 from summaries.models import Claim, Summary
 
 from . import flags
-from .models import Flag
+from .models import Flag, GenerationRun
 
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
 MONDAY = 0  # date.weekday() counts from Monday.
+# How long a run may hold its team: the GitHub pull, plus up to 3 LLM calls of 2 minutes each
+# for each student. A run that dies is cleared after this.
+RUN_MINUTES_FOR_PULL = 10
+RUN_MINUTES_PER_STUDENT = 6
 RETRY_SESSION_KEY = "failed_summaries"  # {team ID: {"week_start": ..., "student_ids": [...]}}
 
 
@@ -591,6 +596,53 @@ def _write_summaries(team, students, week_start):
     return TeamGeneration(team, week_start, len(students), failures)
 
 
+def generating_team_ids(course):
+    """The IDs of the course's teams generating summaries right now."""
+    return list(
+        GenerationRun.objects.filter(
+            team__project__course=course, expires_at__gt=timezone.now()
+        )
+        .order_by("team_id")
+        .values_list("team_id", flat=True)
+    )
+
+
+def _start_run(team, student_count):
+    """Record that the team is generating, or raise GenerationError if it already is."""
+    now = timezone.now()
+    limit = RUN_MINUTES_FOR_PULL + RUN_MINUTES_PER_STUDENT * student_count
+    try:
+        with transaction.atomic():
+            GenerationRun.objects.filter(team=team, expires_at__lte=now).delete()
+            return GenerationRun.objects.create(
+                team=team, expires_at=now + timedelta(minutes=limit)
+            )
+    except IntegrityError:
+        raise GenerationError(_already_running_message(team)) from None
+    except OperationalError:
+        raise GenerationError(
+            "The database is busy with another run, so nothing was generated. Please try again."
+        ) from None
+
+
+def _already_running_message(team):
+    run = GenerationRun.objects.filter(team=team).first()
+    clears = f", or after {_clock_time(run.expires_at)} if this looks stuck" if run else ""
+    return f"Summaries are already being generated for this team. Try again when they finish{clears}."
+
+
+def _clock_time(moment):
+    return date_format(timezone.localtime(moment), "g:i A")
+
+
+def _finish_run(run):
+    # A busy database mustn't turn a finished run into an error. The record expires by itself.
+    try:
+        run.delete()
+    except OperationalError:
+        pass
+
+
 def generate_team_summaries(team, week_start):
     """Ingest the team's repos once, then write a summary for each student on the team.
 
@@ -604,8 +656,12 @@ def generate_team_summaries(team, week_start):
     # Otherwise every student would get a "No activity" summary, which reads like a finding.
     if not team.repos.exists():
         raise GenerationError("This team has no repo yet, so nothing was generated.")
-    _ingest_team_week(team, week_start)
-    return _write_summaries(team, students, week_start)
+    run = _start_run(team, len(students))
+    try:
+        _ingest_team_week(team, week_start)
+        return _write_summaries(team, students, week_start)
+    finally:
+        _finish_run(run)
 
 
 def retry_failed_summaries(team, session):
@@ -619,7 +675,11 @@ def retry_failed_summaries(team, session):
     if retry is None:
         return None
     students = _team_students(team, only_ids=retry["student_ids"])
-    return _write_summaries(team, students, date.fromisoformat(retry["week_start"]))
+    run = _start_run(team, len(students))
+    try:
+        return _write_summaries(team, students, date.fromisoformat(retry["week_start"]))
+    finally:
+        _finish_run(run)
 
 
 def remember_retry(session, generation):

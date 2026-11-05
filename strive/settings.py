@@ -45,6 +45,10 @@ INSTALLED_APPS = [
     'summaries',
 ]
 
+# In the session, not a cookie on the response, so a run's result still reaches someone who
+# left the page before it finished.
+MESSAGE_STORAGE = "django.contrib.messages.storage.session.SessionStorage"
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
