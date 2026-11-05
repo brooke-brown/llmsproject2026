@@ -120,6 +120,8 @@
     .card .foot, .card .tags { margin-top: auto; }
     .card .tags { display: flex; flex-wrap: wrap; gap: 6px; }
     .card .foot form { margin: 0; }
+    /* The running button stays at full strength, so the spinner is easy to see. */
+    .generate-form button[aria-busy="true"]:disabled { --pico-border-color: var(--accent); opacity: 1; }
     .people { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; }
     .people li { margin: 0; padding: 0; list-style: none; }
     .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }

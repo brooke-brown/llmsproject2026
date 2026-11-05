@@ -165,6 +165,7 @@ On the course overview, pick a week for a team and click **Generate summaries**.
 
 - The date must be a **Monday**, for this week or an earlier one. Other days can't be picked in browsers that honour the date field's `step`, and are refused either way. It defaults to the most recent completed week.
 - **You can generate the current week to check on a team mid-week.** Its summaries are labelled **in progress**. The team page's contribution shares include them and say so, but flags don't count them. After the week ends they're labelled **partial** and flags still skip them until you generate that week again, so a Wednesday snapshot never affects a flag.
+- While a run is going, the page shows a spinner and disables its Generate and Retry buttons. Leaving doesn't stop the run, but you won't see its result message, and the buttons work again when you come back.
 - Each click runs inside the web request, ingesting all of the team's repos once and then writing each student's summary in turn, so it can take a while. Each LLM call can take up to 2 minutes, and a summary can make up to 3 of them.
 - Generating the same week again regenerates the whole team's summaries, using fresh GitHub data.
 - A student with no activity gets a "No activity that week" summary, with no LLM call.

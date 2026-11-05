@@ -919,3 +919,43 @@ class OneClickEndToEndTests(TestCase):
         self.assertIn("<mark>", article)
         self.assertIn("Flag", article)
         self.assertNotIn(flag.reason.split(" did ")[1], article)
+
+
+class GeneratingIndicatorTests(TeamGenerationFixture):
+    """The markup the page's script relies on. The script's behaviour needs a real browser."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.instructor)
+
+    def page(self):
+        return self.client.get(overview_url(self.course.id)).content.decode()
+
+    def form_tag(self, content, action):
+        start = content.rindex("<form", 0, content.index(f'action="{action}"'))
+        return content[start : content.index(">", start)]
+
+    def test_every_generate_form_is_marked_for_the_script(self):
+        content = self.page()
+
+        for team in [self.team, self.empty_team]:
+            with self.subTest(team=team.name):
+                self.assertIn(
+                    'class="generate-form"', self.form_tag(content, generate_url(team.id))
+                )
+
+    def test_a_retry_form_is_marked_too_since_it_also_takes_a_while(self):
+        self.fail_for(self.ada)
+        self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+
+        tag = self.form_tag(self.page(), retry_url(self.team.id))
+
+        self.assertIn('class="generate-form"', tag)
+
+    def test_the_page_includes_the_script_that_shows_the_spinner(self):
+        content = self.page()
+
+        self.assertIn("<script>", content)
+        self.assertIn('".generate-form"', content)
+        self.assertIn('"aria-busy"', content)
+        self.assertIn("pageshow", content)

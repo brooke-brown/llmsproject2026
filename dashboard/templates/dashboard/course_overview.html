@@ -35,7 +35,7 @@
           {% if not team.repos.all %}<p class="missing">No repo yet.</p>{% endif %}
           <div class="latest">{% if team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% if team.latest_week_note %} ({{ team.latest_week_note }}){% endif %}{% else %}No summaries yet{% endif %}</div>
           <div class="foot">
-            <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post">
+            <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post" class="generate-form">
               {% csrf_token %}
               <fieldset role="group">
                 <input type="date" name="week_start" value="{{ default_week_start|date:'Y-m-d' }}" min="1970-01-05" step="7" max="{{ current_week_start|date:'Y-m-d' }}" aria-label="Week starting Monday" required>
@@ -43,7 +43,7 @@
               </fieldset>
             </form>
             {% if team.id in retry_team_ids %}
-            <form action="{% url 'dashboard:retry_failed_summaries' team.id %}" method="post">
+            <form action="{% url 'dashboard:retry_failed_summaries' team.id %}" method="post" class="generate-form">
               {% csrf_token %}
               <button type="submit" class="secondary">Retry failed summaries</button>
             </form>
@@ -83,4 +83,21 @@
 {% empty %}
 <p>No projects in this course yet.</p>
 {% endfor %}
+<script>
+  // Generating runs inside the request and can take minutes, so show that it's working. Every
+  // button is disabled because another click would start a second run and lose this result.
+  document.addEventListener("submit", function (event) {
+    if (!event.target.matches(".generate-form")) return;
+    document.querySelectorAll(".generate-form button").forEach(function (button) {
+      button.disabled = true;
+    });
+    var clicked = event.target.querySelector("button");
+    clicked.setAttribute("aria-busy", "true");
+    clicked.textContent = "Generating…";
+  });
+  // The back button can restore this page exactly as it was left, spinner included.
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted) location.reload();
+  });
+</script>
 {% endblock %}
