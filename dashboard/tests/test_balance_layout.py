@@ -170,22 +170,14 @@ class TeamPageTests(BalanceFixture):
 
         content = self.get("team", self.alpha.id)
 
-        self.assertIn("Equal share: 50%", content)
+        self.assertIn("An equal share is 50% (2 students).", content)
         self.assertIn('<span class="val">75%', content)
         self.assertIn('<span class="val">25%', content)
-
-    def test_a_bar_is_twice_the_share_and_capped_at_the_full_track(self):
-        self.give_shares()
-
-        content = self.get("team", self.alpha.id)
-
-        self.assertIn('style="width: 100%"', content)  # 75% would be 150%.
-        self.assertIn('style="width: 50%"', content)  # 25%.
 
     def test_there_is_no_chart_until_there_is_something_to_compare(self):
         self.summary(self.ada)
 
-        self.assertNotIn("Equal share", self.get("team", self.alpha.id))
+        self.assertNotIn("An equal share", self.get("team", self.alpha.id))
 
     def test_the_chart_comes_after_the_students_in_the_page(self):
         # Students are found by their first appearance, so the chart's names must come later.
@@ -196,11 +188,11 @@ class TeamPageTests(BalanceFixture):
 
         self.assertLess(content.index("Summaries by student"), content.index('class="chart"'))
 
-    def test_a_flagged_students_bar_is_marked_low(self):
+    def test_a_flagged_students_slice_is_red(self):
         self.give_shares()
         Flag.objects.create(team=self.alpha, user=self.grace, rule="r", reason="x", severity="flag", week_start=WEEK)
 
-        self.assertIn('class="fill low"', self.get("team", self.alpha.id))
+        self.assertIn("fill: var(--flag)", self.get("team", self.alpha.id))
 
 
 class SummaryPageTests(BalanceFixture):

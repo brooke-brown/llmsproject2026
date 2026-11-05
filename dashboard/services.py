@@ -1,5 +1,7 @@
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
+from fractions import Fraction
 
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
@@ -163,6 +165,55 @@ def team_memberships_with_summaries(team):
     )
 
 
+# The pie's colours for students with no flag or warning. They are theme variables in
+# base.html, none of them red or amber.
+PIE_PALETTE = [f"var(--pie-{number})" for number in range(1, 7)]
+FLAG_COLOUR = "var(--flag)"
+WARNING_COLOUR = "var(--warn)"
+PIE_CENTRE = 50  # The pie is drawn in a 100 x 100 box, with a radius of 50.
+
+
+def _point(fraction):
+    """Where `fraction` of the way round the pie, clockwise from the top, is on its edge."""
+    angle = 2 * math.pi * float(fraction)
+    x = PIE_CENTRE + PIE_CENTRE * math.sin(angle)
+    y = PIE_CENTRE - PIE_CENTRE * math.cos(angle)
+    # Adding 0.0 turns a rounded -0.0 into 0.0.
+    return f"{round(x, 3) + 0.0:g}", f"{round(y, 3) + 0.0:g}"
+
+
+def _slice_path(start, end):
+    """The SVG path for the wedge from `start` to `end`, both exact fractions of the circle."""
+    (x1, y1), (x2, y2) = _point(start), _point(end)
+    large_arc = 1 if end - start > Fraction(1, 2) else 0
+    return f"M{PIE_CENTRE} {PIE_CENTRE} L{x1} {y1} A{PIE_CENTRE} {PIE_CENTRE} 0 {large_arc} 1 {x2} {y2} Z"
+
+
+def _pie_colours(severities):
+    """A colour per slice: red for a flag, amber for a warning, and otherwise the next palette
+    colour that differs from the slices either side, including round the circle."""
+    colours = [None] * len(severities)
+    for index, severity in enumerate(severities):
+        if severity == Flag.Severity.FLAG:
+            colours[index] = FLAG_COLOUR
+        elif severity == Flag.Severity.WARNING:
+            colours[index] = WARNING_COLOUR
+    pick = 0
+    for index, colour in enumerate(colours):
+        if colour is not None:
+            continue
+        avoid = set()
+        if index > 0:
+            avoid.add(colours[index - 1])
+        if index == len(colours) - 1:
+            avoid.add(colours[0])
+        while PIE_PALETTE[pick % len(PIE_PALETTE)] in avoid:
+            pick += 1
+        colours[index] = PIE_PALETTE[pick % len(PIE_PALETTE)]
+        pick += 1
+    return colours
+
+
 def add_contribution_shares(team, memberships):
     """Give each of the team's memberships `contribution_share`, the student's whole-percent
     share of the team's requirement-tied work, and return the memberships and the week the
@@ -170,6 +221,11 @@ def add_contribution_shares(team, memberships):
 
     It's the share the low-share flag rule uses, rounded the same way as flag reasons.
     Before there's anything to compare, the week and every share are None.
+
+    Each membership also gets `pie_order`, its place in the chart and legend (largest share
+    first), and `pie`, the slice to draw for a student with a share above 0%, otherwise None.
+    A slice has `color`, `full` (True if it is the whole circle) and `path`. Slices are
+    sized from the exact shares, so they always fill the circle.
     """
     memberships = list(memberships)
     shares = flags.requirement_shares(team)
@@ -177,11 +233,35 @@ def add_contribution_shares(team, memberships):
     for membership in memberships:
         share = shares.get(membership.user_id)
         membership.contribution_share = None if share is None else round(share * 100)
-        # An equal share is drawn at the middle of the track, so the bar is twice the share.
-        membership.contribution_bar = (
-            None if share is None else min(membership.contribution_share * 2, 100)
-        )
+        membership.pie_order = None
+        membership.pie = None
+
+    ordered = sorted(
+        (m for m in memberships if m.contribution_share is not None),
+        key=lambda m: -shares[m.user_id],
+    )
+    for position, membership in enumerate(ordered):
+        membership.pie_order = position
+
+    drawn = [m for m in ordered if shares[m.user_id] > 0]
+    worst = [m.user.team_flags[0].severity if m.user.team_flags else None for m in drawn]
+    start = Fraction(0)
+    for membership, colour in zip(drawn, _pie_colours(worst)):
+        end = start + shares[membership.user_id]
+        membership.pie = {
+            "color": colour,
+            "full": end - start == 1,
+            "path": _slice_path(start, end),
+        }
+        start = end
     return memberships, week
+
+
+def pie_legend(memberships):
+    """The memberships that have a share, in chart order: largest share first."""
+    return sorted(
+        (m for m in memberships if m.pie_order is not None), key=lambda m: m.pie_order
+    )
 
 
 def _has_flag(severity):
