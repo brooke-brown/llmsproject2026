@@ -1,7 +1,7 @@
+from collections import defaultdict
 from fractions import Fraction
 
 from django.db import transaction
-from django.db.models import Count
 
 from core.models import Team
 from summaries.models import Claim, Summary
@@ -16,27 +16,27 @@ FLAG_BELOW = Fraction(1, 2)
 WARNING_BELOW = Fraction(3, 4)
 
 
-def requirement_shares(team):
+def requirement_shares(team, include_partial=False):
     """Each student's weighted share of the team's requirement-tied work, as
     (week_start, {user ID: Fraction}), or None if there's nothing to compare.
 
-    Only the latest week in which every student on the team has a summary counts, so a
-    missing summary never skews a share. A student's score is the sum of their verified,
+    Only the latest week in which every student on the team has a complete summary counts,
+    so a missing or partial summary never skews a share. With `include_partial`, a partial
+    summary counts too, which is for showing shares and never for raising flags. A student's
+    score is the sum of their verified,
     requirement-tied claims weighted by significance. It's None for a team with no
     students, no such week, or no requirement-tied work that week.
     """
     students = [membership.user for membership in team.memberships.select_related("user")]
     if not students:
         return None
-    week = (
-        Summary.objects.filter(team=team, user__in=students)
-        .values("week_start")
-        .annotate(students=Count("user", distinct=True))
-        .filter(students=len(students))
-        .order_by("-week_start")
-        .values_list("week_start", flat=True)
-        .first()
-    )
+    # Checked in Python, because whether a summary is partial depends on its generation log.
+    counted = defaultdict(set)
+    summaries = Summary.objects.filter(team=team, user__in=students)
+    for summary in summaries.prefetch_related("validation_runs"):
+        if include_partial or not summary.is_partial:
+            counted[summary.week_start].add(summary.user_id)
+    week = max((w for w, ids in counted.items() if len(ids) == len(students)), default=None)
     if week is None:
         return None
 

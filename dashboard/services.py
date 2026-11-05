@@ -215,18 +215,26 @@ def verified_claims(summary):
 
 def student_weeks(summary):
     """All of this student's summaries for the team, newest first, for the week switcher."""
-    return Summary.objects.filter(team=summary.team, user=summary.user).order_by("-week_start")
+    return (
+        Summary.objects.filter(team=summary.team, user=summary.user)
+        .order_by("-week_start")
+        .prefetch_related("validation_runs")
+    )
 
 
 def team_status(team):
-    """'flag' or 'warning' for a flagged team, 'ok' for one that has summaries and no flags,
-    and 'none' for one nothing has been generated for yet."""
+    """'flag' or 'warning' for a flagged team, 'ok' for one that has a complete summary and no
+    flags, 'in_progress' for one with only partial summaries, and 'none' for one nothing has
+    been generated for yet."""
     severities = set(Flag.objects.filter(team=team).values_list("severity", flat=True))
     if Flag.Severity.FLAG in severities:
         return "flag"
     if Flag.Severity.WARNING in severities:
         return "warning"
-    return "ok" if Summary.objects.filter(team=team).exists() else "none"
+    summaries = list(team.summaries.prefetch_related("validation_runs"))
+    if not summaries:
+        return "none"
+    return "in_progress" if all(summary.is_partial for summary in summaries) else "ok"
 
 
 def team_repos(team):
@@ -258,6 +266,7 @@ def team_memberships_with_summaries(team):
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
         .order_by("-week_start")
+        .prefetch_related("validation_runs")
     )
     return (
         team.memberships.select_related("user")
@@ -327,8 +336,10 @@ def add_contribution_shares(team, memberships):
     share of the team's requirement-tied work, and return the memberships and the week the
     shares are for.
 
-    It's the share the low-share flag rule uses, rounded the same way as flag reasons.
-    Before there's anything to compare, the week and every share are None.
+    It's the share the low-share flag rule uses, rounded the same way as flag reasons, but it
+    includes a partial week, which the rule skips. So each membership also gets `chart_flag`,
+    its worst flag if it's about the week being shown, otherwise None. Before there's anything
+    to compare, the week and every share are None.
 
     Each membership also gets `pie_order`, its place in the chart and legend (largest share
     first), and `pie`, the slice to draw for a student with a share above 0%, otherwise None.
@@ -336,10 +347,12 @@ def add_contribution_shares(team, memberships):
     sized from the exact shares, so they always fill the circle.
     """
     memberships = list(memberships)
-    shares = flags.requirement_shares(team)
+    shares = flags.requirement_shares(team, include_partial=True)
     week, shares = shares if shares is not None else (None, {})
     for membership in memberships:
         share = shares.get(membership.user_id)
+        about_this_week = [f for f in membership.user.team_flags if f.week_start == week]
+        membership.chart_flag = about_this_week[0] if about_this_week else None
         membership.contribution_share = None if share is None else round(share * 100)
         membership.pie_order = None
         membership.pie = None
@@ -352,7 +365,7 @@ def add_contribution_shares(team, memberships):
         membership.pie_order = position
 
     drawn = [m for m in ordered if shares[m.user_id] > 0]
-    worst = [m.user.team_flags[0].severity if m.user.team_flags else None for m in drawn]
+    worst = [m.chart_flag.severity if m.chart_flag else None for m in drawn]
     start = Fraction(0)
     for membership, colour in zip(drawn, _pie_colours(worst)):
         end = start + shares[membership.user_id]
@@ -363,6 +376,15 @@ def add_contribution_shares(team, memberships):
         }
         start = end
     return memberships, week
+
+
+def share_week_note(team, week):
+    """Why the shares for this week may change: "in progress", "partial", or "" if complete."""
+    summaries = team.summaries.filter(week_start=week).prefetch_related("validation_runs")
+    partial = [summary for summary in summaries if summary.is_partial]
+    if not partial:
+        return ""
+    return "in progress" if partial[0].week_is_running else "partial"
 
 
 def pie_legend(memberships):
@@ -398,12 +420,33 @@ def course_projects_with_teams(course):
             )
         )
         .order_by("flag_rank", "name")
-        .prefetch_related(Prefetch("memberships", queryset=memberships), "repos")
+        .prefetch_related(
+            Prefetch("memberships", queryset=memberships),
+            "repos",
+            "summaries__validation_runs",
+        )
     )
-    return course.projects.order_by("id").prefetch_related(
-        Prefetch("teams", queryset=teams),
-        Prefetch("requirements", queryset=Requirement.objects.order_by("number")),
+    projects = list(
+        course.projects.order_by("id").prefetch_related(
+            Prefetch("teams", queryset=teams),
+            Prefetch("requirements", queryset=Requirement.objects.order_by("number")),
+        )
     )
+    for project in projects:
+        for team in project.teams.all():
+            _add_summary_status(team)
+    return projects
+
+
+def _add_summary_status(team):
+    """Give the team `has_complete_summary`, and `latest_week_note`, which says if its latest
+    week is partial."""
+    summaries = list(team.summaries.all())
+    team.has_complete_summary = any(not summary.is_partial for summary in summaries)
+    latest = [summary for summary in summaries if summary.week_start == team.latest_week]
+    team.latest_week_note = ""
+    if any(summary.is_partial for summary in latest):
+        team.latest_week_note = "in progress" if latest[0].week_is_running else "partial"
 
 
 class GenerationError(Exception):
@@ -415,15 +458,19 @@ def reporting_today(now=None):
     return (now or timezone.now()).astimezone(ingest_services.REPORTING_TIME_ZONE).date()
 
 
+def current_week_start(now=None):
+    """The Monday of the Monday-Sunday week happening now."""
+    today = reporting_today(now)
+    return today - timedelta(days=today.weekday())
+
+
 def last_completed_week_start(now=None):
     """The Monday of the most recent Monday-Sunday week that has fully ended."""
-    today = reporting_today(now)
-    this_monday = today - timedelta(days=today.weekday())
-    return this_monday - timedelta(days=7)
+    return current_week_start(now) - timedelta(days=7)
 
 
 def parse_week_start(value, now=None):
-    """The Monday that starts a completed reporting week, from a YYYY-MM-DD string.
+    """The Monday that starts a reporting week that has started, from a YYYY-MM-DD string.
 
     Raises GenerationError, with a message for the user, for anything else.
     """
@@ -433,8 +480,8 @@ def parse_week_start(value, now=None):
         raise GenerationError("Pick a week to generate.") from None
     if week_start.weekday() != MONDAY:
         raise GenerationError("The week must start on a Monday.")
-    if week_start > last_completed_week_start(now):
-        raise GenerationError("That week hasn't ended yet. Pick a week that's already over.")
+    if week_start > current_week_start(now):
+        raise GenerationError("That week hasn't started yet. Pick this week or an earlier one.")
     return week_start
 
 
@@ -471,7 +518,13 @@ class TeamGeneration:
             )
         if self.succeeded:
             students = "1 student" if self.attempted == 1 else f"{self.attempted} students"
-            return f"Generated summaries for {students} on {self.team.name} for {week}."
+            message = f"Generated summaries for {students} on {self.team.name} for {week}."
+            if self.week_start > last_completed_week_start():
+                message += (
+                    " This week is still in progress, so these summaries are partial and don't "
+                    "count toward flags until you generate the week again after it ends."
+                )
+            return message
         done = self.attempted - len(self.failures)
         failed = "; ".join(
             f"{student_name(failure.student)} ({failure.reason})" for failure in self.failures

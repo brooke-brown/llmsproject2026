@@ -1,8 +1,12 @@
+from datetime import datetime, time, timedelta
+
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from core.models import Team
 from ingest.models import Artifact
+from ingest.services import REPORTING_TIME_ZONE
 
 
 class Summary(models.Model):
@@ -29,6 +33,28 @@ class Summary(models.Model):
                 fields=["team", "user", "week_start"], name="summaries_summary_unique"
             ),
         ]
+
+    @property
+    def generated_at(self):
+        """When this summary was last written. Regenerating reuses the row, so created_at can't
+        say, but every generation logs a ValidationRun."""
+        return max((run.created_at for run in self.validation_runs.all()), default=self.created_at)
+
+    @property
+    def week_ended_at(self):
+        """The moment its Monday-Sunday reporting week ended."""
+        next_monday = self.week_start + timedelta(days=7)
+        return datetime.combine(next_monday, time.min, tzinfo=REPORTING_TIME_ZONE)
+
+    @property
+    def is_partial(self):
+        """Whether it was written before its week ended, so it may be missing activity. This
+        stays true after the week ends, until the week is generated again."""
+        return self.generated_at < self.week_ended_at
+
+    @property
+    def week_is_running(self):
+        return timezone.now() < self.week_ended_at
 
     @property
     def unverified_count(self):

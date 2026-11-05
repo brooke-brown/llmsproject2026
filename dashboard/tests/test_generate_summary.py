@@ -337,11 +337,8 @@ class GenerateValidationTests(TeamGenerationFixture):
     def test_week_start_that_isnt_a_monday_is_rejected(self):
         self.assert_rejected(date(2026, 10, 27), "The week must start on a Monday.")
 
-    def test_current_week_hasnt_ended_and_is_rejected(self):
-        self.assert_rejected(date(2026, 11, 2), "That week hasn't ended yet.")
-
     def test_future_week_is_rejected(self):
-        self.assert_rejected(date(2026, 11, 9), "That week hasn't ended yet.")
+        self.assert_rejected(date(2026, 11, 9), "That week hasn't started yet.")
 
     def test_missing_week_is_rejected(self):
         self.assert_rejected(None, "Pick a week to generate.")

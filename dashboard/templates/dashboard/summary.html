@@ -12,10 +12,14 @@
   </div>
   <ul class="pills" aria-label="Weeks">
     {% for week in weeks %}
-    <li><a href="{% url 'dashboard:summary' week.id %}"{% if week.id == summary.id %} aria-current="page">{{ summary.week_start|date:"M j, Y" }} – {{ week_end|date:"M j, Y" }}{% else %}>{{ week.week_start|date:"M j" }}{% endif %}</a></li>
+    <li><a href="{% url 'dashboard:summary' week.id %}"{% if week.id == summary.id %} aria-current="page">{{ summary.week_start|date:"M j, Y" }} – {{ week_end|date:"M j, Y" }}{% else %}>{{ week.week_start|date:"M j" }}{% endif %}{% if week.is_partial %} · {% if week.week_is_running %}in progress{% else %}partial{% endif %}{% endif %}</a></li>
     {% endfor %}
   </ul>
 </div>
+
+{% if summary.is_partial %}
+<p class="finding warning">{% if summary.week_is_running %}This week is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}, and it doesn't count toward flags until the week is generated again after it ends.{% else %}This summary was generated before the week ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}. Generate this week again to cover the whole week and count it toward flags.{% endif %}</p>
+{% endif %}
 
 {% if claims or unverified_count %}
 <div class="stats">
