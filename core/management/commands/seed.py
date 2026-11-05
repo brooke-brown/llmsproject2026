@@ -115,10 +115,10 @@ class Command(BaseCommand):
         user, _ = User.objects.get_or_create(
             username=login, defaults={"github_login": login, "email": ""}
         )
-        # Only blank names are filled in, so names edited in admin survive a rerun.
-        first, last = NAMES[login]
-        user.first_name = user.first_name or first
-        user.last_name = user.last_name or last
+        # Only a wholly blank name is filled in, so names edited in admin survive a rerun,
+        # including one-part names.
+        if not user.get_full_name():
+            user.first_name, user.last_name = NAMES[login]
         if password is None:
             user.set_unusable_password()
         else:

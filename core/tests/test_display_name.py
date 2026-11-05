@@ -73,6 +73,26 @@ class SeededNamesTests(TestCase):
         user.refresh_from_db()
         self.assertEqual(user.get_full_name(), "Edited Name")
 
+    def test_a_one_part_name_edited_in_admin_survives_a_rerun(self):
+        seed()
+        user = User.objects.filter(enrollments__role=Enrollment.Role.STUDENT).first()
+        User.objects.filter(pk=user.pk).update(first_name="Edited", last_name="")
+
+        seed()
+
+        user.refresh_from_db()
+        self.assertEqual(user.get_full_name(), "Edited")
+
+    def test_a_name_of_only_spaces_counts_as_blank(self):
+        seed()
+        user = User.objects.filter(enrollments__role=Enrollment.Role.STUDENT).first()
+        User.objects.filter(pk=user.pk).update(first_name=" ", last_name=" ")
+
+        seed()
+
+        user.refresh_from_db()
+        self.assertTrue(user.get_full_name())
+
 
 class AdminAddUserTests(TestCase):
     def setUp(self):
