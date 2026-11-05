@@ -528,8 +528,8 @@ class TeamGeneration:
             message = f"Generated summaries for {students} on {self.team.name} for {week}."
             if self.week_start > last_completed_week_start():
                 message += (
-                    " This week is still in progress, so these summaries are partial and don't "
-                    "count toward flags until you generate the week again after it ends."
+                    " This week is still in progress, so these summaries are partial and may "
+                    "change."
                 )
             return message
         done = self.attempted - len(self.failures)

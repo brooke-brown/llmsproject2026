@@ -18,7 +18,7 @@
 </div>
 
 {% if summary.is_partial %}
-<p class="finding warning">{% if summary.week_is_running %}This week is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}, and it doesn't count toward flags until the week is generated again after it ends.{% else %}This summary was generated before the week ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}. Generate this week again to cover the whole week and count it toward flags.{% endif %}</p>
+<p class="finding warning">{% if summary.week_is_running %}This week is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}, so it may change.{% else %}This summary was generated before the week ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}. Generate this week again to cover the whole week.{% endif %}</p>
 {% endif %}
 
 {% if claims or unverified_count %}

@@ -57,7 +57,8 @@ def low_requirement_share(team):
     """Flag students whose weighted share of requirement-tied work is low, using
     requirement_shares."""
     students = [membership.user for membership in team.memberships.select_related("user")]
-    shares = requirement_shares(team)
+    # Demo branch only: an unfinished week raises flags as if it were complete.
+    shares = requirement_shares(team, include_partial=True)
     if len(students) < 2 or shares is None:
         return []
     week, shares = shares

@@ -128,7 +128,6 @@ class PickingTheWeekTests(InProgressFixture):
         message = page_messages(self.post(CURRENT))
 
         self.assertIn("still in progress", message)
-        self.assertIn("flags", message)
 
     def test_a_completed_weeks_message_doesnt(self):
         self.assertNotIn("in progress", page_messages(self.post(COMPLETED)))
@@ -200,25 +199,12 @@ class FlagsAndSharesTests(InProgressFixture):
 
         self.assertEqual(flags.requirement_shares(self.team)[0], COMPLETED)
         self.assertEqual(flags.requirement_shares(self.team, include_partial=True)[0], CURRENT)
-    def test_with_only_a_partial_week_there_are_shares_but_no_flags(self):
+    def test_requirement_shares_only_includes_a_partial_week_when_asked(self):
         self.generated(self.ada, WEDNESDAY, CURRENT, "major")
         self.generated(self.grace, WEDNESDAY, CURRENT, "minor")
 
         self.assertIsNone(flags.requirement_shares(self.team))
         self.assertEqual(flags.requirement_shares(self.team, include_partial=True)[0], CURRENT)
-        self.assertEqual(flags.compute_flags(self.team), [])
-    def test_a_partial_week_cant_raise_a_flag_or_clear_an_earlier_one(self):
-        self.give_completed_week()
-        flags.compute_flags(self.team)
-        before = list(Flag.objects.values_list("user_id", "week_start"))
-        self.assertEqual(before, [(self.grace.id, COMPLETED)])
-        self.generated(self.ada, WEDNESDAY, CURRENT, "minor")
-        self.generated(self.grace, WEDNESDAY, CURRENT, "major")
-
-        flags.compute_flags(self.team)
-
-        self.assertEqual(list(Flag.objects.values_list("user_id", "week_start")), before)
-
     def test_it_doesnt_count_once_the_week_ends_until_generated_again(self):
         self.give_completed_week()
         ada = self.generated(self.ada, WEDNESDAY, CURRENT, "major")
@@ -243,7 +229,7 @@ class FlagsAndSharesTests(InProgressFixture):
         response = self.team_page_with_a_partial_week()
 
         self.assertContains(response, "week of Nov 2 (in progress)")
-        self.assertContains(response, "flags don't use them")
+        self.assertContains(response, "shares and any flags may change")
         self.assertEqual(response.context["share_week"], CURRENT)
         shares = {m.user_id: m.contribution_share for m in response.context["memberships"]}
         self.assertEqual(shares, {self.ada.id: 75, self.grace.id: 25})
@@ -264,7 +250,7 @@ class FlagsAndSharesTests(InProgressFixture):
         response = self.client.get(team_url(self.team.id))
 
         self.assertContains(response, "work, week of Oct 26</h2>")
-        self.assertNotContains(response, "flags don't use them")
+        self.assertNotContains(response, "shares and any flags may change")
 
     def test_a_student_missing_from_the_partial_week_keeps_the_chart_on_a_full_week(self):
         self.give_completed_week()
@@ -336,8 +322,7 @@ class LabelTests(InProgressFixture):
 
         self.assertContains(response, "This week is still in progress")
         self.assertContains(response, "Nov 4")
-        self.assertContains(response, "doesn't count toward flags until")
-        self.assertNotContains(response, "or shares")
+        self.assertContains(response, "so it may change")
 
     def test_summary_page_says_to_generate_a_stale_one_again(self):
         summary = self.generated(self.ada, WEDNESDAY)
@@ -347,7 +332,6 @@ class LabelTests(InProgressFixture):
 
         self.assertContains(response, "before the week ended")
         self.assertContains(response, "Generate this week again")
-        self.assertContains(response, "count it toward flags.")
         self.assertNotContains(response, "still in progress")
 
     def test_summary_page_says_nothing_for_a_complete_summary(self):
@@ -435,3 +419,40 @@ class TeamStatusTests(InProgressFixture):
         self.set_clock(WEDNESDAY)
 
         self.assertIn("<mark>Warning</mark>", self.overview_card())
+
+
+class DemoFlagsOnPartialWeeksTests(InProgressFixture):
+    """Demo branch only: flags count an unfinished week as if it were complete."""
+
+    def test_generating_an_unfinished_week_raises_its_flags(self):
+        self.generated(self.ada, WEDNESDAY, CURRENT, "major", "major", "major")
+        self.generated(self.grace, WEDNESDAY, CURRENT, "minor")
+
+        raised = flags.compute_flags(self.team)
+
+        self.assertEqual([(flag.user, flag.week_start) for flag in raised], [(self.grace, CURRENT)])
+        self.assertEqual(raised[0].severity, Flag.Severity.FLAG)
+
+    def test_the_overview_and_chart_show_it(self):
+        self.generated(self.ada, WEDNESDAY, CURRENT, "major", "major", "major")
+        self.generated(self.grace, WEDNESDAY, CURRENT, "minor")
+        flags.compute_flags(self.team)
+        self.set_clock(WEDNESDAY)
+
+        card = self.client.get(overview_url(self.course.id)).content.decode()
+        page = self.client.get(team_url(self.team.id))
+
+        self.assertIn("<mark>Flag</mark>", team_article(card, self.team.name))
+        rows = {m.user_id: m for m in page.context["legend"]}
+        self.assertEqual(rows[self.grace.id].chart_flag.severity, Flag.Severity.FLAG)
+
+    def test_nothing_says_flags_skip_the_week(self):
+        summary = self.generated(self.ada, WEDNESDAY, CURRENT, "major")
+        self.generated(self.grace, WEDNESDAY, CURRENT, "minor")
+        self.set_clock(WEDNESDAY)
+
+        for url in [team_url(self.team.id), reverse("dashboard:summary", args=[summary.id])]:
+            with self.subTest(url=url):
+                content = self.client.get(url).content.decode()
+                self.assertNotIn("toward flags", content)
+                self.assertNotIn("flags don't use them", content)

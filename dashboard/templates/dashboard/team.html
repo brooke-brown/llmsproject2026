@@ -81,7 +81,7 @@
 {% if share_week %}
 <section class="chart" aria-labelledby="share-title">
   <h2 id="share-title">Share of requirement-tied work, week of {{ share_week|date:"M j" }}{% if share_week_note %} ({{ share_week_note }}){% endif %}</h2>
-  <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.{% if share_week_note %} This week's summaries are partial, so these shares may change, and flags don't use them.{% endif %}</p>
+  <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.{% if share_week_note %} This week's summaries are partial, so these shares and any flags may change.{% endif %}</p>
   <div class="pie-wrap">
     <svg class="pie" viewBox="0 0 100 100" role="img" aria-label="Pie chart of each student's share of the team's requirement-tied work">
       {% for membership in legend %}{% if membership.pie %}
