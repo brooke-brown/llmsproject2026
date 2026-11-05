@@ -28,8 +28,7 @@
   {% for membership in memberships %}
   <article class="card">
     <header class="row">
-      <span><strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.get_full_name|default:membership.user.github_login }}</a>{% else %}{{ membership.user.get_full_name|default:membership.user.github_login }}{% endif %}</strong>
-      <code>{{ membership.user.github_login }}</code></span>{% if membership.contribution_share is not None %}
+      <span><strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</strong></span>{% if membership.contribution_share is not None %}
       <strong>{{ membership.contribution_share }}%</strong>{% endif %}
     </header>
     {% for flag in membership.user.team_flags %}
@@ -53,8 +52,8 @@
   <h2 id="share-title">Share of requirement-tied work, week of {{ share_week|date:"M j" }}</h2>
   <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.</p>
   {% for membership in memberships %}{% if membership.contribution_share is not None %}
-  <div class="bar-row" title="{{ membership.user.get_full_name|default:membership.user.github_login }}: {{ membership.contribution_share }}% of the team's requirement-tied work">
-    {% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.get_full_name|default:membership.user.github_login }}</a>{% else %}<span>{{ membership.user.get_full_name|default:membership.user.github_login }}</span>{% endif %}
+  <div class="bar-row" title="{{ membership.user.display_name }}: {{ membership.contribution_share }}% of the team's requirement-tied work">
+    {% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}<span>{{ membership.user.display_name }}</span>{% endif %}
     <div class="track"><div class="equal"></div><div class="fill{% if membership.user.team_flags %} low{% endif %}" style="width: {{ membership.contribution_bar }}%"></div></div>
     <span class="val">{{ membership.contribution_share }}%{% if membership.user.team_flags %} <span class="tag {% if membership.user.team_flags.0.severity == 'flag' %}flag{% else %}warn{% endif %}">{{ membership.user.team_flags.0.get_severity_display }}</span>{% endif %}</span>
   </div>

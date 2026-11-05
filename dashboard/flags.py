@@ -72,7 +72,7 @@ def low_requirement_share(team):
             severity = Flag.Severity.WARNING
         else:
             continue
-        name = student.get_full_name() or student.github_login
+        name = student.display_name
         reason = (
             f"{name} did {round(share * 100)}% of the team's requirement-tied work in the "
             f"week of {week:%b} {week.day} (an equal share is {round(100 / len(students))}%)."

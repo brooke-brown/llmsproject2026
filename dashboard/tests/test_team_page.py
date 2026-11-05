@@ -85,13 +85,11 @@ class TeamPageHeaderTests(TeamPageFixture):
 
 
 class TeamPageStudentTests(TeamPageFixture):
-    def test_lists_each_students_name_and_github_login(self):
+    def test_lists_each_students_name(self):
         response = self.get_team_page()
 
         self.assertContains(response, "Ada Sample")
-        self.assertContains(response, "sample-ada")
         self.assertContains(response, "Grace Example")
-        self.assertContains(response, "sample-grace")
 
     def test_lists_only_this_teams_students(self):
         outsider = make_user("sample-outsider", "Otto", "Elsewhere")
@@ -99,8 +97,8 @@ class TeamPageStudentTests(TeamPageFixture):
 
         response = self.get_team_page()
 
-        self.assertContains(response, "sample-ada")
-        self.assertNotContains(response, "sample-outsider")
+        self.assertContains(response, "Ada Sample")
+        self.assertNotContains(response, "Otto Elsewhere")
 
     def test_team_with_no_students_says_so(self):
         response = self.get_team_page(team=self.other_team)
@@ -110,7 +108,7 @@ class TeamPageStudentTests(TeamPageFixture):
     def test_team_with_students_lists_them_instead_of_saying_it_has_none(self):
         response = self.get_team_page()
 
-        self.assertContains(response, "sample-ada")
+        self.assertContains(response, "Ada Sample")
         self.assertNotContains(response, "No students on this team yet.")
 
 
@@ -199,7 +197,7 @@ class TeamPageAccessTests(TeamPageFixture):
         response = self.get_team_page(self.instructor)
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "sample-ada")
+        self.assertContains(response, "Ada Sample")
         self.assertContains(response, "Week of Oct 26, 2026")
 
     def test_ta_enrolled_in_course_sees_the_team_page(self):
@@ -209,7 +207,7 @@ class TeamPageAccessTests(TeamPageFixture):
         response = self.get_team_page(ta)
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "sample-ada")
+        self.assertContains(response, "Ada Sample")
         self.assertContains(response, "Week of Oct 26, 2026")
 
     def test_student_on_the_team_gets_403(self):

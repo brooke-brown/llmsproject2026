@@ -93,13 +93,11 @@ class CourseOverviewContentTests(CourseOverviewFixture):
         self.assertLess(team_alpha, project_two)
         self.assertLess(project_two, team_beta)
 
-    def test_shows_each_students_name_and_github_login(self):
+    def test_shows_each_students_name(self):
         response = self.get_overview()
 
         self.assertContains(response, "Ada Sample")
-        self.assertContains(response, "sample-ada")
         self.assertContains(response, "Grace Example")
-        self.assertContains(response, "sample-grace")
 
     def test_each_team_links_to_its_team_page(self):
         response = self.get_overview()

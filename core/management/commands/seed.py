@@ -38,6 +38,17 @@ STAFF = [
     ("sample-ta", Enrollment.Role.TA),
 ]
 
+# Placeholder names, so pages show a name rather than a username. Replace them in admin.
+NAMES = {
+    "todbukh": ("Todd", "Live"),
+    "brooke-brown": ("Brooke", "Live"),
+    "akshitatiwari132": ("Akshita", "Live"),
+    "sample-ada": ("Ada", "Sample"),
+    "sample-grace": ("Grace", "Example"),
+    "sample-instructor": ("Ines", "Instructor"),
+    "sample-ta": ("Tara", "Assistant"),
+}
+
 REQUIREMENTS = [
     "Users can create an account and log in.",
     "Users can view and edit their profile.",
@@ -104,9 +115,13 @@ class Command(BaseCommand):
         user, _ = User.objects.get_or_create(
             username=login, defaults={"github_login": login, "email": ""}
         )
+        # Only blank names are filled in, so names edited in admin survive a rerun.
+        first, last = NAMES[login]
+        user.first_name = user.first_name or first
+        user.last_name = user.last_name or last
         if password is None:
             user.set_unusable_password()
         else:
             user.set_password(password)
-        user.save(update_fields=["password"])
+        user.save(update_fields=["password", "first_name", "last_name"])
         return user

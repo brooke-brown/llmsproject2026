@@ -92,8 +92,6 @@ class TeamPageNameTests(DisplayNameFixture):
 
         for student in [self.ada, self.first_only, self.last_only]:
             self.assertNotIn(student.github_login, content)
-        # The nameless student's username shows once in their card and once in the chart.
-        self.assertEqual(content.count("sample-nameless"), 2)
 
 
 class SummaryPageNameTests(DisplayNameFixture):

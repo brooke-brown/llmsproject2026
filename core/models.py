@@ -16,6 +16,12 @@ class User(AbstractUser):
 
     REQUIRED_FIELDS = ["email", "github_login"]
 
+    @property
+    def display_name(self):
+        """What pages call this person: their name, or their GitHub login if they have none.
+        Display only; GitHub matching uses github_login."""
+        return self.get_full_name() or self.github_login
+
     class Meta(AbstractUser.Meta):
         constraints = [
             models.CheckConstraint(

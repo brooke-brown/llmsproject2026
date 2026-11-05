@@ -21,7 +21,7 @@
           </div>
           <ul class="people">
             {% for membership in team.memberships.all %}
-            <li>{{ membership.user.get_full_name|default:membership.user.github_login }} <code>{{ membership.user.github_login }}</code></li>
+            <li>{{ membership.user.display_name }}</li>
             {% empty %}
             <li>No students on this team yet.</li>
             {% endfor %}

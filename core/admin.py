@@ -34,7 +34,15 @@ class UserAdmin(BaseUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("username", "github_login", "usable_password", "password1", "password2"),
+                "fields": (
+                    "username",
+                    "first_name",
+                    "last_name",
+                    "github_login",
+                    "usable_password",
+                    "password1",
+                    "password2",
+                ),
             },
         ),
     )

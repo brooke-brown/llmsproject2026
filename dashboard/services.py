@@ -251,7 +251,7 @@ def parse_week_start(value, now=None):
 
 
 def student_name(student):
-    return student.get_full_name() or student.github_login
+    return student.display_name
 
 
 @dataclass(frozen=True)
