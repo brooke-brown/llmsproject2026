@@ -1,9 +1,10 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
-from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from core import services as setup
 from core.forms import RequirementImportForm
@@ -23,6 +24,9 @@ def home(request):
 @login_required
 def course_overview(request, course_id):
     course = services.get_course_for_staff(request.user, course_id)
+    for result in services.take_run_results(request.session):
+        add_message = messages.success if result["succeeded"] else messages.error
+        add_message(request, result["message"])
     return render(
         request,
         "dashboard/course_overview.html",
@@ -31,10 +35,18 @@ def course_overview(request, course_id):
             "projects": services.course_projects_with_teams(course),
             "default_week_start": services.last_completed_week_start(),
             "current_week_start": services.current_week_start(),
+            "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),
         },
     )
+
+
+@login_required
+@require_GET
+def course_generating_status(request, course_id):
+    course = services.get_course_for_staff(request.user, course_id)
+    return JsonResponse({"team_ids": services.generating_team_ids(course)})
 
 
 @login_required
@@ -74,11 +86,15 @@ def _redirect_back(request, default):
     return default
 
 
+def _show_refusal(request, team, error):
+    """Say why nothing ran. The overview lists every team, so the message says which one."""
+    messages.error(request, f"{team.name}: {error}")
+    return redirect("dashboard:course_overview", course_id=team.project.course_id)
+
+
 def _show_generation(request, generation):
-    """Remember who to retry, say how the run went, and return to the course overview."""
-    services.remember_retry(request.session, generation)
-    add_message = messages.success if generation.succeeded else messages.error
-    add_message(request, generation.message)
+    """Keep how the run went for the course overview, and go there."""
+    services.save_run_result(request.session, generation)
     return redirect("dashboard:course_overview", course_id=generation.team.project.course_id)
 
 
@@ -90,9 +106,7 @@ def generate_team_summaries(request, team_id):
         week_start = services.parse_week_start(request.POST.get("week_start"))
         generation = services.generate_team_summaries(team, week_start)
     except services.GenerationError as error:
-        # The overview lists every team, so the message says which one it's about.
-        messages.error(request, f"{team.name}: {error}")
-        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+        return _show_refusal(request, team, error)
     return _show_generation(request, generation)
 
 
@@ -100,7 +114,10 @@ def generate_team_summaries(request, team_id):
 @require_POST
 def retry_failed_summaries(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
-    generation = services.retry_failed_summaries(team, request.session)
+    try:
+        generation = services.retry_failed_summaries(team, request.session)
+    except services.GenerationError as error:
+        return _show_refusal(request, team, error)
     if generation is None:
         messages.info(request, f"{team.name} has no failed summaries to retry.")
         return redirect("dashboard:course_overview", course_id=team.project.course_id)

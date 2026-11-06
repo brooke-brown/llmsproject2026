@@ -82,6 +82,10 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        # A run holds a transaction for its whole GitHub pull, so other writes wait for it rather
+        # than fail: a login, a message, another team's run. Taking the write lock up front
+        # means waiting works, since SQLite fails a read that turns into a write at once.
+        'OPTIONS': {'timeout': 60, 'transaction_mode': 'IMMEDIATE'},
     }
 }
 
