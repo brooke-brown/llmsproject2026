@@ -23,7 +23,7 @@
         <article class="card{% if team.flag_rank == 0 %} flag{% elif team.flag_rank == 1 %} warn{% endif %}">
           <div class="row">
             <h3><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></h3>
-            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif team.latest_week %}<span class="tag ok">No flags</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
+            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
           </div>
           <ul class="people">
             {% for membership in team.memberships.all %}
@@ -33,12 +33,12 @@
             {% endfor %}
           </ul>
           {% if not team.repos.all %}<p class="missing">No repo yet.</p>{% endif %}
-          <div class="latest">{% if team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% else %}No summaries yet{% endif %}</div>
+          <div class="latest">{% if team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% if team.latest_week_note %} ({{ team.latest_week_note }}){% endif %}{% else %}No summaries yet{% endif %}</div>
           <div class="foot">
             <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post">
               {% csrf_token %}
               <fieldset role="group">
-                <input type="date" name="week_start" value="{{ default_week_start|date:'Y-m-d' }}" max="{{ default_week_start|date:'Y-m-d' }}" aria-label="Week starting Monday" required>
+                <input type="date" name="week_start" value="{{ default_week_start|date:'Y-m-d' }}" min="1970-01-05" step="7" max="{{ current_week_start|date:'Y-m-d' }}" aria-label="Week starting Monday" required>
                 <button type="submit">Generate summaries</button>
               </fieldset>
             </form>

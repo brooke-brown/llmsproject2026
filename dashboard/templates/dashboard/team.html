@@ -21,7 +21,7 @@
     {% endif %}
     {% for repo in repos %}<code>{{ repo.full_name }}</code>{% empty %}<code>No repo yet</code>{% endfor %}
   </div>
-  {% if team_status == "flag" %}<span class="tag flag">Flag</span>{% elif team_status == "warning" %}<span class="tag warn">Warning</span>{% elif team_status == "ok" %}<span class="tag ok">No flags</span>{% endif %}
+  {% if team_status == "flag" %}<span class="tag flag">Flag</span>{% elif team_status == "warning" %}<span class="tag warn">Warning</span>{% elif team_status == "ok" %}<span class="tag ok">No flags</span>{% elif team_status == "in_progress" %}<span class="tag none">In progress</span>{% endif %}
 </div>
 
 {% if team_flags %}
@@ -57,7 +57,7 @@
     {% endfor %}
     <ul class="pills">
       {% for summary in membership.user.team_summaries %}
-      <li><a href="{% url 'dashboard:summary' summary.id %}">Week of {{ summary.week_start|date:"M j, Y" }}<span class="count">{% if summary.claim_count %}{{ summary.claim_count }} claim{{ summary.claim_count|pluralize }}{% elif not summary.artifact_count %}no activity{% else %}no claims{% endif %}</span></a></li>
+      <li><a href="{% url 'dashboard:summary' summary.id %}">Week of {{ summary.week_start|date:"M j, Y" }}<span class="count">{% if summary.claim_count %}{{ summary.claim_count }} claim{{ summary.claim_count|pluralize }}{% elif not summary.artifact_count %}no activity{% else %}no claims{% endif %}</span>{% if summary.is_partial %}<span class="count">{% if summary.week_is_running %}in progress{% else %}partial{% endif %}</span>{% endif %}</a></li>
       {% empty %}
       <li>No summaries yet.</li>
       {% endfor %}
@@ -80,8 +80,8 @@
 
 {% if share_week %}
 <section class="chart" aria-labelledby="share-title">
-  <h2 id="share-title">Share of requirement-tied work, week of {{ share_week|date:"M j" }}</h2>
-  <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.</p>
+  <h2 id="share-title">Share of requirement-tied work, week of {{ share_week|date:"M j" }}{% if share_week_note %} ({{ share_week_note }}){% endif %}</h2>
+  <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.{% if share_week_note %} This week's summaries are partial, so these shares may change, and flags don't use them.{% endif %}</p>
   <div class="pie-wrap">
     <svg class="pie" viewBox="0 0 100 100" role="img" aria-label="Pie chart of each student's share of the team's requirement-tied work">
       {% for membership in legend %}{% if membership.pie %}
@@ -94,8 +94,8 @@
         {% for membership in legend %}
         <li class="legend-row"><i class="swatch{% if not membership.pie %} none{% endif %}"{% if membership.pie %} style="background: {{ membership.pie.color }}"{% endif %}></i>
           <span class="name">{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</span>
-          <span class="val">{{ membership.contribution_share }}%</span>{% if membership.user.team_flags %}
-          <span class="tag {% if membership.user.team_flags.0.severity == 'flag' %}flag{% else %}warn{% endif %}">{{ membership.user.team_flags.0.get_severity_display }}</span>{% endif %}</li>
+          <span class="val">{{ membership.contribution_share }}%</span>{% if membership.chart_flag %}
+          <span class="tag {% if membership.chart_flag.severity == 'flag' %}flag{% else %}warn{% endif %}">{{ membership.chart_flag.get_severity_display }}</span>{% endif %}</li>
         {% endfor %}
       </ul>
       <p class="equal-note">An equal share is {{ equal_share }}% ({{ memberships|length }} student{{ memberships|length|pluralize }}).</p>
