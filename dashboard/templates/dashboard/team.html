@@ -4,13 +4,22 @@
 
 {% block main_class %}team{% endblock %}
 
-{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' team.project.course.id %}">{{ team.project.course.name }}</a> · {{ team.project.name }} › {{ team.name }}</span>{% endblock %}
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' team.project.course.id %}">{{ team.project.course.name }}</a> · {% if can_set_up %}<a href="{% url 'dashboard:project_setup' team.project_id %}">{{ team.project.name }}</a>{% else %}{{ team.project.name }}{% endif %} › {{ team.name }}</span>{% endblock %}
 
 {% block content %}
 <div class="headrow">
   <div>
-    <h1>{{ team.name }}</h1>
-    {% for repo in repos %}<code>{{ repo.full_name }}</code>{% empty %}<code>no repos yet</code>{% endfor %}
+    {% if can_set_up and editing %}
+    {% url 'dashboard:team_rename' team.id as rename_url %}
+    {% url 'dashboard:team' team.id as team_page_url %}
+    {% include "dashboard/_name_edit.html" with action=rename_url name=team.name cancel_url=team_page_url %}
+    {% else %}
+    <div class="titled">
+      <h1>{{ team.name }}</h1>
+      {% if can_set_up %}<a class="edit-link" href="?edit=1">edit</a>{% endif %}
+    </div>
+    {% endif %}
+    {% for repo in repos %}<code>{{ repo.full_name }}</code>{% empty %}<code>No repo yet</code>{% endfor %}
   </div>
   {% if team_status == "flag" %}<span class="tag flag">Flag</span>{% elif team_status == "warning" %}<span class="tag warn">Warning</span>{% elif team_status == "ok" %}<span class="tag ok">No flags</span>{% endif %}
 </div>
@@ -27,8 +36,20 @@
 <div class="weeks">
   {% for membership in memberships %}
   <article class="card">
+    {% if can_set_up and membership.id == editing_membership_id %}
+    <form class="student-edit" action="{% url 'dashboard:membership_edit' membership.id %}" method="post">
+      {% csrf_token %}
+      <label>Full name <input type="text" name="full_name" value="{{ membership.user.get_full_name }}" maxlength="301" required autofocus></label>
+      <p class="keynote">GitHub username: <code>{{ membership.user.github_login }}</code></p>
+      <p class="form-actions">
+        <button type="submit" class="primary">Save</button>
+        <a href="{% url 'dashboard:team' team.id %}">Cancel</a>
+      </p>
+    </form>
+    {% else %}
     <header class="row">
-      <span><strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</strong></span>{% if membership.contribution_share is not None %}
+      <span><strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</strong>{% if membership.user.get_full_name %}
+      <code>{{ membership.user.github_login }}</code>{% endif %}</span>{% if membership.contribution_share is not None %}
       <strong>{{ membership.contribution_share }}%</strong>{% endif %}
     </header>
     {% for flag in membership.user.team_flags %}
@@ -41,6 +62,16 @@
       <li>No summaries yet.</li>
       {% endfor %}
     </ul>
+    {% if can_set_up %}
+    <span class="row-actions card-actions">
+      <a class="edit-link" href="?edit_student={{ membership.id }}">edit</a>
+      <form action="{% url 'dashboard:membership_remove' membership.id %}" method="post" onsubmit="return confirm('Remove {{ membership.user.display_name|escapejs }} from this team?{% with count=membership.user.team_summaries|length %}{% if count %} This permanently deletes their {{ count }} summar{{ count|pluralize:"y,ies" }} on this team.{% endif %}{% endwith %} Their account stays.')">
+        {% csrf_token %}
+        <button type="submit" class="text-button">remove</button>
+      </form>
+    </span>
+    {% endif %}
+    {% endif %}
   </article>
   {% empty %}
   <p>No students on this team yet.</p>
@@ -70,6 +101,81 @@
       <p class="equal-note">An equal share is {{ equal_share }}% ({{ memberships|length }} student{{ memberships|length|pluralize }}).</p>
     </div>
   </div>
+</section>
+{% endif %}
+
+{% if can_set_up %}
+<section class="setup-panel">
+  <h2>Add a student</h2>
+  <form action="{% url 'dashboard:student_add' team.id %}" method="post">
+    {% csrf_token %}
+    <div class="fields">
+      <label>Full name <input type="text" name="full_name" maxlength="301" required></label>
+      <label>GitHub username <input type="text" name="github_login" maxlength="39" required></label>
+      <label>Email (optional) <input type="email" name="email" maxlength="254"></label>
+    </div>
+    <p class="keynote">Use the email they put in <code>Co-authored-by:</code> trailers, since that's how paired commits are credited to them. A GitHub username that already has an account uses that account, and its name and email stay as they are.</p>
+    <button type="submit">Add student</button>
+  </form>
+</section>
+
+<section class="setup-panel">
+  <h2>Repo</h2>
+  {% for repo in repos %}
+  {% if repo.has_cited_artifacts %}
+  <div class="repo">
+    <code>{{ repo.full_name }}</code>
+    <span class="keynote">This repo can't be changed or removed, because summaries cite its activity.</span>
+  </div>
+  {% elif repo.has_artifacts %}
+  <div class="repo">
+    <code>{{ repo.full_name }}</code>
+    <span class="keynote">To use a different repo, remove this one first.</span>
+    <span class="row-actions">
+      <form action="{% url 'dashboard:repo_remove' repo.id %}" method="post" onsubmit="return confirm('Remove {{ repo.full_name|escapejs }} from this team? This permanently deletes any activity pulled from it.')">
+        {% csrf_token %}
+        <button type="submit" class="text-button">remove</button>
+      </form>
+    </span>
+  </div>
+  {% elif repo.id == changing_repo_id %}
+  <form class="compact wide" action="{% url 'dashboard:repo_change' repo.id %}" method="post" onsubmit="return confirm('Change the repo for {{ team.name|escapejs }} from {{ repo.full_name|escapejs }} to this URL?')">
+    {% csrf_token %}
+    <input type="text" name="url" value="{{ repo.url }}" maxlength="200" aria-label="GitHub repo URL" required autofocus>
+    <button type="submit" class="primary">Change repo</button>
+    <a href="{% url 'dashboard:team' team.id %}">Cancel</a>
+  </form>
+  {% else %}
+  <div class="repo">
+    <code>{{ repo.full_name }}</code>
+    <span class="row-actions">
+      <a class="edit-link" href="?change_repo={{ repo.id }}">change</a>
+      <form action="{% url 'dashboard:repo_remove' repo.id %}" method="post" onsubmit="return confirm('Remove {{ repo.full_name|escapejs }} from this team? This permanently deletes any activity pulled from it.')">
+        {% csrf_token %}
+        <button type="submit" class="text-button">remove</button>
+      </form>
+    </span>
+  </div>
+  {% endif %}
+  {% empty %}
+  <form class="compact wide" action="{% url 'dashboard:repo_add' team.id %}" method="post">
+    {% csrf_token %}
+    <input type="text" name="url" maxlength="200" aria-label="GitHub repo URL" placeholder="https://github.com/owner/repo" required>
+    <button type="submit">Add repo</button>
+  </form>
+  {% endfor %}
+  <p class="keynote">A team has one repo. STRIVE reads GitHub with its own account, not yours, so that account needs access to a private repo. Activity is pulled when you generate summaries.</p>
+</section>
+
+<section class="setup-panel">
+  <h2>Delete team</h2>
+  <p class="keynote">Deleting a team permanently deletes its summaries, its repo and any activity pulled from it. Students keep their accounts.</p>
+  {% with count=team.summaries.count %}
+  <form action="{% url 'dashboard:team_delete' team.id %}" method="post" onsubmit="return confirm('Delete {{ team.name|escapejs }}? This permanently deletes {% if count %}its {{ count }} summar{{ count|pluralize:"y,ies" }}, {% endif %}its repo and any activity pulled from it. Students keep their accounts.')">
+    {% csrf_token %}
+    <button type="submit" class="outline">Delete {{ team.name }}</button>
+  </form>
+  {% endwith %}
 </section>
 {% endif %}
 {% endblock %}

@@ -65,11 +65,7 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
     start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
     end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
 
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise BadTokenError("GITHUB_TOKEN isn't set.")
-    # PyGithub's default retry sleeps until a rate limit resets, which would hang the request.
-    client = Github(auth=Auth.Token(token), retry=None)
+    client = github_client()
     students = list(
         User.objects.filter(team_memberships__team=repo.team).values_list("github_login", "email")
     )
@@ -83,7 +79,7 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
             _save_issues(repo, github_repo, start, end)
     except GithubException as error:
         # `from None` keeps GitHub's response, which could echo the token, out of tracebacks.
-        raise _ingest_error(error, repo) from None
+        raise ingest_error(error, repo) from None
 
     return list(
         Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end).order_by(
@@ -92,7 +88,17 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
     )
 
 
-def _ingest_error(error: GithubException, repo: Repo) -> IngestError:
+def github_client() -> Github:
+    """A client using the server-wide GITHUB_TOKEN, or raise BadTokenError if it isn't set."""
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise BadTokenError("GITHUB_TOKEN isn't set.")
+    # PyGithub's default retry sleeps until a rate limit resets, which would hang the request.
+    return Github(auth=Auth.Token(token), retry=None)
+
+
+def ingest_error(error: GithubException, repo: Repo) -> IngestError:
+    """The IngestError for an error from GitHub, with a message that's safe to show users."""
     # Rate limits come first, because GitHub can send them as a 403. PyGithub only recognizes
     # those, so a 429 arrives as a plain GithubException.
     if isinstance(error, RateLimitExceededException) or error.status == 429:

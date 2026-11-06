@@ -115,6 +115,7 @@
     .card > header { font-size: 14px; }
     .card > header > strong:first-child { font-size: 18px; font-weight: 600; }
     .card > header a { color: var(--ink); }
+    .card > header code { display: block; margin-top: 2px; }
     .card .latest { color: var(--muted); font-size: 13px; }
     .card .foot, .card .tags { margin-top: auto; }
     .card .tags { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -132,12 +133,13 @@
 
     /* Forms and buttons */
     input, select { margin-bottom: 0; padding: 7px 10px; font: inherit; }
-    button, [type="submit"] { --pico-background-color: var(--panel2); --pico-border-color: var(--line); --pico-color: var(--ink); margin-bottom: 0; padding: 7px 12px; font-size: 13.5px; font-weight: 600; }
-    button:is(:hover, :active, :focus), [type="submit"]:is(:hover, :active, :focus) { --pico-background-color: var(--panel2); --pico-border-color: var(--accent); --pico-color: var(--ink); }
-    button.primary, button.secondary { --pico-background-color: var(--accent); --pico-border-color: var(--accent); --pico-color: var(--on-accent); }
-    button.primary:is(:hover, :active, :focus), button.secondary:is(:hover, :active, :focus) { --pico-background-color: var(--accent-hover); --pico-border-color: var(--accent-hover); --pico-color: var(--on-accent); }
+    button, [type="submit"], a[role="button"] { --pico-background-color: var(--panel2); --pico-border-color: var(--line); --pico-color: var(--ink); margin-bottom: 0; padding: 7px 12px; font-size: 13.5px; font-weight: 600; }
+    button:is(:hover, :active, :focus), [type="submit"]:is(:hover, :active, :focus), a[role="button"]:is(:hover, :active, :focus) { --pico-background-color: var(--panel2); --pico-border-color: var(--accent); --pico-color: var(--ink); }
+    a[role="button"]:hover { text-decoration: none; }
+    button.primary, button.secondary, a[role="button"].primary { --pico-background-color: var(--accent); --pico-border-color: var(--accent); --pico-color: var(--on-accent); }
+    button.primary:is(:hover, :active, :focus), button.secondary:is(:hover, :active, :focus), a[role="button"].primary:is(:hover, :active, :focus) { --pico-background-color: var(--accent-hover); --pico-border-color: var(--accent-hover); --pico-color: var(--on-accent); }
     fieldset[role="group"] { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; box-shadow: none; }
-    fieldset[role="group"] > input { flex: 1 1 130px; min-width: 0; }
+    fieldset[role="group"] > input[type] { flex: 1 1 130px; min-width: 0; height: auto; margin-bottom: 0; padding: 6px 10px; font-size: 13.5px; }
     fieldset[role="group"] > button { flex: 1 1 auto; white-space: nowrap; }
     fieldset[role="group"] > :not(:first-child) { margin-left: 0; }
     fieldset[role="group"] > * { border-radius: var(--pico-border-radius); }
@@ -154,18 +156,58 @@
     .rail td { padding: 7px 0; border-bottom: 0; border-top: 1px solid var(--line); background: none; }
     .rail td:first-child { color: var(--muted); font-weight: 600; }
 
-    /* Instructor setup: new project, rename and the requirements page */
-    .new-project { max-width: 480px; margin-bottom: 24px; }
-    details.rename { margin: 0; border: 0; padding: 0; font-size: 13.5px; }
-    details.rename summary { color: var(--muted); }
-    details.rename form { margin: 8px 0 0; }
+    /* Instructor setup: new project, editing a name, and the setup and requirements pages */
+    .page-actions { display: flex; justify-content: flex-end; margin: 0 0 16px; }
+    .titled { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+    .edit-link { color: var(--muted); font-size: 12.5px; }
+    .name-edit { display: flex; flex: 1 1 auto; gap: 10px; align-items: center; margin: 0; }
+    .name-edit input[type="text"] { flex: 0 1 480px; width: auto; min-width: 0; height: auto; margin: 0; padding: 2px 8px; font-size: 28px; font-weight: 600; line-height: 1.2; }
+    .name-edit button[type="submit"] { flex: none; width: auto; }
+    .name-edit a, .form-actions a { color: var(--muted); font-size: 13.5px; }
+    /* Pico makes inputs tall and submit buttons full width, which is too much for one short field. */
+    .compact { display: flex; gap: 8px; align-items: center; max-width: 340px; margin: 14px 0 0; }
+    .compact.wide { max-width: 560px; }
+    .compact input[type="text"] { flex: 1 1 auto; min-width: 0; height: auto; margin: 0; padding: 5px 10px; font-size: 13.5px; }
+    .compact button[type="submit"] { flex: none; width: auto; padding: 5px 12px; white-space: nowrap; }
+    .setup-panel button[type="submit"], .requirement button[type="submit"] { width: auto; }
+    .compact a { flex: none; color: var(--muted); font-size: 13.5px; }
+    /* Small text rather than a button, so nothing gets removed by a stray click. */
+    button.text-button[type="submit"], button.text-button[type="submit"]:is(:hover, :active, :focus) { --pico-background-color: transparent; --pico-border-color: transparent; --pico-box-shadow: none; width: auto; margin: 0; padding: 0; color: var(--muted); font-size: 12.5px; font-weight: 400; }
+    button.text-button[type="submit"]:hover { color: var(--flag); text-decoration: underline; }
+    .row-actions { display: flex; flex: none; gap: 12px; align-items: baseline; }
+    .row-actions form { margin: 0; }
+    .row-actions .edit-link:hover { color: var(--ink); }
+    article.card > .card-actions { justify-content: flex-end; margin-top: auto; }
+    .requirement-text { margin: 0; padding-top: 2px; white-space: pre-line; }
+    .student-edit { margin: 0; }
+    .student-edit label { display: block; margin-bottom: 8px; font-size: 13.5px; font-weight: 600; }
+    .student-edit input { height: auto; margin: 4px 0 0; padding: 6px 10px; font-size: 13.5px; }
+    .student-edit .form-actions { margin: 4px 0 0; }
+    .repo .keynote { flex: 1; margin: 0; text-align: right; }
+    .form-actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+    .form-actions button[type="submit"] { flex: none; width: auto; margin: 0; }
+    .narrow { max-width: 480px; }
+    .narrow input[type="text"] { height: auto; margin: 4px 0 0; padding: 7px 10px; }
+    .setup-panel .fields input { height: auto; margin-bottom: 0; padding: 6px 10px; font-size: 13.5px; }
+    .setup-panel > a { font-size: 13.5px; }
+    .setup-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+    .setup-row span { color: var(--muted); }
+    .setup-row .missing { color: var(--warn); }
     .rail p.rail-action { margin-top: 10px; }
-    .requirement { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
-    .requirement strong { padding-top: 8px; color: var(--muted); }
+    .requirement { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px 14px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
+    .requirement strong { padding-top: 2px; color: var(--muted); }
     .requirement form { margin: 0; }
     .requirement textarea, .setup-panel textarea { margin-bottom: 8px; }
     .setup-panel { margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
     .setup-panel form { margin: 0; }
+    .card p.missing { color: var(--warn); font-size: 13.5px; }
+    .card form.remove { margin-top: auto; }
+    .setup-panel .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 8px; }
+    .setup-panel label { margin: 0; font-size: 13.5px; font-weight: 600; }
+    .setup-panel label input { margin-top: 4px; }
+    .setup-panel .keynote { margin: 8px 0; }
+    .setup-panel code { font-size: 14px; }
+    .repo { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
     .errorlist { margin: 0 0 8px; padding: 0; list-style: none; color: var(--flag); font-size: 13.5px; }
     .errorlist li { list-style: none; }
 
@@ -176,6 +218,7 @@
     main.team > .findings { order: 2; margin-top: 16px; }
     main.team > h2 { order: 3; margin-top: 24px; }
     main.team > .weeks { order: 4; }
+    main.team > .setup-panel { order: 5; }
     .chart { margin: 18px 0 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
     .chart h2 { margin-bottom: 2px; font-size: 16px; letter-spacing: 0; text-transform: none; color: var(--ink); }
     .chart .why { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }

@@ -136,13 +136,14 @@ Documented in [`.env.example`](.env.example). Keep real values in `.env`, which 
 
 ### Setting up a course
 
-Do these in this order. Steps 3 and 4 are on the dashboard for any instructor enrolled in the course, with no need for `/admin/`. The rest happen in the admin, as does deleting a project.
+Do these in this order. Steps 2 to 6 are on the dashboard for any instructor enrolled in the course, with no need for `/admin/`. Step 1 happens in the admin.
 
-1. **Users (admin):** add everyone with their `github_login`, which is how GitHub activity is matched to people. Also set a student's email to the address they use in `Co-authored-by:` trailers (see below).
-2. **Course, then an Enrollment per person (admin)** as instructor, TA or student.
-3. **Project (dashboard):** on the course overview, enter a name and click **New project**. Use **Rename** to change it later. Names must be unique within a course, ignoring case.
-4. **Requirements, optional (dashboard):** on the course overview, click **Add requirements** beside the project, then upload a PDF or paste text. The LLM splits the document, and you can then edit, add and delete requirements on that page.
-5. **Team (admin):** add it to the project, with its students and repos. Enter repos as `https://github.com/owner/repo`.
+1. **Course, instructors and TAs (admin):** add the course, then a user with a `github_login` and an Enrollment for each instructor and TA.
+2. **Project (dashboard):** on the course overview, click **New project** and enter a name, which opens the project's edit page for its requirements and teams. Click **Edit project** on the overview to return to that page, where **edit** beside the name changes it. Names must be unique within a course, ignoring case.
+3. **Requirements, optional (dashboard):** on the project's edit page or the course overview, click **Add requirements**, then upload a PDF or paste text. The LLM splits the document, and you can then edit, add and delete requirements on that page.
+4. **Team (dashboard):** on the project's edit page or the course overview, enter a name and click **Add team**. Open the team to rename it, with **edit** beside its name, or delete it. Names must be unique within a project, ignoring case.
+5. **Students (dashboard):** on the team page, enter each student's full name and GitHub username, plus the email they use in `Co-authored-by:` trailers if you have it (see below). This creates their account and course enrollment if they don't have them. New accounts can't log in.
+6. **Repo (dashboard):** on the team page, enter the team's repo URL, such as `https://github.com/owner/repo`. A team has one repo: to use another, click **change**, which asks you to confirm. Once activity has been pulled from a repo, it can't be changed or removed. STRIVE checks that it can read the repo, using `GITHUB_TOKEN` rather than your own GitHub access, so the account behind that token needs access to private repos.
 
 Good to know:
 
@@ -150,7 +151,11 @@ Good to know:
 - **The import rejects** scanned PDFs with no text, password-protected PDFs, and any split containing a requirement that isn't word for word in the source.
 - **Requirement numbers don't change.** You can edit a requirement's text but not its number, and deleting one never renumbers the others. A new requirement takes the next number after the project's highest, so a gap stays a gap. If you delete the highest-numbered requirement, the next one you add reuses its number.
 - **A requirement a claim cites can't be deleted** on the dashboard, including one cited only by a claim that couldn't be verified. The admin doesn't enforce this, so don't delete requirements there.
-- **Each student can be on one team per project,** and must be enrolled in the course as a student.
+- **Each student can be on one team per project,** and must be enrolled in the course as a student. A course's instructors and TAs can't be added to a team.
+- **An existing account is reused as it is.** A GitHub username that already has an account, ignoring case, keeps its name and email.
+- **On the team page, only a student's name can be edited.** Their GitHub username shows below their name, and it and their email change in the admin. An account that's an instructor or TA in another course, or a staff account, can only be edited in the admin.
+- **Deleting is permanent, and each confirmation says what goes with it.** Deleting a project or team also deletes its summaries, and removing a student deletes their summaries on that team, and the team's flags are recomputed. Accounts and enrollments stay.
+- **Two things can't be deleted while claims depend on them.** A repo whose activity a claim cites, because the claim would lose its GitHub link, and a requirement a claim cites, because its number could be reused.
 - **Co-author credit matches on email, never on name.** A trailer counts if it uses the student's GitHub noreply address or the email on their `User`. Seeded students have no email, so only noreply trailers match until you add one.
 - **Commits that match no one on the team** are listed in admin: under **Artifacts**, use the **Unattributed commits** filter.
 
@@ -171,7 +176,7 @@ On the course overview, pick a week for a team and click **Generate summaries**.
 |---|---|
 | `/accounts/login/`, `/accounts/logout/` | Log in and out |
 | `/` | Your courses. Goes straight to the course if you only have one. |
-| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, a Flag or Warning label, and the Generate summaries button. Instructors also get New project, Rename and a link to each project's requirements page. |
+| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, a Flag or Warning label, and the Generate summaries button. Instructors also get New project, and Edit project and requirements links for each project. |
 | `/teams/<id>/` | Repos, flags with their reasons, and students, whose names link to their newest summary, with all their summaries |
 | `/summaries/<id>/` | Verified claims with GitHub links, and the "couldn't be verified" note |
 | `/projects/<id>/requirements/` | Import, edit, add and delete a project's requirements. Instructors only. |
@@ -242,7 +247,7 @@ Course                     e.g. "CS 4501, Fall 2026"
  └── Project               has Requirement rows (project, number, text)
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
-           └── Repo             the team's GitHub repo(s)
+           └── Repo             the team's GitHub repo
                 └── Artifact    a commit, PR, review or issue
 
 Summary          → Team + User + reporting week
@@ -261,7 +266,7 @@ Each app has one owner, and changes outside your own app go through its owner. S
 
 | Path | Owner | Contents |
 |---|---|---|
-| [`core/`](core/) | Todd | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, project and requirement setup logic, setup admin, `seed` command |
+| [`core/`](core/) | Todd | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, project, requirement, team, student and repo setup logic, setup admin, `seed` command |
 | [`ingest/`](ingest/) | Todd | `Artifact` model, GitHub ingest, co-author parsing, unattributed commits, sample fixture |
 | [`summaries/`](summaries/) | Akshita | `Summary`, `Claim`, `ValidationRun`, LLM client, prompts, claim schema, validator, retry loop |
 | [`dashboard/`](dashboard/) | Brooke | Views, templates, `Flag` model and rules, Generate summaries button, instructor setup pages |

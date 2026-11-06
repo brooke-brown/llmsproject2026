@@ -70,17 +70,26 @@ class TeamPageNameTests(DisplayNameFixture):
     def content(self):
         return self.get(team_url(self.team.id))
 
-    def test_a_student_with_a_full_name_shows_the_name_without_the_username(self):
-        self.assert_name_only(self.content(), self.ada, "Ada Sample")
+    def test_a_student_with_a_full_name_shows_the_username_below_the_name(self):
+        self.assertRegex(
+            self.content(), r"Ada Sample\s*</strong>\s*<code>sample-ada</code>"
+        )
 
-    def test_a_student_with_only_a_first_name_shows_it_not_the_username(self):
-        self.assert_name_only(self.content(), self.first_only, "Linus")
+    def test_a_student_with_only_a_first_name_shows_the_username_below_it(self):
+        self.assertRegex(self.content(), r"Linus\s*</strong>\s*<code>sample-first</code>")
 
-    def test_a_student_with_only_a_last_name_shows_it_not_the_username(self):
-        self.assert_name_only(self.content(), self.last_only, "Hopper")
+    def test_a_student_with_only_a_last_name_shows_the_username_below_it(self):
+        self.assertRegex(self.content(), r"Hopper\s*</strong>\s*<code>sample-last</code>")
 
     def test_a_student_with_no_name_shows_the_username_once(self):
         self.assertEqual(self.content().count("sample-nameless"), 1)
+
+    def test_a_linked_name_also_has_the_username_below_it(self):
+        Summary.objects.create(team=self.team, user=self.ada, week_start=date(2026, 10, 26))
+
+        self.assertRegex(
+            self.content(), r"Ada Sample</a>\s*</strong>\s*<code>sample-ada</code>"
+        )
 
     def test_the_contribution_chart_shows_names_without_usernames(self):
         for student in [self.ada, self.first_only]:
@@ -90,8 +99,11 @@ class TeamPageNameTests(DisplayNameFixture):
 
         content = self.content()
 
+        start = content.index('class="chart"')
+        chart = content[start : content.index("</section>", start)]
+        self.assertIn("Ada Sample", chart)
         for student in [self.ada, self.first_only, self.last_only]:
-            self.assertNotIn(student.github_login, content)
+            self.assertNotIn(student.github_login, chart)
 
 
 class SummaryPageNameTests(DisplayNameFixture):

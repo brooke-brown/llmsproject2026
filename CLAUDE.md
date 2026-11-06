@@ -69,7 +69,7 @@ Course                     e.g. "CS 3240, Fall 2026"
  └── Project               optional requirements PDF or pasted text → Requirement rows
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
-           └── Repo             the team's GitHub repo(s)
+           └── Repo             the team's GitHub repo
                 └── Artifact    a commit, PR, review or issue pulled from the repo
 
 Summary          → Team + User + reporting week
@@ -82,16 +82,16 @@ Flag             → Team
 - Reusing teams in a later project is a UI feature ("Copy teams from a previous project"), not a schema change.
 - **Roles live on `Enrollment`, never on `User`.** One person can be a TA in one course and a student in another.
 - **Every user has `User.github_login`.** It's how commits, PRs and reviews are matched to students.
-- **Repo is its own table** so a team can have more than one repo.
+- **A team has one repo**, enforced on the dashboard. `Repo` stays its own table and the admin isn't restricted, so code that reads a team's repos must still handle several.
 - Use the word **"Team"** everywhere (code, UI, issues), never "group."
 - Later, optional: `joined_at`/`left_at` on `TeamMembership` for students who switch or drop mid-project.
 
 ## Alpha scope
 
 **In:**
-- Setup: instructors create and rename projects and manage requirements from the course overview; courses, enrollments, teams, repos and deleting a project stay in admin. Repo ingest by URL + token, including co-author trailers and PR review credit
+- Setup: instructors create, rename and delete projects, manage requirements, and manage teams, students and each team's repo from the dashboard; deleting warns what goes with it in its confirmation, including summaries, and is only refused where a claim would lose its evidence or requirement (a repo or requirement that claims cite). Courses and instructor and TA enrollments stay in admin. Repo ingest by URL + token, including co-author trailers and PR review credit
 - Requirements PDF (or pasted text) → `Requirement` rows an instructor can edit on the project's requirements page or in admin; requirement tags + significance on claims; simple per-project requirement table
-- "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo, then `generate_summary` once per student; flags are recomputed once every student has succeeded
+- "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo, then `generate_summary` once per student; flags are recomputed once every student has succeeded.
 - Validator, retry, drop + "N couldn't be verified" note, `ValidationRun` logging
 - 1–2 flag rules, based on share of requirement-tied claims weighted by significance
 - Pages: course overview (teams, flagged ones first, labels only) → team (flag reasons, students and their summaries) → summary (claims with GitHub links and the unverified note)
