@@ -76,6 +76,7 @@ Summary          → Team + User + reporting week
   └── Claim      → claim schema above + status (verified / couldn't verify)
 ValidationRun    → per-run log: first-pass rate, retries, drop rate
 Flag             → Team
+FlagDispute      → Team + student: finds its flag by rule and week, so it survives flags being recomputed
 GenerationRun    → Team: exists only while its summaries are generating
 ```
 

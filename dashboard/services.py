@@ -30,7 +30,7 @@ from summaries.llm import LLMError
 from summaries.models import Claim, Summary
 
 from . import flags
-from .models import Flag, GenerationRun
+from .models import Flag, FlagDispute, GenerationRun
 
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
 MONDAY = 0  # date.weekday() counts from Monday.
@@ -45,6 +45,17 @@ RETRY_SESSION_KEY = "failed_summaries"  # {team ID: {"week_start": ..., "student
 def flags_in_display_order():
     # "flag" sorts before "warning", so flags come first.
     return Flag.objects.order_by("severity", "id")
+
+
+def dispute_for(flag):
+    """The student's dispute of this flag, or None. Flags are replaced on every run, so this
+    matches on what a recomputed flag keeps: team, student, rule and week, not wording or
+    severity. A flag about the whole team has no student, so it has no dispute."""
+    if flag.user_id is None:
+        return None
+    return FlagDispute.objects.filter(
+        team_id=flag.team_id, student_id=flag.user_id, rule=flag.rule, week_start=flag.week_start
+    ).first()
 
 
 def staff_courses(user):
@@ -255,8 +266,10 @@ def team_repos(team):
 
 
 def remove_student(membership):
-    """Take a student off their team, then recompute its flags, since the shares change."""
+    """Take a student off their team, then recompute its flags, since the shares change.
+    Their disputes on the team go too, since no page could reach them once they're gone."""
     with transaction.atomic():
+        FlagDispute.objects.filter(team=membership.team_id, student=membership.user_id).delete()
         setup_services.remove_student(membership)
         flags.compute_flags(membership.team)
 
@@ -268,7 +281,7 @@ def team_wide_flags(team):
 
 def team_memberships_with_summaries(team):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
-    and `team_flags` about them."""
+    `team_flags` about them and their `team_disputes`."""
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
@@ -284,6 +297,11 @@ def team_memberships_with_summaries(team):
                 "user__flags",
                 queryset=flags_in_display_order().filter(team=team),
                 to_attr="team_flags",
+            ),
+            Prefetch(
+                "user__flag_disputes",
+                queryset=FlagDispute.objects.filter(team=team),
+                to_attr="team_disputes",
             ),
         )
     )
