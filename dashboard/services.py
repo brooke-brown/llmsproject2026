@@ -42,9 +42,28 @@ RESULTS_SESSION_KEY = "run_results"
 RETRY_SESSION_KEY = "failed_summaries"  # {team ID: {"week_start": ..., "student_ids": [...]}}
 
 
+def _withdrawn():
+    """True for a flag an instructor withdrew after a dispute, inside a Flag query. Disputes
+    match on what a recomputed flag keeps, so a withdrawn flag stays withdrawn after a rerun."""
+    return Exists(
+        FlagDispute.objects.filter(
+            team=OuterRef("team"),
+            student=OuterRef("user"),
+            rule=OuterRef("rule"),
+            week_start=OuterRef("week_start"),
+            status=FlagDispute.Status.FLAG_WITHDRAWN,
+        )
+    )
+
+
+def active_flags():
+    """Flags that count toward a team being flagged: all but those withdrawn after a dispute."""
+    return Flag.objects.filter(~_withdrawn())
+
+
 def flags_in_display_order():
-    # "flag" sorts before "warning", so flags come first.
-    return Flag.objects.order_by("severity", "id")
+    """Every flag, each with `is_withdrawn`. "flag" sorts before "warning", so flags come first."""
+    return Flag.objects.annotate(is_withdrawn=_withdrawn()).order_by("severity", "id")
 
 
 def dispute_for(flag):
@@ -56,6 +75,62 @@ def dispute_for(flag):
     return FlagDispute.objects.filter(
         team_id=flag.team_id, student_id=flag.user_id, rule=flag.rule, week_start=flag.week_start
     ).first()
+
+
+def add_disputes(memberships):
+    """Give each of the team's flags in `memberships` its `dispute` (or None), and each
+    membership `unraised_disputes`: its student's disputes whose flag is no longer raised.
+
+    Uses the `team_flags` and `team_disputes` from team_memberships_with_summaries, so it runs
+    no queries.
+    """
+    for membership in memberships:
+        # Each student's flags and disputes are already this team's, so rule and week match them.
+        disputes = {(d.rule, d.week_start): d for d in membership.user.team_disputes}
+        for flag in membership.user.team_flags:
+            flag.dispute = disputes.pop((flag.rule, flag.week_start), None)
+        membership.unraised_disputes = list(disputes.values())
+    return memberships
+
+
+DISPUTE_NOTE_LIMIT = 1000
+DECISIONS = {
+    "keep": FlagDispute.Status.FLAG_KEPT,
+    "withdraw": FlagDispute.Status.FLAG_WITHDRAWN,
+}
+
+
+class DisputeError(Exception):
+    """A dispute decision was refused. The message is shown to the user as is."""
+
+
+def get_dispute_for_instructor(user, dispute_id):
+    dispute = get_object_or_404(
+        FlagDispute.objects.select_related("team__project__course", "student"), pk=dispute_id
+    )
+    check_course_instructor(user, dispute.team.project.course)
+    return dispute
+
+
+def decide_dispute(dispute, decision, note, decided_by):
+    """Keep or withdraw a disputed flag, or raise DisputeError saying why not. A decision can
+    be changed later, and the latest one replaces the earlier one."""
+    status = DECISIONS.get(decision)
+    if status is None:
+        raise DisputeError("Choose Keep flag or Withdraw flag.")
+    note = note.strip()
+    if len(note) > DISPUTE_NOTE_LIMIT:
+        raise DisputeError(
+            f"The note can be up to {DISPUTE_NOTE_LIMIT:,} characters, and this one has "
+            f"{len(note):,}. Nothing was saved."
+        )
+    dispute.status = status
+    dispute.resolution_note = note
+    dispute.resolved_by = decided_by
+    dispute.resolved_at = timezone.now()
+    # Leaves out updated_at, which records the student's edits, not the instructor's decision.
+    dispute.save(update_fields=["status", "resolution_note", "resolved_by", "resolved_at"])
+    return dispute
 
 
 def staff_courses(user):
@@ -244,7 +319,7 @@ def team_status(team):
     """'flag' or 'warning' for a flagged team, 'ok' for one that has a complete summary and no
     flags, 'in_progress' for one with only partial summaries, and 'none' for one nothing has
     been generated for yet."""
-    severities = set(Flag.objects.filter(team=team).values_list("severity", flat=True))
+    severities = set(active_flags().filter(team=team).values_list("severity", flat=True))
     if Flag.Severity.FLAG in severities:
         return "flag"
     if Flag.Severity.WARNING in severities:
@@ -300,7 +375,9 @@ def team_memberships_with_summaries(team):
             ),
             Prefetch(
                 "user__flag_disputes",
-                queryset=FlagDispute.objects.filter(team=team),
+                queryset=FlagDispute.objects.filter(team=team)
+                .select_related("resolved_by")
+                .order_by("week_start", "id"),
                 to_attr="team_disputes",
             ),
         )
@@ -376,7 +453,9 @@ def add_contribution_shares(team, memberships):
     week, shares = shares if shares is not None else (None, {})
     for membership in memberships:
         share = shares.get(membership.user_id)
-        about_this_week = [f for f in membership.user.team_flags if f.week_start == week]
+        about_this_week = [
+            f for f in membership.user.team_flags if f.week_start == week and not f.is_withdrawn
+        ]
         membership.chart_flag = about_this_week[0] if about_this_week else None
         membership.contribution_share = None if share is None else round(share * 100)
         membership.pie_order = None
@@ -420,17 +499,25 @@ def pie_legend(memberships):
 
 
 def _has_flag(severity):
-    """True for a team with at least one flag of this severity, inside a Team query."""
-    return Exists(Flag.objects.filter(team=OuterRef("pk"), severity=severity))
+    """True for a team with at least one active flag of this severity, inside a Team query."""
+    return Exists(active_flags().filter(team=OuterRef("pk"), severity=severity))
+
+
+def _has_open_dispute():
+    """True for a team with an open dispute, inside a Team query."""
+    return Exists(
+        FlagDispute.objects.filter(team=OuterRef("pk"), status=FlagDispute.Status.OPEN)
+    )
 
 
 def course_projects_with_teams(course):
     """The course's projects, each with its requirements by number, and its teams and their
     students.
 
-    Within a project, flagged teams come first, then warned teams, then the rest, each
-    group sorted by name. Each team's `flag_rank` is 0 if it has a flag, 1 if its worst is a
-    warning, and 2 otherwise.
+    Within a project, flagged teams come first, then warned teams, then teams with an open
+    dispute, then the rest, each group sorted by name. Each team's `flag_rank` is 0 if it has
+    a flag, 1 if its worst is a warning, 2 if it has an open dispute but no flags, and 3
+    otherwise. Withdrawn flags don't count. Each team also gets `has_open_dispute`.
     """
     memberships = TeamMembership.objects.select_related("user").order_by(
         "user__last_name", "user__first_name", "user__github_login"
@@ -438,11 +525,13 @@ def course_projects_with_teams(course):
     teams = (
         Team.objects.annotate(
             latest_week=Max("summaries__week_start"),
+            has_open_dispute=_has_open_dispute(),
             flag_rank=Case(
                 When(_has_flag(Flag.Severity.FLAG), then=Value(0)),
                 When(_has_flag(Flag.Severity.WARNING), then=Value(1)),
-                default=Value(2),
-            )
+                When(_has_open_dispute(), then=Value(2)),
+                default=Value(3),
+            ),
         )
         .order_by("flag_rank", "name")
         .prefetch_related(

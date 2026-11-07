@@ -179,8 +179,8 @@ On the course overview, pick a week for a team and click **Generate summaries**.
 |---|---|
 | `/accounts/login/`, `/accounts/logout/` | Log in and out |
 | `/` | Your courses. Goes straight to the course if you only have one. |
-| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, a Flag or Warning label, and the Generate summaries button. Instructors also get New project, and Edit project and requirements links for each project. |
-| `/teams/<id>/` | Repos, flags with their reasons, and students, whose names link to their newest summary, with all their summaries |
+| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, then teams with an open dispute, a Flag, Warning or Dispute open label, and the Generate summaries button. Instructors also get New project, and Edit project and requirements links for each project. |
+| `/teams/<id>/` | Repos, flags with their reasons and any disputes, and students, whose names link to their newest summary, with all their summaries. Instructors can keep or withdraw a disputed flag. |
 | `/summaries/<id>/` | Verified claims with GitHub links, and the "couldn't be verified" note |
 | `/projects/<id>/requirements/` | Import, edit, add and delete a project's requirements. Instructors only. |
 | `/admin/` | Users, courses, enrollments, teams and repos, plus read-only views of artifacts, summaries, claims, validation runs and flags |
@@ -241,6 +241,15 @@ Each student's score is the sum of their verified, requirement-tied claims, weig
 The rule only looks at the latest week in which **every student on the team has a summary**, so a missing summary never raises a flag. No flag is raised if a team has fewer than two students or no requirement-tied work that week.
 
 Flags describe observable activity, not character.
+
+### Disputes
+
+A student can dispute a flag or warning about them with a written explanation. A dispute is matched to its flag by team, student, rule and week, so it carries over when flags are recomputed, even if the flag's wording or severity changes.
+
+- The course overview labels a team with an open dispute **Dispute open**, and lists those teams right after flagged and warned teams.
+- The team page shows each dispute under its flag, with the student's explanation. If a later run no longer raises the flag, the dispute stays, marked **Flag no longer raised**.
+- An instructor can **Keep flag** or **Withdraw flag**, with an optional note to the student, and can change the decision later. TAs can read disputes but not decide them.
+- A withdrawn flag shows as **Withdrawn after dispute** without its reason. It no longer makes the team flagged or colours the pie chart, and stays withdrawn after flags are recomputed. Contribution shares don't change.
 
 ## Data model
 

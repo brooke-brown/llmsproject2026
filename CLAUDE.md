@@ -102,6 +102,11 @@ GenerationRun    → Team: exists only while its summaries are generating
 
 **Out (beta):** polished per-requirement progress view, numeric diff checks, student view, disputes, self-reports, GitHub OAuth login, consent, CSV import, background jobs, "paired with" detection.
 
+## Beta scope
+
+Student-side features, tracked as US-29 to US-38 (#106–#115). Built so far:
+- Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
+
 There is **no chat interface**, in the alpha or later. Users only see validated summaries, team views and flags.
 
 ## Rules for LLM output and the validator

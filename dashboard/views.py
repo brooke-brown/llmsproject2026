@@ -56,6 +56,7 @@ def team(request, team_id):
     memberships, share_week = services.add_contribution_shares(
         team, services.team_memberships_with_summaries(team)
     )
+    services.add_disputes(memberships)
     return render(
         request,
         "dashboard/team.html",
@@ -123,6 +124,21 @@ def retry_failed_summaries(request, team_id):
         messages.info(request, f"{team.name} has no failed summaries to retry.")
         return redirect("dashboard:course_overview", course_id=team.project.course_id)
     return _show_generation(request, generation)
+
+
+@login_required
+@require_POST
+def dispute_decide(request, dispute_id):
+    dispute = services.get_dispute_for_instructor(request.user, dispute_id)
+    decision = request.POST.get("decision", "")
+    try:
+        services.decide_dispute(dispute, decision, request.POST.get("note", ""), request.user)
+    except services.DisputeError as error:
+        messages.error(request, str(error))
+    else:
+        verb = "Kept" if decision == "keep" else "Withdrew"
+        messages.success(request, f"{verb} the flag about {dispute.student.display_name}.")
+    return redirect("dashboard:team", team_id=dispute.team_id)
 
 
 @login_required

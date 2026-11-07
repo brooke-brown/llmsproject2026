@@ -99,6 +99,18 @@
     .finding { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 0 0 8px; padding: 10px 14px; border-radius: 8px; background: var(--flag-bg); color: #ffd9d3; font-size: 14px; }
     .finding.warning { background: var(--warn-bg); color: #f6dfa6; }
     .finding mark { background: #00000033; color: inherit; }
+    /* A flag withdrawn after a dispute, or a disputed flag that's no longer raised: neutral. */
+    .finding.withdrawn, .finding.gone { background: var(--none-bg); color: var(--muted); }
+    .tag.dispute { background: var(--none-bg); color: var(--accent); }
+    .tag.dispute::before { content: "✎"; }
+    .dispute { margin: -4px 0 10px; padding: 10px 14px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--panel2); font-size: 14px; }
+    .dispute .row { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+    .dispute blockquote { margin: 8px 0; padding: 0 0 0 10px; border-left: 2px solid var(--line); }
+    .dispute .decided { margin: 0 0 6px; color: var(--muted); }
+    .dispute form { margin: 8px 0 0; }
+    .dispute textarea { margin-bottom: 8px; font-size: 14px; }
+    .dispute details { margin: 6px 0 0; }
+    .dispute summary { color: var(--muted); font-size: 13px; }
     .note { margin: 0; font-size: 14px; }
     .headrow { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; justify-content: space-between; margin-bottom: 18px; }
     .headrow code { display: block; margin-top: 4px; }

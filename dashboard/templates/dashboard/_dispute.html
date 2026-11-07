@@ -1,0 +1,24 @@
+<div class="dispute">
+  <div class="row">
+    <span class="tag dispute">{% if dispute.status == "open" %}Dispute open{% else %}Disputed · {{ dispute.get_status_display }}{% endif %}</span>
+    <small>Opened {{ dispute.created_at|date:"M j" }}{% if dispute.was_edited %}, edited {{ dispute.updated_at|date:"M j" }}{% endif %}</small>
+  </div>
+  <blockquote>{{ dispute.explanation|linebreaksbr }}</blockquote>
+  {% if dispute.status != "open" %}
+  <p class="decided">{{ dispute.get_status_display }}{% if dispute.resolved_by %} by {{ dispute.resolved_by.display_name }}{% endif %}{% if dispute.resolved_at %} on {{ dispute.resolved_at|date:"M j, Y" }}{% endif %}.{% if dispute.resolution_note %} Note to the student: {{ dispute.resolution_note }}{% endif %}</p>
+  {% endif %}
+  {% if can_set_up %}
+  {% if dispute.status != "open" %}<details><summary>Change decision</summary>{% endif %}
+  <form action="{% url 'dashboard:dispute_decide' dispute.id %}" method="post">
+    {% csrf_token %}
+    <label>Note to the student <small>(optional)</small>
+      <textarea name="note" rows="2" maxlength="1000">{{ dispute.resolution_note }}</textarea>
+    </label>
+    <div role="group">
+      <button type="submit" name="decision" value="keep" class="secondary">Keep flag</button>
+      <button type="submit" name="decision" value="withdraw">Withdraw flag</button>
+    </div>
+  </form>
+  {% if dispute.status != "open" %}</details>{% endif %}
+  {% endif %}
+</div>

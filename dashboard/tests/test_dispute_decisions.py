@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from django.test import TestCase
 from django.urls import reverse
+from django.utils.html import escape
 
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag, FlagDispute
@@ -197,7 +198,7 @@ class TeamPageTests(DisputeFixture):
 
         article = self.student_article(self.ada)
 
-        self.assertIn(REASON, article)
+        self.assertIn(escape(REASON), article)
         self.assertIn("user interviews", article)
         self.assertIn("Dispute open", article)
 
@@ -247,7 +248,7 @@ class TeamPageTests(DisputeFixture):
         article = self.student_article(self.ada)
 
         self.assertIn("Flag no longer raised", article)
-        self.assertIn(REASON, article)
+        self.assertIn(escape(REASON), article)
         self.assertIn("user interviews", article)
 
     def test_a_raised_flags_dispute_isnt_marked_gone(self):
@@ -263,7 +264,7 @@ class TeamPageTests(DisputeFixture):
         article = self.student_article(self.ada)
 
         self.assertIn("Withdrawn after dispute", article)
-        self.assertNotIn(REASON, article)
+        self.assertNotIn(escape(REASON), article)
         self.assertNotIn('class="finding flag"', article)
 
     def test_a_withdrawn_flag_doesnt_make_the_team_status_a_flag(self):
@@ -291,7 +292,7 @@ class TeamPageTests(DisputeFixture):
 
         article = self.student_article(self.ada)
 
-        self.assertIn(REASON, article)
+        self.assertIn(escape(REASON), article)
         self.assertIn("Flag kept", article)
 
     def test_a_resolved_dispute_shows_who_decided_when_and_the_note(self):
@@ -437,6 +438,14 @@ class DecideTests(DisputeFixture):
         self.assertEqual(services.team_status(self.alpha), "none")
         self.assertIn("Withdrawn after dispute", self.student_article(self.ada))
         self.assertNotIn("Reworded.", self.student_article(self.ada))
+
+    def test_deciding_doesnt_count_as_the_student_editing(self):
+        # Opened days ago, so a decision now would look like an edit if it touched updated_at.
+        FlagDispute.objects.filter(pk=self.dispute.pk).update(created_at=NOW, updated_at=NOW)
+
+        self.decide(self.dispute, "keep")
+
+        self.assertNotIn("edited", self.student_article(self.ada))
 
     def test_deciding_doesnt_change_the_snapshot_or_explanation(self):
         self.decide(self.dispute, "withdraw")
