@@ -45,6 +45,68 @@ class Flag(models.Model):
         return f"{self.rule} on {self.team}, week of {self.week_start}"
 
 
+class FlagDispute(models.Model):
+    """A student's explanation of a flag or warning about them, and the instructor's decision.
+
+    It isn't linked to a Flag row, because compute_flags replaces a team's flags on every run.
+    It matches its flag by team, student, rule and week instead (see services.dispute_for), and
+    keeps the flag's reason and severity as they were when the student disputed it.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        FLAG_KEPT = "flag_kept", "Flag kept"
+        FLAG_WITHDRAWN = "flag_withdrawn", "Flag withdrawn"
+
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="flag_disputes")
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="flag_disputes"
+    )
+    # With team, student and week_start, these identify the disputed flag.
+    rule = models.SlugField(max_length=50)
+    week_start = models.DateField()
+    # The flag as the student saw it when they disputed it.
+    flag_reason = models.TextField()
+    severity = models.CharField(max_length=20, choices=Flag.Severity.choices)
+    # The student's own words. Never sent to the LLM.
+    explanation = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    resolution_note = models.TextField(blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="resolved_flag_disputes",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "student", "rule", "week_start"],
+                name="dashboard_flagdispute_one_per_flag",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["open", "flag_kept", "flag_withdrawn"]),
+                name="dashboard_flagdispute_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(severity__in=["warning", "flag"]),
+                name="dashboard_flagdispute_severity_valid",
+            ),
+        ]
+
+    def __str__(self):
+        # Leaves out the explanation, a student education record, so it stays out of logs.
+        return (
+            f"{self.student.github_login}'s dispute of {self.rule} on {self.team}, "
+            f"week of {self.week_start}"
+        )
+
+
 class GenerationRun(models.Model):
     """Marks a team as generating summaries. It exists only while a run is going.
 

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Flag, GenerationRun
+from .models import Flag, FlagDispute, GenerationRun
 
 
 @admin.register(Flag)
@@ -19,6 +19,16 @@ class FlagAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(FlagDispute)
+class FlagDisputeAdmin(admin.ModelAdmin):
+    """Students open disputes and instructors decide them on the dashboard, so this is for
+    fixing one by hand. The flag's snapshot isn't editable, so it stays what was disputed."""
+
+    list_display = ("team", "student", "rule", "week_start", "severity", "status", "updated_at")
+    list_filter = ("status", "severity", "rule")
+    readonly_fields = ("flag_reason", "severity", "created_at", "updated_at")
 
 
 @admin.register(GenerationRun)

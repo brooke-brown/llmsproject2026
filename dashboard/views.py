@@ -11,6 +11,7 @@ from core.forms import RequirementImportForm
 from summaries.models import Summary
 
 from . import services
+from .models import FlagDispute
 
 
 @login_required
@@ -170,6 +171,7 @@ def project_setup(request, project_id):
             "teams": services.project_setup_teams(project),
             "requirement_count": project.requirements.count(),
             "summary_count": Summary.objects.filter(team__project=project).count(),
+            "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
             "editing": request.GET.get("edit") == "1",
         },
     )
