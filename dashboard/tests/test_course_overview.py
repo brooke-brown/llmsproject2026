@@ -199,16 +199,16 @@ class HomeLandingTests(TestCase):
             response, overview_url(self.course.id), fetch_redirect_response=False
         )
 
-    def test_student_enrollments_do_not_count_as_courses_to_pick(self):
+    def test_a_ta_who_is_also_a_student_sees_both_courses_to_pick_from(self):
         ta = make_user("sample-ta")
         enroll(ta, self.course, Role.TA)
         enroll(ta, self.second_course, Role.STUDENT)
 
         response = self.get_home(ta)
 
-        self.assertRedirects(
-            response, overview_url(self.course.id), fetch_redirect_response=False
-        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "CS 4501, Fall 2026")
+        self.assertContains(response, "CS 3240, Fall 2026")
 
     def test_instructor_with_several_courses_sees_list_to_pick_from(self):
         instructor = make_user("sample-instructor")
@@ -223,11 +223,10 @@ class HomeLandingTests(TestCase):
         self.assertContains(response, f'href="{overview_url(self.second_course.id)}"')
         self.assertContains(response, "CS 3240, Fall 2026")
 
-    def test_student_only_user_sees_home_without_course_links(self):
+    def test_student_only_user_is_sent_to_the_student_home(self):
         student = make_user("sample-student")
         enroll(student, self.course, Role.STUDENT)
 
         response = self.get_home(student)
 
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, f'href="{overview_url(self.course.id)}"')
+        self.assertRedirects(response, reverse("dashboard:student_home"))
