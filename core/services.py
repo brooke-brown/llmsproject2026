@@ -16,6 +16,7 @@ from core.models import (
     Project,
     Repo,
     Requirement,
+    Sprint,
     Team,
     TeamMembership,
     User,
@@ -49,6 +50,10 @@ punctuation. Never reword, summarize, correct or add to it.
 
 ALREADY_HAS_REQUIREMENTS = (
     "This project already has requirements, so the import was refused. Existing claims "
+    "point to them by number."
+)
+SPRINT_ALREADY_HAS_REQUIREMENTS = (
+    "This sprint already has requirements, so the import was refused. Existing claims "
     "point to them by number."
 )
 
@@ -109,8 +114,34 @@ def import_requirements(project: Project, text: str) -> list[Requirement]:
     Either every requirement is stored or none is, and RequirementImportError says why.
     Claims point to requirements by number, so a project with requirements is refused.
     """
-    if project.requirements.exists():
-        raise RequirementImportError(ALREADY_HAS_REQUIREMENTS)
+    return _import_split_requirements(
+        project.requirements,
+        ALREADY_HAS_REQUIREMENTS,
+        text,
+        lambda number, requirement: Requirement(project=project, number=number, text=requirement),
+    )
+
+
+def import_sprint_requirements(sprint: Sprint, text: str) -> list[Requirement]:
+    """Split `text` with the LLM and store it as `sprint`'s requirements, numbered from 1.
+
+    Either every requirement is stored or none is, and RequirementImportError says why.
+    Claims point to requirements by number, so a sprint with requirements is refused.
+    """
+    return _import_split_requirements(
+        sprint.requirements,
+        SPRINT_ALREADY_HAS_REQUIREMENTS,
+        text,
+        lambda number, requirement: Requirement(
+            project_id=sprint.project_id, sprint=sprint, number=number, text=requirement
+        ),
+    )
+
+
+def _import_split_requirements(existing, refusal: str, text: str, build) -> list[Requirement]:
+    """Split `text` and bulk-create what `build(number, text)` returns, unless `existing` has rows."""
+    if existing.exists():
+        raise RequirementImportError(refusal)
 
     prompt = f"<document>\n{text}\n</document>"
     try:
@@ -127,19 +158,16 @@ def import_requirements(project: Project, text: str) -> list[Requirement]:
             "was imported. Try again."
         )
 
-    requirements = [
-        Requirement(project=project, number=number, text=requirement)
-        for number, requirement in enumerate(split, start=1)
-    ]
+    requirements = [build(number, requirement) for number, requirement in enumerate(split, start=1)]
     # The LLM call is slow, so another import may have finished since the check above. If
     # the two overlap exactly, number 1 hits the unique constraint.
     try:
         with transaction.atomic():
-            if project.requirements.exists():
-                raise RequirementImportError(ALREADY_HAS_REQUIREMENTS)
+            if existing.exists():
+                raise RequirementImportError(refusal)
             return Requirement.objects.bulk_create(requirements)
     except IntegrityError:
-        raise RequirementImportError(ALREADY_HAS_REQUIREMENTS) from None
+        raise RequirementImportError(refusal) from None
 
 
 def create_project(course: Course, name: str) -> Project:

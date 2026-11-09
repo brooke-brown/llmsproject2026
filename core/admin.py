@@ -14,11 +14,16 @@ from core.models import (
     Project,
     Repo,
     Requirement,
+    Sprint,
     Team,
     TeamMembership,
     User,
 )
-from core.services import RequirementImportError, import_requirements
+from core.services import (
+    RequirementImportError,
+    import_requirements,
+    import_sprint_requirements,
+)
 
 
 @admin.register(User)
@@ -81,40 +86,89 @@ class ProjectAdmin(admin.ModelAdmin):
         if not request.user.has_perm("core.add_requirement"):
             raise PermissionDenied
         project = get_object_or_404(Project, pk=project_id)
+        return _requirements_import_page(
+            self,
+            request,
+            import_into=lambda text: import_requirements(project, text),
+            changelist_filter={"project__id__exact": project.pk},
+            template="admin/core/project/import_requirements.html",
+            title=f"Import requirements for {project.name}",
+            context={"project": project},
+        )
 
-        if request.method == "POST":
-            form = RequirementImportForm(request.POST, request.FILES)
+
+@admin.register(Sprint)
+class SprintAdmin(admin.ModelAdmin):
+    list_display = ("name", "project", "start_date", "end_date")
+    list_filter = ("project",)
+    search_fields = ("name",)
+    ordering = ("project", "start_date")
+
+    def get_urls(self):
+        return [
+            path(
+                "<int:sprint_id>/import-requirements/",
+                self.admin_site.admin_view(self.import_requirements_view),
+                name="core_sprint_import_requirements",
+            ),
+            *super().get_urls(),
+        ]
+
+    def import_requirements_view(self, request, sprint_id):
+        if not request.user.has_perm("core.add_requirement"):
+            raise PermissionDenied
+        sprint = get_object_or_404(Sprint, pk=sprint_id)
+        return _requirements_import_page(
+            self,
+            request,
+            import_into=lambda text: import_sprint_requirements(sprint, text),
+            changelist_filter={"sprint__id__exact": sprint.pk},
+            template="admin/core/sprint/import_requirements.html",
+            title=f"Import requirements for {sprint.name}",
+            context={"sprint": sprint},
+        )
+
+
+def _requirements_import_page(
+    model_admin, request, *, import_into, changelist_filter, template, title, context
+):
+    """Show the import form, or import what it submitted and go to the new requirements."""
+    if request.method == "POST":
+        form = RequirementImportForm(request.POST, request.FILES)
+    else:
+        form = RequirementImportForm()
+    if form.is_valid():
+        try:
+            requirements = import_into(form.cleaned_data["text"])
+        except RequirementImportError as error:
+            form.add_error(None, str(error))
         else:
-            form = RequirementImportForm()
-        if form.is_valid():
-            try:
-                requirements = import_requirements(project, form.cleaned_data["text"])
-            except RequirementImportError as error:
-                form.add_error(None, str(error))
-            else:
-                count = len(requirements)
-                noun = ngettext("requirement", "requirements", count)
-                messages.success(request, f"Imported {count} {noun}. You can edit them here.")
-                query = urlencode({"project__id__exact": project.pk})
-                return redirect(f"{reverse('admin:core_requirement_changelist')}?{query}")
+            count = len(requirements)
+            noun = ngettext("requirement", "requirements", count)
+            messages.success(request, f"Imported {count} {noun}. You can edit them here.")
+            query = urlencode(changelist_filter)
+            return redirect(f"{reverse('admin:core_requirement_changelist')}?{query}")
 
-        context = {
-            **self.admin_site.each_context(request),
-            "title": f"Import requirements for {project.name}",
-            "opts": self.opts,
-            "project": project,
+    return render(
+        request,
+        template,
+        {
+            **model_admin.admin_site.each_context(request),
+            "title": title,
+            "opts": model_admin.opts,
             "form": form,
-        }
-        return render(request, "admin/core/project/import_requirements.html", context)
+            **context,
+        },
+    )
 
 
 @admin.register(Requirement)
 class RequirementAdmin(admin.ModelAdmin):
-    list_display = ("number", "text", "project")
+    list_display = ("number", "text", "project", "sprint")
     list_display_links = ("number", "text")
-    list_filter = ("project",)
+    list_filter = ("project", "sprint")
     search_fields = ("text",)
-    ordering = ("project", "number")
+    ordering = ("project", "sprint", "number")
 
 
 class TeamMembershipInline(admin.TabularInline):

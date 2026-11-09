@@ -4,9 +4,9 @@ Shared guidance for every group member's Claude agent working in this repo. Keep
 
 ## What we're building
 
-**STRIVE** is a Django web app that pulls a student team's GitHub activity, has an LLM write evidence-linked weekly summaries, validates every claim against real GitHub data, and flags imbalanced teams for instructors (CS4501, Fall 2026). **Every claim links to a specific commit, PR, review or issue.**
+**STRIVE** is a Django web app that pulls a student team's GitHub activity, has an LLM write evidence-linked summaries, validates every claim against real GitHub data, and flags imbalanced teams for instructors (CS4501, Fall 2026). **Every claim links to a specific commit, PR, review or issue.**
 
-**Current goal: alpha for instructor/TA validation on Tuesday Nov 3, 2026.** Build the thin end-to-end slice only. Do not add features outside the alpha scope below.
+**Current goal: the beta.** The alpha is built and is what's on `main`. Do not add features outside the beta scope below.
 
 Product rationale, audiences and the instructor demo flow: `docs/readme-startupSelected.md`. Read it when scoping a new feature, not for routine work.
 
@@ -21,20 +21,20 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 - Config via `.env` (see `.env.example`). Never commit `.env` or secrets.
 - Run: `python manage.py runserver`. Test: `python manage.py test`.
 
-## Apps and owners
+## Apps
 
-Each person owns one app. **Only edit files in your own app** unless the task says otherwise. If you need a change in another app, describe it and stop; the owner makes it.
-
-| App | Owner | Contents |
-|---|---|---|
-| `core/` | Todd | `User` (custom, has `github_login`), `Course`, `Enrollment`, `Project`, `Team`, `TeamMembership`, `Repo`, `Requirement`, requirements PDF upload + extraction (pypdf) + LLM split, admin, seed command |
-| `ingest/` | Todd | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
-| `summaries/` | Akshita | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
-| `dashboard/` | Brooke | Views, templates, `Flag` model + rules, "Generate summaries" button. Brooke also owns the deploy and Tuesday's demo script and interview questions. |
+| App | Contents |
+|---|---|
+| `core/` | `User` (custom, has `github_login`), `Course`, `Enrollment`, `Project`, `Sprint`, `Team`, `TeamMembership`, `Repo`, `Requirement`, requirements PDF upload + extraction (pypdf) + LLM split, admin, seed command |
+| `ingest/` | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
+| `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
+| `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
 
 ## Shared contracts: do not change without team agreement
 
-These are the interfaces between people. Changing them silently breaks someone else's work. If a task seems to need a contract change, stop and say so instead of making it.
+These are the interfaces between apps. Changing them silently breaks other work. If a task seems to need a contract change, stop and say so instead of making it, unless its issue already calls for that change.
+
+The `Sprint` model is built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
 
 - **Models in `core/` and `ingest/`** (field names and types)
 - **Claim schema** in `summaries/schemas.py`. Requirement mapping and significance are based on what the work accomplishes, not lines changed; empty `requirement_ids` means not tied to a requirement.
@@ -47,26 +47,31 @@ These are the interfaces between people. Changing them silently breaks someone e
   ```
   - `artifact_ids` use the format `owner/repo:type:id`, such as `acme/app:pr:12`, so they stay unique across a team's repos.
   - `Artifact.artifact_id` is unique per `Repo`, not globally: a later project reusing a GitHub repo has its own `Repo` row and copies. Always look IDs up within the team: `Artifact.objects.filter(repo__team=team, artifact_id=...)`.
-  - `requirement_ids` hold `Requirement.number`, not the database ID.
-- **Reporting week:** Monday-Sunday inclusive, in `America/New_York`. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
+  - `requirement_ids` hold `Requirement.number`, not the database ID. Once sprints land, a number only has meaning within its summary's sprint.
+- **Reporting dates:** today, a report covers a Monday-Sunday week, inclusive, in `America/New_York`. T-19 (#119) replaces this: a report covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
   - Commit: author date
   - PR: merged date, or created date if unmerged
   - Review: submitted date
   - Issue: created date
-- **`Requirement` model** in `core/`: `project`, `number`, `text`
+- **`Requirement` model** in `core/`: `project`, `sprint`, `number`, `text`, with numbers unique per sprint. `sprint` is optional until T-21 (#125) removes `project`, and requirements with no sprint stay unique per project. New code must use `sprint`.
+- **`Sprint` model** in `core/`: `project` (`related_name="sprints"`), `name`, `start_date`, `end_date`, both dates inclusive. `Sprint.covered_through(today)` returns the earlier of `today` and `end_date`.
 - **`Repo.full_name`** in `core/` is `owner/repo`, required and unique per team. An artifact's ID must start with its repo's `full_name`. Only repo setup (US-1) reads `Repo.url` to fill this in; everything else uses `full_name`.
 - **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field. `Artifact.review_state` holds GitHub's state for a review, such as `APPROVED`, and is empty for other types.
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
-  - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`
+  - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`, replaced by `generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary` in T-19 (#119) and removed in T-21 (#125)
   - `dashboard.flags.compute_flags(team: Team) -> list[Flag]`
 
 ## Data model
+
+What's on `main` today. The planned sprint model follows it.
 
 ```
 Course                     e.g. "CS 3240, Fall 2026"
  ├── Enrollment            User ↔ Course, with role: instructor | ta | student
  └── Project               optional requirements PDF or pasted text → Requirement rows
+      ├── Sprint           name, start and end date; a project has zero or more
+      │    └── Requirement numbered per sprint; also keeps `project` until T-21
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
            └── Repo             the team's GitHub repo
@@ -80,6 +85,15 @@ FlagDispute      → Team + student: finds its flag by rule and week, so it surv
 GenerationRun    → Team: exists only while its summaries are generating
 ```
 
+Planned changes for sprints (#119–#125):
+
+```
+Requirement      → belongs to a sprint only, once T-21 removes `project`
+Summary          → Team + User + Sprint, replacing the reporting week
+Flag             → Team + Sprint, replacing week_start
+FlagDispute      → Team + student + rule + Sprint, replacing week_start
+```
+
 - **Teams belong to a project, not the course.** Classes that reshuffle teams per project get new teams per project; a semester-long class has one project with one set of teams. Past projects' teams and reports are never edited.
 - Reusing teams in a later project is a UI feature ("Copy teams from a previous project"), not a schema change.
 - **Roles live on `Enrollment`, never on `User`.** One person can be a TA in one course and a student in another.
@@ -90,7 +104,8 @@ GenerationRun    → Team: exists only while its summaries are generating
 
 ## Alpha scope
 
-**In:**
+Built, and what `main` does today:
+
 - Setup: instructors create, rename and delete projects, manage requirements, and manage teams, students and each team's repo from the dashboard; deleting warns what goes with it in its confirmation, including summaries, and is only refused where a claim would lose its evidence or requirement (a repo or requirement that claims cite). Courses and instructor and TA enrollments stay in admin. Repo ingest by URL + token, including co-author trailers and PR review credit
 - Requirements PDF (or pasted text) → `Requirement` rows an instructor can edit on the project's requirements page or in admin; requirement tags + significance on claims; simple per-project requirement table
 - "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo, then `generate_summary` once per student; flags are recomputed once every student has succeeded. A team can only have one run at a time (`GenerationRun`). The current week can be generated, but a summary written before its week ended (`Summary.is_partial`) is labelled, counts toward the team page's shares, and never counts toward flags until the week is generated again
@@ -98,9 +113,23 @@ GenerationRun    → Team: exists only while its summaries are generating
 - 1–2 flag rules, based on share of requirement-tied claims weighted by significance
 - Pages: course overview (teams, flagged ones first, labels only) → team (flag reasons, students and their summaries) → summary (claims with GitHub links and the unverified note)
 
-**Fallback:** if the core pipeline isn't working end to end by Monday midday, cut requirements.
+## Beta scope
 
-**Out (beta):** polished per-requirement progress view, numeric diff checks, student view, disputes, self-reports, GitHub OAuth login, consent, CSV import, background jobs, "paired with" detection.
+Each item is a GitHub issue. Read the issue before starting; it has the acceptance criteria.
+
+**Sprints (#118–#125).** Agreed, not built yet. New code lands beside the weekly code so `main` keeps working, and T-21 (#125) then removes the weekly code and deletes the alpha summaries.
+- A project has zero or more sprints, each with its own dates and requirements. Requirements never belong to a project as a whole.
+- A new sprint's dates are editable and default to 7 days: from today for the first sprint, or from the latest sprint's last day otherwise.
+- Two sprints can overlap only by one sprint's last day being the next one's first day, and can never start on the same day.
+- Each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today and is labelled in progress.
+- A covered range is split into 7-day chunks, with a leftover of 3 days or fewer joining the previous chunk, so up to 10 days is one chunk. Every student on a team is chunked the same way. Several chunks go through an LLM merge pass and the validator again, and users only ever see the one report.
+- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings.
+
+**Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
+
+**Student side:** student logins (#102, #106), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115).
+
+**Later, with no issues yet:** polished per-requirement progress view, numeric diff checks, GitHub OAuth login, consent, background jobs, "paired with" detection.
 
 ## Beta scope
 
@@ -114,7 +143,7 @@ There is **no chat interface**, in the alpha or later. Users only see validated 
 - **No LLM-generated text reaches a user without passing the validator.**
 - Summaries describe observable activity only, with no judgments of character.
 - Every claim cites at least one `Artifact`, rendered as a GitHub link.
-- Validator checks, using stored GitHub data: each cited artifact exists in one of this team's repos; it falls inside the reporting week; the student is its author, co-author or reviewer; every `requirement_id` exists for the project.
+- Validator checks, using stored GitHub data: each cited artifact exists in one of this team's repos; it falls inside the reporting dates; the student is its author, co-author or reviewer; every `requirement_id` exists for the project (for the summary's sprint, once T-19 lands).
 - Artifact checks are verified facts. Requirement mapping and significance are LLM judgments; label them as such in the UI.
 - The validator returns specific, machine-readable errors per claim, not just pass/fail. Those errors feed back to the LLM, which regenerates **only the failing claims**, up to **2 retries (3 attempts total)**.
 - A claim that still fails is dropped from the user-facing summary and counted as "couldn't verify."
@@ -124,12 +153,12 @@ There is **no chat interface**, in the alpha or later. Users only see validated 
 
 - Keep views thin; put logic in `services.py` in each app.
 - Write tests from the issue's acceptance criteria before implementing. Every validator check and flag rule needs a test.
-- Make a migration for model changes in your own app; never edit another app's migrations.
+- Make a new migration in the app whose models change; never edit a migration that's already merged.
 
 ## Git workflow
 
 - `main` always works. **Never commit directly to `main`**; changes land only through small PRs with one teammate's approval. Pull `main` often.
-- One short-lived branch per task, named for its owner: `todd/ingest-commits`, `akshita/validator`, `brooke/course-overview`.
+- One short-lived branch per task, starting with your name: `yourname/ingest-commits`.
 - If a PR completes a GitHub issue, include `Closes #N` in its description.
 - Keep PR descriptions concise, but include crucial information and end every one with a `## Test Metrics` section. We parse these for the end-of-alpha presentation, so keep these exact labels and measure fresh on the PR's branch:
   ```
