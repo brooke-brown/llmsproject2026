@@ -61,7 +61,7 @@
     {% if flag.dispute %}{% include "dashboard/_dispute.html" with dispute=flag.dispute %}{% endif %}
     {% endfor %}
     {% for dispute in membership.unraised_disputes %}
-    <p class="finding gone"><mark>Flag no longer raised</mark> {{ dispute.flag_reason }}</p>
+    <p class="finding gone"><mark>Flag no longer raised</mark>{% if dispute.status != "flag_withdrawn" %} {{ dispute.flag_reason }}{% endif %}</p>
     {% include "dashboard/_dispute.html" %}
     {% endfor %}
     <ul class="pills">

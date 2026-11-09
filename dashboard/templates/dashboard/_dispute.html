@@ -1,4 +1,4 @@
-<div class="dispute">
+<div class="dispute-panel">
   <div class="row">
     <span class="tag dispute">{% if dispute.status == "open" %}Dispute open{% else %}Disputed · {{ dispute.get_status_display }}{% endif %}</span>
     <small>Opened {{ dispute.created_at|date:"M j" }}{% if dispute.was_edited %}, edited {{ dispute.updated_at|date:"M j" }}{% endif %}</small>

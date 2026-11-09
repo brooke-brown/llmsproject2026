@@ -504,9 +504,14 @@ def _has_flag(severity):
 
 
 def _has_open_dispute():
-    """True for a team with an open dispute, inside a Team query."""
+    """True for a team with an open dispute from a current member, inside a Team query. The
+    team page shows only current members' disputes, so any other couldn't be resolved."""
     return Exists(
-        FlagDispute.objects.filter(team=OuterRef("pk"), status=FlagDispute.Status.OPEN)
+        FlagDispute.objects.filter(
+            team=OuterRef("pk"),
+            status=FlagDispute.Status.OPEN,
+            student__team_memberships__team=OuterRef("pk"),
+        )
     )
 
 
