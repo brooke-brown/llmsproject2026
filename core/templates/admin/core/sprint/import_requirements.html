@@ -1,0 +1,14 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:core_sprint_changelist' %}">Sprints</a>
+  &rsaquo; <a href="{% url 'admin:core_sprint_change' sprint.pk %}">{{ sprint.name }}</a>
+  &rsaquo; Import requirements
+</div>
+{% endblock %}
+
+{% block content %}
+{% include "admin/core/requirements_import_form.html" with owner="sprint" %}
+{% endblock %}

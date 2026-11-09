@@ -85,7 +85,7 @@ class RequirementImportForm(forms.Form):
         label="Requirements PDF",
         required=False,
         widget=forms.FileInput(attrs={"accept": ".pdf,application/pdf"}),
-        help_text="Upload the project's requirements as a PDF, or paste them below.",
+        help_text="Upload the requirements as a PDF, or paste them below.",
     )
     # Not stripped, so the LLM and the source check see exactly what was pasted.
     text = forms.CharField(
@@ -93,7 +93,7 @@ class RequirementImportForm(forms.Form):
         required=False,
         strip=False,
         widget=forms.Textarea(attrs={"rows": 20, "cols": 80}),
-        help_text="Paste the project's requirements. Each one must stay worded as written here.",
+        help_text="Paste the requirements. Each one must stay worded as written here.",
     )
 
     def clean(self):

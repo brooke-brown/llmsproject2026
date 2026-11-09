@@ -197,16 +197,76 @@ class Repo(models.Model):
         return self.url
 
 
+class Sprint(models.Model):
+    """A stretch of a project with its own requirements and one report per student.
+
+    Both dates are inclusive days in America/New_York.
+    """
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="sprints")
+    name = models.CharField(max_length=200)
+    start_date = models.DateField()
+    end_date = models.DateField()
+
+    def clean(self):
+        """Check the rules that compare a sprint with its project's other sprints.
+
+        Django still calls this when a field failed validation, so any field can be unset.
+        """
+        super().clean()
+        has_dates = self.start_date is not None and self.end_date is not None
+        if has_dates and self.end_date < self.start_date:
+            raise ValidationError("A sprint can't end before it starts.")
+        if self.project_id is None:
+            return
+
+        errors = []
+        others = Sprint.objects.filter(project_id=self.project_id).exclude(pk=self.pk)
+        if others.filter(name__iexact=self.name).exists():
+            errors.append(f'This project already has a sprint named "{self.name}".')
+        if has_dates:
+            # The strict comparisons let one sprint's last day be the next one's first day.
+            clash = others.filter(
+                models.Q(start_date=self.start_date)
+                | models.Q(start_date__lt=self.end_date, end_date__gt=self.start_date)
+            ).first()
+            if clash is not None:
+                errors.append(
+                    f"These dates overlap {clash.name}. Sprints can only share one sprint's "
+                    "last day as the next one's first day, and can't start on the same day."
+                )
+        if errors:
+            raise ValidationError(errors)
+
+    def covered_through(self, today):
+        """The last day a report written on `today` can cover."""
+        return min(today, self.end_date)
+
+    def __str__(self):
+        return f"{self.name} ({self.project.name})"
+
+
 class Requirement(models.Model):
     """Claims' requirement_ids hold `number`, not the database ID."""
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="requirements")
+    # Optional only until T-21 (#125). Pages not yet moved to sprints add requirements without one.
+    sprint = models.ForeignKey(
+        Sprint, on_delete=models.CASCADE, related_name="requirements", null=True, blank=True
+    )
     number = models.PositiveIntegerField()
     text = models.TextField()
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["project", "number"], name="core_requirement_unique"),
+            models.UniqueConstraint(
+                fields=["sprint", "number"], name="core_requirement_unique_per_sprint"
+            ),
+            models.UniqueConstraint(
+                fields=["project", "number"],
+                condition=models.Q(sprint__isnull=True),
+                name="core_requirement_unique_without_sprint",
+            ),
         ]
 
     def __str__(self):

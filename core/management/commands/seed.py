@@ -8,18 +8,30 @@ unless it is set to a real value.
 """
 
 import os
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils import timezone
 
-from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
+from core.models import (
+    Course,
+    Enrollment,
+    Project,
+    Repo,
+    Requirement,
+    Sprint,
+    Team,
+    TeamMembership,
+)
 
 PASSWORD_VARIABLE = "SEED_PASSWORD"
 PLACEHOLDER_PASSWORDS = {"", "replace-me"}
 
 COURSE_NAME = "CS 4501, Fall 2026"
 PROJECT_NAME = "Project 1"
+SPRINT_NAME = "Sprint 1"
 
 # The group's real repo. Its three students are the group's GitHub logins, which all
 # group members have agreed to use.
@@ -83,10 +95,18 @@ class Command(BaseCommand):
             Enrollment.objects.update_or_create(user=user, course=course, defaults={"role": role})
 
         project, _ = Project.objects.get_or_create(course=course, name=PROJECT_NAME)
+        # Matched on name only, so a rerun on a later day leaves the sprint's dates alone. The
+        # name matches the data migration's, so a database seeded before sprints reuses that one.
+        today = timezone.localdate()
+        sprint, _ = Sprint.objects.get_or_create(
+            project=project,
+            name=SPRINT_NAME,
+            defaults={"start_date": today, "end_date": today + timedelta(days=6)},
+        )
         for number, text in enumerate(REQUIREMENTS, start=1):
             # Matched on number only, so requirement text edited in admin survives a rerun.
             Requirement.objects.get_or_create(
-                project=project, number=number, defaults={"text": text}
+                project=project, sprint=sprint, number=number, defaults={"text": text}
             )
 
         self.seed_team(project, course, LIVE_TEAM, LIVE_REPO, LIVE_STUDENTS, password)
