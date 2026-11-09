@@ -25,7 +25,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 
 | App | Contents |
 |---|---|
-| `core/` | `User` (custom, has `github_login`), `Course`, `Enrollment`, `Project`, `Team`, `TeamMembership`, `Repo`, `Requirement`, requirements PDF upload + extraction (pypdf) + LLM split, admin, seed command |
+| `core/` | `User` (custom, has `github_login`), `Course`, `Enrollment`, `Project`, `Sprint`, `Team`, `TeamMembership`, `Repo`, `Requirement`, requirements PDF upload + extraction (pypdf) + LLM split, admin, seed command |
 | `ingest/` | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
@@ -34,7 +34,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 
 These are the interfaces between apps. Changing them silently breaks other work. If a task seems to need a contract change, stop and say so instead of making it, unless its issue already calls for that change.
 
-The sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
+The `Sprint` model is built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
 
 - **Models in `core/` and `ingest/`** (field names and types)
 - **Claim schema** in `summaries/schemas.py`. Requirement mapping and significance are based on what the work accomplishes, not lines changed; empty `requirement_ids` means not tied to a requirement.
@@ -53,8 +53,8 @@ The sprint changes below are agreed but not built yet. Where a contract is chang
   - PR: merged date, or created date if unmerged
   - Review: submitted date
   - Issue: created date
-- **`Requirement` model** in `core/`: today `project`, `number`, `text`, with numbers unique per project. T-18 (#118) adds `sprint` and makes numbers unique per sprint, and T-21 (#125) removes `project`.
-- **`Sprint` model** in `core/` (T-18, #118): `project`, `name`, `start_date`, `end_date`, both dates inclusive.
+- **`Requirement` model** in `core/`: `project`, `sprint`, `number`, `text`, with numbers unique per sprint. `sprint` is optional until T-21 (#125) removes `project`, and requirements with no sprint stay unique per project. New code must use `sprint`.
+- **`Sprint` model** in `core/`: `project` (`related_name="sprints"`), `name`, `start_date`, `end_date`, both dates inclusive. `Sprint.covered_through(today)` returns the earlier of `today` and `end_date`.
 - **`Repo.full_name`** in `core/` is `owner/repo`, required and unique per team. An artifact's ID must start with its repo's `full_name`. Only repo setup (US-1) reads `Repo.url` to fill this in; everything else uses `full_name`.
 - **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field. `Artifact.review_state` holds GitHub's state for a review, such as `APPROVED`, and is empty for other types.
 - **Function signatures:**
@@ -70,6 +70,8 @@ What's on `main` today. The planned sprint model follows it.
 Course                     e.g. "CS 3240, Fall 2026"
  ├── Enrollment            User ↔ Course, with role: instructor | ta | student
  └── Project               optional requirements PDF or pasted text → Requirement rows
+      ├── Sprint           name, start and end date; a project has zero or more
+      │    └── Requirement numbered per sprint; also keeps `project` until T-21
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
            └── Repo             the team's GitHub repo
@@ -83,14 +85,10 @@ FlagDispute      → Team + student: finds its flag by rule and week, so it surv
 GenerationRun    → Team: exists only while its summaries are generating
 ```
 
-Planned changes for sprints (#118–#125):
+Planned changes for sprints (#119–#125):
 
 ```
-Project
- ├── Sprint        name, start and end date; a project has zero or more
- │    └── Requirement   belongs to a sprint only, numbered per sprint
- └── Team          unchanged, along with TeamMembership, Repo and Artifact
-
+Requirement      → belongs to a sprint only, once T-21 removes `project`
 Summary          → Team + User + Sprint, replacing the reporting week
 Flag             → Team + Sprint, replacing week_start
 FlagDispute      → Team + student + rule + Sprint, replacing week_start
