@@ -53,7 +53,16 @@
       <strong>{{ membership.contribution_share }}%</strong>{% endif %}
     </header>
     {% for flag in membership.user.team_flags %}
+    {% if flag.is_withdrawn %}
+    <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j" }}</p>
+    {% else %}
     <p class="finding {{ flag.severity }}"><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
+    {% endif %}
+    {% if flag.dispute %}{% include "dashboard/_dispute.html" with dispute=flag.dispute %}{% endif %}
+    {% endfor %}
+    {% for dispute in membership.unraised_disputes %}
+    <p class="finding gone"><mark>Flag no longer raised</mark>{% if dispute.status != "flag_withdrawn" %} {{ dispute.flag_reason }}{% endif %}</p>
+    {% include "dashboard/_dispute.html" %}
     {% endfor %}
     <ul class="pills">
       {% for summary in membership.user.team_summaries %}

@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.db import models
 
@@ -98,6 +100,12 @@ class FlagDispute(models.Model):
                 name="dashboard_flagdispute_severity_valid",
             ),
         ]
+
+    @property
+    def was_edited(self):
+        """True once the student has edited their explanation. Both timestamps are set a moment
+        apart on creation, and deciding a dispute doesn't touch updated_at."""
+        return self.updated_at - self.created_at > timedelta(seconds=1)
 
     def __str__(self):
         # Leaves out the explanation, a student education record, so it stays out of logs.

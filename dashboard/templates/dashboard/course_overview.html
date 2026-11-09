@@ -24,6 +24,7 @@
           <div class="row">
             <h3><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></h3>
             {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
+            {% if team.has_open_dispute %}<span class="tag dispute">Dispute open</span>{% endif %}
           </div>
           <ul class="people">
             {% for membership in team.memberships.all %}
