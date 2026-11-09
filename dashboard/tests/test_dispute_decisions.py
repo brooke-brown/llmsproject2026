@@ -116,6 +116,7 @@ class OverviewTests(DisputeFixture):
         # Beta is flagged, Charlie only has an open dispute whose flag is gone, Alpha has neither,
         # so going by name alone would put Alpha first and Charlie last.
         make_flag(self.beta, None, reason="Team-wide flag.")
+        TeamMembership.objects.create(user=self.ada, team=self.charlie)
         make_dispute(self.charlie, self.ada)
 
         content = self.overview()
@@ -190,6 +191,30 @@ class OverviewTests(DisputeFixture):
         self.assertEqual(card.flagged_count, 0)
         self.assertEqual(card.warned_count, 0)
 
+    def test_a_dispute_from_a_student_no_longer_on_the_team_isnt_labelled(self):
+        # Removing a membership in admin leaves the dispute, but the team page no longer shows
+        # it, so nobody could resolve it and clear the label.
+        make_dispute(self.alpha, self.ada)
+        TeamMembership.objects.filter(user=self.ada, team=self.alpha).delete()
+
+        card = article_containing(self.overview(), "Team Alpha</strong>")
+
+        self.assertNotIn("Dispute open", card)
+
+    def test_a_dispute_from_a_student_no_longer_on_the_team_doesnt_sort_it_early(self):
+        # Charlie would come before Beta if Ada's dispute still counted.
+        make_dispute(self.charlie, self.ada)
+
+        content = self.overview()
+
+        self.assertLess(content.index("Beta</strong>"), content.index("Charlie</strong>"))
+
+    def test_the_pill_isnt_styled_as_the_dispute_panel(self):
+        # A rule for a bare .dispute class would also style <span class="tag dispute">.
+        make_dispute(self.alpha, self.ada)
+
+        self.assertNotRegex(self.overview(), r"(^|[\s,}])\.dispute[\s{,.:]")
+
 
 class TeamPageTests(DisputeFixture):
     def test_a_disputed_flag_shows_the_explanation_and_status(self):
@@ -250,6 +275,33 @@ class TeamPageTests(DisputeFixture):
         self.assertIn("Flag no longer raised", article)
         self.assertIn(escape(REASON), article)
         self.assertIn("user interviews", article)
+
+    def test_a_withdrawn_dispute_whose_flag_is_gone_still_hides_its_reason(self):
+        make_dispute(self.alpha, self.ada, status=Status.FLAG_WITHDRAWN)
+
+        article = self.student_article(self.ada)
+
+        self.assertIn("Flag no longer raised", article)
+        self.assertNotIn(escape(REASON), article)
+        self.assertIn("user interviews", article)
+
+    def test_a_kept_dispute_whose_flag_is_gone_shows_its_reason(self):
+        make_dispute(self.alpha, self.ada, status=Status.FLAG_KEPT)
+
+        article = self.student_article(self.ada)
+
+        self.assertIn("Flag no longer raised", article)
+        self.assertIn(escape(REASON), article)
+
+    def test_the_dispute_panel_has_its_own_class(self):
+        make_flag(self.alpha, self.ada)
+        make_dispute(self.alpha, self.ada)
+
+        article = self.student_article(self.ada)
+
+        self.assertIn('<div class="dispute-panel">', article)
+        self.assertIn('<span class="tag dispute">', article)
+        self.assertNotRegex(self.team_page(), r"(^|[\s,}])\.dispute[\s{,.:]")
 
     def test_a_raised_flags_dispute_isnt_marked_gone(self):
         make_flag(self.alpha, self.ada)
