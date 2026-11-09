@@ -29,6 +29,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 | `ingest/` | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
+| `contributions/` | `Contribution` and `Corroboration` models: offline work students report and teammates confirm. Never evidence for a claim, passed to the LLM or counted toward flags |
 
 ## Shared contracts: do not change without team agreement
 
@@ -74,8 +75,10 @@ Course                     e.g. "CS 3240, Fall 2026"
       │    └── Requirement numbered per sprint; also keeps `project` until T-21
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
-           └── Repo             the team's GitHub repo
-                └── Artifact    a commit, PR, review or issue pulled from the repo
+           ├── Repo             the team's GitHub repo
+           │    └── Artifact    a commit, PR, review or issue pulled from the repo
+           └── Contribution     offline work a student reports; in any sprint whose dates include its date
+                └── Corroboration   a teammate's confirmation, one per teammate
 
 Summary          → Team + User + reporting week
   └── Claim      → claim schema above + status (verified / couldn't verify)

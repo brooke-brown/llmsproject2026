@@ -6,6 +6,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from contributions.models import Contribution
 from core import services as setup
 from core.forms import RequirementImportForm
 from summaries.models import Summary
@@ -172,6 +173,7 @@ def project_setup(request, project_id):
             "requirement_count": project.requirements.count(),
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
+            "contribution_count": Contribution.objects.filter(team__project=project).count(),
             "editing": request.GET.get("edit") == "1",
         },
     )

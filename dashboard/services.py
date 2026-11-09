@@ -12,6 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.formats import date_format
 
+from contributions.models import Contribution, Corroboration
 from core.models import (
     Course,
     Enrollment,
@@ -267,9 +268,14 @@ def team_repos(team):
 
 def remove_student(membership):
     """Take a student off their team, then recompute its flags, since the shares change.
-    Their disputes on the team go too, since no page could reach them once they're gone."""
+    Their disputes, offline contributions and confirmations on the team go too, since no page
+    could reach them once they're gone and a confirmation only counts from a teammate."""
     with transaction.atomic():
         FlagDispute.objects.filter(team=membership.team_id, student=membership.user_id).delete()
+        Contribution.objects.filter(team=membership.team_id, student=membership.user_id).delete()
+        Corroboration.objects.filter(
+            contribution__team=membership.team_id, teammate=membership.user_id
+        ).delete()
         setup_services.remove_student(membership)
         flags.compute_flags(membership.team)
 
@@ -281,7 +287,8 @@ def team_wide_flags(team):
 
 def team_memberships_with_summaries(team):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
-    `team_flags` about them and their `team_disputes`."""
+    `team_flags` about them, their `team_disputes`, `team_contributions` and the
+    `team_corroborations` they gave."""
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
@@ -302,6 +309,16 @@ def team_memberships_with_summaries(team):
                 "user__flag_disputes",
                 queryset=FlagDispute.objects.filter(team=team),
                 to_attr="team_disputes",
+            ),
+            Prefetch(
+                "user__contributions",
+                queryset=Contribution.objects.filter(team=team),
+                to_attr="team_contributions",
+            ),
+            Prefetch(
+                "user__corroborations",
+                queryset=Corroboration.objects.filter(contribution__team=team),
+                to_attr="team_corroborations",
             ),
         )
     )
