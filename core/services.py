@@ -241,11 +241,19 @@ def delete_team(team: Team) -> None:
     team.delete()
 
 
-def add_student(team: Team, full_name: str, github_login: str, email: str = "") -> User:
+def add_student(
+    team: Team,
+    full_name: str,
+    github_login: str,
+    email: str = "",
+    temporary_password: str = "",
+    instructor: User | None = None,
+) -> User:
     """Put a student on the team, creating their account and enrollment if they need one.
 
-    A GitHub username that already has an account uses it as it is, and new accounts can't
-    log in. Either all of it happens or, with ProjectSetupError saying why, none of it does.
+    A GitHub username that already has an account keeps its name and email. Without a
+    temporary password, an existing account keeps its password and a new one can't log in.
+    Either all of it happens or, with ProjectSetupError saying why, none of it does.
     """
     github_login = _clean_github_login(github_login)
     first_name, last_name = _split_full_name(full_name)
@@ -262,6 +270,8 @@ def add_student(team: Team, full_name: str, github_login: str, email: str = "") 
             except ValidationError as error:
                 raise ProjectSetupError(" ".join(error.messages)) from None
             membership.save()
+            if temporary_password:
+                _set_password_as(instructor, student, temporary_password)
     except IntegrityError:
         raise ProjectSetupError(
             "This student was changed at the same moment, so please try again."
@@ -269,14 +279,20 @@ def add_student(team: Team, full_name: str, github_login: str, email: str = "") 
     return student
 
 
-def edit_student(student: User, full_name: str) -> User:
-    """Change a student's name, or raise ProjectSetupError saying why it can't be.
+def edit_student(
+    student: User, full_name: str, temporary_password: str = "", instructor: User | None = None
+) -> User:
+    """Change a student's name and, if one is given, their temporary password. Either both
+    happen or, with ProjectSetupError saying why, neither does.
 
     An account can span courses, so one that runs another course stays with the admin.
     """
     _refuse_unless_student_only(student)
     student.first_name, student.last_name = _split_full_name(full_name)
-    student.save(update_fields=["first_name", "last_name"])
+    with transaction.atomic():
+        student.save(update_fields=["first_name", "last_name"])
+        if temporary_password:
+            _set_password_as(instructor, student, temporary_password)
     return student
 
 
@@ -291,6 +307,19 @@ def set_temporary_password(student: User, password: str) -> None:
     student.set_password(password)
     student.must_change_password = True
     student.save(update_fields=["password", "must_change_password"])
+
+
+def _set_password_as(instructor: User | None, student: User, password: str) -> None:
+    """Set a temporary password, unless the student is also in a course `instructor` doesn't
+    teach. Otherwise adding someone to a team would hand over their account in every course.
+    With no instructor given, no course counts as taught, so an enrolled student is refused."""
+    taught = Enrollment.objects.filter(user=instructor, role=Enrollment.Role.INSTRUCTOR)
+    if student.enrollments.exclude(course__in=taught.values("course")).exists():
+        raise ProjectSetupError(
+            f"{student.github_login} is also enrolled in a course you don't teach, so their "
+            "password can only be changed in the admin."
+        )
+    set_temporary_password(student, password)
 
 
 def _refuse_unless_student_only(student: User) -> None:

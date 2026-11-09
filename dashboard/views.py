@@ -332,6 +332,13 @@ def _change_team(request, team_id, success, change, *args):
     return redirect("dashboard:team", team_id=team_id)
 
 
+def _typed_password(request):
+    """The submitted temporary password, or "" if the field was left blank. Not stripped,
+    since spaces can be part of a password, but only spaces count as blank."""
+    password = request.POST.get("temporary_password", "")
+    return password if password.strip() else ""
+
+
 @login_required
 @require_POST
 def team_rename(request, team_id):
@@ -355,15 +362,19 @@ def team_delete(request, team_id):
 def student_add(request, team_id):
     team = services.get_team_for_instructor(request.user, team_id)
     github_login = request.POST.get("github_login", "")
+    password = _typed_password(request)
     return _change_team(
         request,
         team.id,
-        f"Added {github_login.strip()} to {team.name}.",
+        f"Added {github_login.strip()} to {team.name}"
+        f"{' with a temporary password' if password else ''}.",
         setup.add_student,
         team,
         request.POST.get("full_name", ""),
         github_login,
         request.POST.get("email", ""),
+        password,
+        request.user,
     )
 
 
@@ -371,13 +382,16 @@ def student_add(request, team_id):
 @require_POST
 def membership_edit(request, membership_id):
     membership = services.get_membership_for_instructor(request.user, membership_id)
+    password = _typed_password(request)
     return _change_team(
         request,
         membership.team_id,
-        "Updated the student's name.",
+        f"Updated the student's name{' and temporary password' if password else ''}.",
         setup.edit_student,
         membership.user,
         request.POST.get("full_name", ""),
+        password,
+        request.user,
     )
 
 

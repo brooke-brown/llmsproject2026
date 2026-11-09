@@ -110,7 +110,7 @@ Open <http://127.0.0.1:8000/> and log in as `sample-instructor`, using your `SEE
 | `Team Live` | This repo (`brooke-brown/llmsproject2026`) with the group's three GitHub logins. Summaries work here if `GITHUB_TOKEN` can read the repo. |
 | `Team Sample` | An invented repo and students. **Its repo doesn't exist on GitHub, so Generate summaries fails here** with a "couldn't find" message. |
 
-Students get no password, because the alpha has no student pages.
+Students get no password. To log in as one, set a temporary password on the team page.
 
 ### Which account to use
 
@@ -143,7 +143,7 @@ Do these in this order. Steps 2 to 6 are on the dashboard for any instructor enr
 2. **Project (dashboard):** on the course overview, click **New project** and enter a name, which opens the project's edit page for its requirements and teams. Click **Edit project** on the overview to return to that page, where **edit** beside the name changes it. Names must be unique within a course, ignoring case.
 3. **Requirements, optional (dashboard):** on the project's edit page or the course overview, click **Add requirements**, then upload a PDF or paste text. The LLM splits the document, and you can then edit, add and delete requirements on that page.
 4. **Team (dashboard):** on the project's edit page or the course overview, enter a name and click **Add team**. Open the team to rename it, with **edit** beside its name, or delete it. Names must be unique within a project, ignoring case.
-5. **Students (dashboard):** on the team page, enter each student's full name and GitHub username, plus the email they use in `Co-authored-by:` trailers if you have it (see below). This creates their account and course enrollment if they don't have them. New accounts can't log in.
+5. **Students (dashboard):** on the team page, enter each student's full name and GitHub username, plus the email they use in `Co-authored-by:` trailers if you have it (see below). This creates their account and course enrollment if they don't have them. New accounts can't log in until you give them a temporary password (see [Student logins](#student-logins)).
 6. **Repo (dashboard):** on the team page, enter the team's repo URL, such as `https://github.com/owner/repo`. A team has one repo: to use another, click **change**, which asks you to confirm. Once activity has been pulled from a repo, it can't be changed or removed. STRIVE checks that it can read the repo, using `GITHUB_TOKEN` rather than your own GitHub access, so the account behind that token needs access to private repos.
 
 Good to know:
@@ -154,11 +154,27 @@ Good to know:
 - **A requirement a claim cites can't be deleted** on the dashboard, including one cited only by a claim that couldn't be verified. The admin doesn't enforce this, so don't delete requirements there.
 - **Each student can be on one team per project,** and must be enrolled in the course as a student. A course's instructors and TAs can't be added to a team.
 - **An existing account is reused as it is.** A GitHub username that already has an account, ignoring case, keeps its name and email.
-- **On the team page, only a student's name can be edited.** Their GitHub username shows below their name, and it and their email change in the admin. An account that's an instructor or TA in another course, or a staff account, can only be edited in the admin.
+- **On the team page, only a student's name and temporary password can be edited.** Their GitHub username shows below their name, and it and their email change in the admin. An account that's an instructor or TA in another course, or a staff account, can only be edited in the admin.
 - **Deleting is permanent, and each confirmation says what goes with it.** Deleting a project or team also deletes its summaries, and removing a student deletes their summaries on that team, and the team's flags are recomputed. Accounts and enrollments stay.
 - **Two things can't be deleted while claims depend on them.** A repo whose activity a claim cites, because the claim would lose its GitHub link, and a requirement a claim cites, because its number could be reused.
 - **Co-author credit matches on email, never on name.** A trailer counts if it uses the student's GitHub noreply address or the email on their `User`. Seeded students have no email, so only noreply trailers match until you add one.
 - **Commits that match no one on the team** are listed in admin: under **Artifacts**, use the **Unattributed commits** filter.
+
+### Student logins
+
+An instructor gives each student a temporary password, and shares it with them directly, such as in class. STRIVE sends no email.
+
+1. **Set it (dashboard):** on the team page, fill in **Temporary password** when adding a student, or click **edit** beside a student. Leaving the field blank keeps their current password. Only the course's instructors can do this.
+2. **Log in:** the student logs in with their GitHub username and the temporary password.
+3. **Choose a new one:** until they do, every page except logout sends them back to the password change page. They then land on the student home.
+
+Good to know:
+
+- **A password that breaks a password rule is refused,** with a message naming the rule, and nothing else on the form is saved.
+- **The password is never shown again.** The edit form says only whether the student has logged in and set their own password.
+- **Setting a new one replaces the student's own password,** and they must change it again at their next login. This is how to help a student who is locked out, since there's no password reset by email.
+- **Staff accounts and anyone who's an instructor or TA in any course** can only be given a password in the admin. Typing a password for one on the add form refuses the whole add.
+- **A student also enrolled in a course you don't teach** can only be given a password in the admin, so one course's instructor can't take over an account another course relies on. This applies on both forms, and adding them with the field blank still works.
 
 ### Generating summaries
 
@@ -330,13 +346,13 @@ Read `totals` in `coverage.json`. [`.coveragerc`](.coveragerc) sets what's measu
 
 ## Planned for the beta
 
-None of this is built yet, except the `FlagDispute` model. Each item is tracked as a GitHub issue.
+None of this is built yet, except the `FlagDispute` model and [student logins](#student-logins). Each item is tracked as a GitHub issue.
 
 - **Sprints (#118–#125):** a project has zero or more sprints, each with its own dates and requirements, and sprints can start on any day and run any length.
 - **One report per sprint:** each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today. Ranges over 10 days are processed in weekly chunks and merged into that one report, which goes through the validator again.
 - **Flags per sprint:** flags are based on the whole sprint and only raised once it has ended. A running sprint shows shares but raises no flags.
 - **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
-- **Student side:** logins, a student home, flag disputes, offline contributions and peer evaluations (#102 and #104–#115).
+- **Student side:** a student home, flag disputes, offline contributions and peer evaluations (#104, #105 and #107–#115).
 
 ## Known limits of the alpha
 

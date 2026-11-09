@@ -41,6 +41,8 @@
       {% csrf_token %}
       <label>Full name <input type="text" name="full_name" value="{{ membership.user.get_full_name }}" maxlength="301" required autofocus></label>
       <p class="keynote">GitHub username: <code>{{ membership.user.github_login }}</code></p>
+      <label>Temporary password (optional) <input type="password" name="temporary_password" autocomplete="new-password"></label>
+      <p class="keynote">{{ membership.user.display_name }} {% if membership.user.has_usable_password and not membership.user.must_change_password %}has logged in and set their own password{% else %}hasn't logged in and set their own password yet{% endif %}. Leave this blank to keep their current password. A new one replaces it, and they must change it at their next login.</p>
       <p class="form-actions">
         <button type="submit" class="primary">Save</button>
         <a href="{% url 'dashboard:team' team.id %}">Cancel</a>
@@ -113,8 +115,10 @@
       <label>Full name <input type="text" name="full_name" maxlength="301" required></label>
       <label>GitHub username <input type="text" name="github_login" maxlength="39" required></label>
       <label>Email (optional) <input type="email" name="email" maxlength="254"></label>
+      <label>Temporary password (optional) <input type="password" name="temporary_password" autocomplete="new-password"></label>
     </div>
     <p class="keynote">Use the email they put in <code>Co-authored-by:</code> trailers, since that's how paired commits are credited to them. A GitHub username that already has an account uses that account, and its name and email stay as they are.</p>
+    <p class="keynote">With a temporary password, the student can log in with their GitHub username and must choose a new password. Without one, a new student can't log in yet. Share it with them yourself, since STRIVE sends no email.</p>
     <button type="submit">Add student</button>
   </form>
 </section>
