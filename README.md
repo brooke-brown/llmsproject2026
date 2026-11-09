@@ -4,7 +4,7 @@ Evidence-based contribution reports for team software projects. Built for **CS 4
 
 STRIVE pulls a student team's GitHub activity, has an LLM write a weekly summary for each student, checks every claim against the real GitHub data, and flags imbalanced teams for instructors. **Every claim links to a specific commit, PR, review or issue**, so staff can check the evidence themselves.
 
-**Status:** alpha, for instructor and TA validation on November 3, 2026. The [alpha scope](CLAUDE.md#alpha-scope) sets what's in and out. The reasoning behind the product is in the [STRIVE pitch](docs/readme-startupSelected.md).
+**Status:** the alpha is built, and the beta is in progress. This README describes what's on `main`, which still reports by week. [Planned for the beta](#planned-for-the-beta) covers what's changing, and [`CLAUDE.md`](CLAUDE.md#beta-scope) has the scope. The reasoning behind the product is in the [STRIVE pitch](docs/readme-startupSelected.md).
 
 ## Contents
 
@@ -18,6 +18,7 @@ STRIVE pulls a student team's GitHub activity, has an LLM write a weekly summary
 - [Project layout](#project-layout)
 - [Testing](#testing)
 - [Contributing](#contributing)
+- [Planned for the beta](#planned-for-the-beta)
 - [Known limits of the alpha](#known-limits-of-the-alpha)
 - [Student data](#student-data)
 - [Team](#team)
@@ -257,6 +258,8 @@ Summary          → Team + User + reporting week
   └── Claim      → the claim schema + status (verified / couldn't verify)
 ValidationRun    → Summary: counts for one generation
 Flag             → Team, and optionally one student
+FlagDispute      → Team + student: finds its flag by rule and week, so it survives flags being recomputed
+GenerationRun    → Team: exists only while its summaries are generating
 ```
 
 - **Teams belong to a project, not the course,** so a class that reshuffles teams gets new teams per project.
@@ -265,17 +268,15 @@ Flag             → Team, and optionally one student
 
 ## Project layout
 
-Each app has one owner, and changes outside your own app go through its owner. See [`CLAUDE.md`](CLAUDE.md#apps-and-owners).
-
-| Path | Owner | Contents |
-|---|---|---|
-| [`core/`](core/) | Todd | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, project, requirement, team, student and repo setup logic, setup admin, `seed` command |
-| [`ingest/`](ingest/) | Todd | `Artifact` model, GitHub ingest, co-author parsing, unattributed commits, sample fixture |
-| [`summaries/`](summaries/) | Akshita | `Summary`, `Claim`, `ValidationRun`, LLM client, prompts, claim schema, validator, retry loop |
-| [`dashboard/`](dashboard/) | Brooke | Views, templates, `Flag` model and rules, Generate summaries button, instructor setup pages |
-| [`strive/`](strive/) | | Django settings and root URLs |
-| [`docs/`](docs/) | | The [STRIVE pitch](docs/readme-startupSelected.md) |
-| [`directions/`](directions/) | | Archive of the startup ideas we considered and didn't pick. Kept for documentation only. |
+| Path | Contents |
+|---|---|
+| [`core/`](core/) | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, project, requirement, team, student and repo setup logic, setup admin, `seed` command |
+| [`ingest/`](ingest/) | `Artifact` model, GitHub ingest, co-author parsing, unattributed commits, sample fixture |
+| [`summaries/`](summaries/) | `Summary`, `Claim`, `ValidationRun`, LLM client, prompts, claim schema, validator, retry loop |
+| [`dashboard/`](dashboard/) | Views, templates, `Flag` and `FlagDispute` models, flag rules, Generate summaries button, instructor setup pages |
+| [`strive/`](strive/) | Django settings and root URLs |
+| [`docs/`](docs/) | The [STRIVE pitch](docs/readme-startupSelected.md) |
+| [`directions/`](directions/) | Archive of the startup ideas we considered and didn't pick. Kept for documentation only. |
 
 Key entry points, which are also shared contracts:
 
@@ -312,10 +313,10 @@ Read `totals` in `coverage.json`. [`.coveragerc`](.coveragerc) sets what's measu
 [`CLAUDE.md`](CLAUDE.md) has the full conventions. The essentials:
 
 - `main` always works. Never commit to it directly. Changes land through small PRs with one teammate's approval.
-- Use one short-lived branch per task, named for its owner, such as `todd/ingest-commits`.
+- Use one short-lived branch per task, starting with your name, such as `yourname/ingest-commits`.
 - Write tests from the issue's acceptance criteria first. Every validator check and flag rule needs a test.
 - Keep views thin and put logic in each app's `services.py`.
-- Only make migrations for your own app, and merge them one person at a time.
+- Never edit a migration that's already merged, and merge new ones one person at a time.
 - Don't change a [shared contract](CLAUDE.md#shared-contracts-do-not-change-without-team-agreement) without team agreement.
 - Use `Co-authored-by:` trailers when pairing. Our own repo is test data.
 - Add `Closes #N` to a PR that completes an issue, and end every PR description with this section, measured fresh on the branch:
@@ -327,6 +328,16 @@ Read `totals` in `coverage.json`. [`.coveragerc`](.coveragerc) sets what's measu
   - Branch coverage: <percent>% (<covered>/<total>)
   ```
 
+## Planned for the beta
+
+None of this is built yet, except the `FlagDispute` model. Each item is tracked as a GitHub issue.
+
+- **Sprints (#118–#125):** a project has zero or more sprints, each with its own dates and requirements, and sprints can start on any day and run any length.
+- **One report per sprint:** each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today. Ranges over 10 days are processed in weekly chunks and merged into that one report, which goes through the validator again.
+- **Flags per sprint:** flags are based on the whole sprint and only raised once it has ended. A running sprint shows shares but raises no flags.
+- **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
+- **Student side:** logins, a student home, flag disputes, offline contributions and peer evaluations (#102 and #104–#115).
+
 ## Known limits of the alpha
 
 - **Local development settings only:** `strive/settings.py` has `DEBUG = True` and an empty `ALLOWED_HOSTS`, so it needs changes before it can be deployed.
@@ -334,7 +345,7 @@ Read `totals` in `coverage.json`. [`.coveragerc`](.coveragerc) sets what's measu
 - **Summaries run inside the web request,** because there are no background jobs.
 - **Long diffs are cut:** up to 100,000 characters of a diff are stored and at most 4,000 go into the prompt, or fewer in a busy week. The LLM may judge large changes from only part of the diff.
 - **Dropped claims aren't queued for review.** The pitch describes a TA review queue, but for now they can only be read in admin.
-- **Planned for beta:** a polished per-requirement progress view, checks on numbers in claims against the diff, a student view, disputes, self-reports, consent, CSV import, and "paired with" detection.
+- **Later, with no issues yet:** a polished per-requirement progress view, checks on numbers in claims against the diff, GitHub OAuth login, consent, background jobs, and "paired with" detection.
 
 There's no chat interface, in the alpha or later. Users only see validated summaries, team views and flags.
 
