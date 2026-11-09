@@ -2,7 +2,7 @@
 
 {% block content %}
 <h1 style="margin-bottom:18px">Your courses</h1>
-{% if courses %}
+{% if courses or student_courses %}
 <div class="cards">
   {% for course in courses %}
   <article class="card">
@@ -15,6 +15,12 @@
       {% if not course.flagged_count and not course.warned_count %}<span class="tag ok">No flags</span>{% endif %}
     </div>
     {% endif %}
+  </article>
+  {% endfor %}
+  {% for course in student_courses %}
+  <article class="card">
+    <div class="row"><h3><a href="{% url 'dashboard:student_home' %}">{{ course.name }}</a></h3></div>
+    <p class="people">Student</p>
   </article>
   {% endfor %}
 </div>
