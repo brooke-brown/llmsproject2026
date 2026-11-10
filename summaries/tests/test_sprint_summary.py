@@ -200,3 +200,16 @@ class SummarySprintModelTests(SprintTestCase):
         Summary.objects.create(team=self.team, user=self.student, sprint=self.sprint)
         with self.assertRaises(IntegrityError), transaction.atomic():
             Summary.objects.create(team=self.team, user=self.student, week_start=date(2026, 10, 26))
+
+
+class WeeklyCodeIgnoresSprintSummariesTests(SprintTestCase):
+    """Until T-21, the weekly flag code runs beside sprint summaries and must not trip on them."""
+
+    def test_weekly_requirement_shares_skip_a_sprint_summary(self):
+        from dashboard import flags
+
+        for user in (self.student, self.other):
+            Summary.objects.create(team=self.team, user=user, sprint=self.sprint)
+            Summary.objects.create(team=self.team, user=user, week_start=date(2026, 10, 26))
+        # Both kinds exist, so the weekly code would compare a date with None without the guard.
+        self.assertIsNone(flags.requirement_shares(self.team, include_partial=True))

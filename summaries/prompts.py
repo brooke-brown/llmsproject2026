@@ -38,14 +38,21 @@ all of them.
 """
 
 
-def build_prompt(artifacts, requirements=()) -> str:
+SPRINT_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
+    "one student's weekly contribution summary",
+    "one student's contribution summary for one sprint",
+)
+
+
+def build_prompt(artifacts, requirements=(), period="the week") -> str:
     """The project's requirements, then the student's artifacts for the week, oldest first.
 
     `requirements` are Requirement rows in number order. They come first so the LLM knows
-    what it can tie claims to.
+    what it can tie claims to. `period` names the dates the artifacts cover, such as
+    "Sprint 1 (2026-10-23 to 2026-10-29)"; the default is the weekly wording.
     """
     artifacts = list(artifacts)
-    intro = _requirements_section(requirements) + "This student's artifacts for the week:\n\n"
+    intro = _requirements_section(requirements) + f"This student's artifacts for {period}:\n\n"
     heads = [_head(artifact) for artifact in artifacts]
     diff_cap = _diff_cap(
         room=PROMPT_BUDGET - len(intro) - sum(len(head) + 2 for head in heads),
@@ -55,7 +62,7 @@ def build_prompt(artifacts, requirements=()) -> str:
     return intro + "\n\n".join(blocks)
 
 
-def build_retry_prompt(artifacts, failing, requirements=()) -> str:
+def build_retry_prompt(artifacts, failing, requirements=(), period="the week") -> str:
     """Ask for corrected versions of the claims that failed validation.
 
     `failing` is a list of (claim, errors) pairs. The artifact list goes back too, so the
@@ -63,7 +70,7 @@ def build_retry_prompt(artifacts, failing, requirements=()) -> str:
     """
     blocks = [_failing_claim_block(number, claim, errors) for number, (claim, errors) in enumerate(failing, start=1)]
     return (
-        build_prompt(artifacts, requirements)
+        build_prompt(artifacts, requirements, period)
         + "\n\nThese claims from your earlier answer failed validation:\n\n"
         + "\n\n".join(blocks)
         + "\n\nReturn exactly one corrected claim for each claim above, in the same order. "

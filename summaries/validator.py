@@ -72,11 +72,24 @@ def validate_claims(claims, user, team, week_start: date) -> list[ClaimResult]:
     if week_start.weekday() != MONDAY:
         raise ValueError(f"The reporting week must start on a Monday, not {week_start.isoformat()}.")
     week = _Week(week_start)
+    requirements = Requirement.objects.filter(project=team.project_id)
+    return _validate_all(claims, user, team, week, requirements)
+
+
+def validate_sprint_claims(claims, user, team, sprint, last_day: date) -> list[ClaimResult]:
+    """Check each claim against a sprint: `sprint.start_date` through `last_day`, inclusive.
+
+    `last_day` is the sprint's covered_through, so a running sprint stops at today. It needn't
+    start on a Monday, and requirement numbers are looked up in the sprint alone.
+    """
+    window = _Week(sprint.start_date, last_day)
+    return _validate_all(claims, user, team, window, Requirement.objects.filter(sprint=sprint))
+
+
+def _validate_all(claims, user, team, week, requirements):
     login = user.github_login.lower()
-    # Looked up once for the whole list, from the team's project.
-    requirement_numbers = set(
-        Requirement.objects.filter(project=team.project_id).values_list("number", flat=True)
-    )
+    # Looked up once for the whole list.
+    requirement_numbers = set(requirements.values_list("number", flat=True))
     return [
         ClaimResult(index, _validate_claim(index, claim, team, login, week, requirement_numbers))
         for index, claim in enumerate(claims)
@@ -84,14 +97,15 @@ def validate_claims(claims, user, team, week_start: date) -> list[ClaimResult]:
 
 
 class _Week:
-    """Monday 00:00 to the next Monday 00:00 in New York, so Sunday night is included."""
+    """The first day at 00:00 to the day after the last at 00:00 in New York, so the last
+    night is included. A reporting week is Monday-Sunday; a sprint's range is any days."""
 
-    def __init__(self, week_start: date):
-        self.first_day = week_start
-        self.last_day = week_start + timedelta(days=6)
-        self.start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
+    def __init__(self, first_day: date, last_day: date | None = None):
+        self.first_day = first_day
+        self.last_day = last_day or first_day + timedelta(days=6)
+        self.start = datetime.combine(first_day, time.min, tzinfo=REPORTING_TIME_ZONE)
         self.end = datetime.combine(
-            week_start + timedelta(days=7), time.min, tzinfo=REPORTING_TIME_ZONE
+            self.last_day + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE
         )
 
     def contains(self, moment: datetime) -> bool:
