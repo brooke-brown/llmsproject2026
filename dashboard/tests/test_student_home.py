@@ -37,6 +37,19 @@ def make_flag(team, user, week_start, reason, severity=Flag.Severity.FLAG):
     )
 
 
+def make_dispute(team, student, week_start, flag_reason="Disputed reason.", **fields):
+    return FlagDispute.objects.create(
+        team=team,
+        student=student,
+        rule="low-requirement-share",
+        week_start=week_start,
+        flag_reason=flag_reason,
+        severity=Flag.Severity.FLAG,
+        explanation="I paired on most of it.",
+        **fields,
+    )
+
+
 class StudentHomeFixture(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -143,6 +156,62 @@ class FlagsAboutMeTests(StudentHomeFixture):
         self.assertContains(response, "Disputed reason.")
         self.assertContains(response, "Flag kept")
 
+    def test_a_withdrawn_flag_reads_as_instructors_see_it_without_its_reason(self):
+        week = date(2026, 11, 2)
+        make_flag(self.team, self.student, week, "Withdrawn reason.")
+        make_dispute(self.team, self.student, week, status=FlagDispute.Status.FLAG_WITHDRAWN)
+        response = self.get_home()
+        self.assertContains(response, "Withdrawn after dispute")
+        self.assertContains(response, "Flag for the week of Nov 2, 2026")
+        self.assertNotContains(response, "Withdrawn reason.")
+
+    def test_shows_the_instructors_note_on_a_decided_dispute(self):
+        week = date(2026, 11, 2)
+        make_flag(self.team, self.student, week, "Kept reason.")
+        make_dispute(
+            self.team, self.student, week,
+            status=FlagDispute.Status.FLAG_KEPT,
+            resolution_note="Your commits that week were all formatting.",
+        )
+        response = self.get_home()
+        self.assertContains(response, "Note from your instructor")
+        self.assertContains(response, "Your commits that week were all formatting.")
+
+    def test_an_open_dispute_shows_no_note(self):
+        week = date(2026, 11, 2)
+        make_flag(self.team, self.student, week, "Open reason.")
+        make_dispute(self.team, self.student, week)
+        self.assertNotContains(self.get_home(), "Note from your instructor")
+
+    def test_a_dispute_whose_flag_is_no_longer_raised_still_shows(self):
+        make_dispute(self.team, self.student, date(2026, 11, 2), flag_reason="Old reason.")
+        response = self.get_home()
+        self.assertContains(response, "Flag no longer raised")
+        self.assertContains(response, "Week of Nov 2, 2026")
+        self.assertContains(response, "Old reason.")
+        self.assertContains(response, "Disputed · Open")
+        self.assertNotContains(response, "No flags about you")
+
+    def test_an_unraised_decided_dispute_shows_its_note_and_hides_a_withdrawn_reason(self):
+        make_dispute(
+            self.team, self.student, date(2026, 11, 2),
+            flag_reason="Old reason.",
+            status=FlagDispute.Status.FLAG_WITHDRAWN,
+            resolution_note="Agreed, you paired on it.",
+        )
+        response = self.get_home()
+        self.assertContains(response, "Flag no longer raised")
+        self.assertNotContains(response, "Old reason.")
+        self.assertContains(response, "Disputed · Flag withdrawn")
+        self.assertContains(response, "Agreed, you paired on it.")
+
+    def test_never_shows_a_teammates_unraised_dispute(self):
+        make_dispute(self.team, self.teammate, date(2026, 11, 2), flag_reason="Teammate's.")
+        response = self.get_home()
+        self.assertNotContains(response, "Teammate&#x27;s.")
+        self.assertNotContains(response, "Flag no longer raised")
+        self.assertContains(response, "No flags about you")
+
     def test_never_shows_flags_about_teammates_or_the_whole_team(self):
         week = date(2026, 11, 2)
         make_flag(self.team, self.teammate, week, "About the teammate.")
@@ -161,12 +230,21 @@ class FlagsAboutMeTests(StudentHomeFixture):
 class StudentHomeAccessTests(StudentHomeFixture):
     def test_nav_links_only_to_the_student_home_and_logout(self):
         response = self.get_home()
-        self.assertContains(response, f'href="{student_home_url()}"')
+        # The brand goes to the home page, which sends a student straight to the student home.
+        self.assertContains(response, f'href="{reverse("dashboard:home")}"')
         self.assertContains(response, reverse("logout"))
-        self.assertNotContains(response, f'href="{reverse("dashboard:home")}"')
         self.assertNotContains(
             response, reverse("dashboard:course_overview", args=[self.course.id])
         )
+        self.assertRedirects(self.client.get(reverse("dashboard:home")), student_home_url())
+
+    def test_someone_staff_in_another_course_can_get_back_to_it(self):
+        staffed = Course.objects.create(name="CS 2100, Fall 2026")
+        enroll(self.student, staffed, Role.TA)
+        response = self.get_home()
+        self.assertContains(response, f'href="{reverse("dashboard:home")}"')
+        home = self.client.get(reverse("dashboard:home"))
+        self.assertContains(home, reverse("dashboard:course_overview", args=[staffed.id]))
 
     def test_never_shows_a_team_in_a_course_im_not_a_student_in(self):
         # A team membership alone isn't enough: the course enrollment must say student.

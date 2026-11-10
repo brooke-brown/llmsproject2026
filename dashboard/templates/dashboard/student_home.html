@@ -2,9 +2,6 @@
 
 {% block title %}Home · STRIVE{% endblock %}
 
-{# A student's nav is the student home and logout only, so the brand leads back here. #}
-{% block brand_url %}{% url 'dashboard:student_home' %}{% endblock %}
-
 {% block content %}
 <h1 style="margin-bottom:18px">Your projects</h1>
 {% for course in courses %}
@@ -25,8 +22,12 @@
         {% endfor %}
       </ul>
       <div>
+        {# Worded as instructors see them on the team page. #}
         {% for flag in membership.my_flags %}
-        <p class="finding {% if flag.is_withdrawn %}withdrawn{% else %}{{ flag.severity }}{% endif %}">
+        {% if flag.is_withdrawn %}
+        <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j, Y" }}</p>
+        {% else %}
+        <p class="finding {{ flag.severity }}">
           <mark>{{ flag.get_severity_display }}</mark>
           <small>Week of {{ flag.week_start|date:"M j, Y" }}</small>
           {{ flag.reason }}
@@ -36,9 +37,21 @@
           <a href="{% url 'dashboard:flag_dispute' flag.id %}">Dispute</a>
           {% endif %}
         </p>
-        {% empty %}
-        <p class="tags"><span class="tag ok">No flags about you</span></p>
+        {% endif %}
+        {% if flag.dispute %}{% include "dashboard/_dispute_note.html" with dispute=flag.dispute %}{% endif %}
         {% endfor %}
+        {% for dispute in membership.unraised_disputes %}
+        <p class="finding gone">
+          <mark>Flag no longer raised</mark>
+          <small>Week of {{ dispute.week_start|date:"M j, Y" }}</small>
+          {% if dispute.status != "flag_withdrawn" %}{{ dispute.flag_reason }}{% endif %}
+          <span class="tag dispute">Disputed · {{ dispute.get_status_display }}</span>
+        </p>
+        {% include "dashboard/_dispute_note.html" %}
+        {% endfor %}
+        {% if not membership.my_flags and not membership.unraised_disputes %}
+        <p class="tags"><span class="tag ok">No flags about you</span></p>
+        {% endif %}
       </div>
     </article>
     {% endfor %}
