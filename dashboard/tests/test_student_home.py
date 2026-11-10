@@ -85,6 +85,15 @@ class MyProjectsTests(StudentHomeFixture):
         self.assertLess(content.index("Project Two"), content.index("CS 4501, Fall 2026"))
         self.assertLess(content.index("CS 4501, Fall 2026"), content.index("Project One"))
 
+    def test_two_projects_in_one_course_share_its_heading(self):
+        project = Project.objects.create(course=self.course, name="Project Two")
+        team = Team.objects.create(project=project, name="Team Gamma")
+        TeamMembership.objects.create(user=self.student, team=team)
+
+        content = self.get_home().content.decode()
+        self.assertEqual(content.count("CS 4501, Fall 2026"), 1)
+        self.assertLess(content.index("Project One"), content.index("Project Two"))
+
     def test_a_student_on_no_team_sees_a_message(self):
         loner = make_user("sample-sam")
         enroll(loner, self.course, Role.STUDENT)
