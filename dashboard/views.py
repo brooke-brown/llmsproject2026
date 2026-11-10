@@ -437,7 +437,12 @@ def _render_team_import_preview(request, project, text, plan):
     return render(
         request,
         "dashboard/team_import_preview.html",
-        {"project": project, "csv": text, "plan": plan},
+        {
+            "project": project,
+            "csv": text,
+            "plan": plan,
+            "checked_repos": setup.sign_checked_repos(plan.checked_repos),
+        },
     )
 
 
@@ -476,7 +481,8 @@ def team_import_confirm(request, project_id):
     project = services.get_project_for_instructor(request.user, project_id)
     text = request.POST.get("csv", "")
     try:
-        plan = setup.plan_team_import(project, text)
+        checked = setup.read_checked_repos(request.POST.get("checked_repos", ""))
+        plan = setup.plan_team_import(project, text, checked)
         if not plan.ok:
             return _render_team_import_preview(request, project, text, plan)
         if plan.nothing_to_add:
