@@ -119,7 +119,7 @@ Built, and what `main` does today:
 Each item is a GitHub issue. Read the issue before starting; it has the acceptance criteria.
 
 **Sprints (#118–#125).** Agreed, not built yet. New code lands beside the weekly code so `main` keeps working, and T-21 (#125) then removes the weekly code and deletes the alpha summaries.
-- A project has zero or more sprints, each with its own dates and requirements. Requirements never belong to a project as a whole.
+- A project has zero or more sprints, each with its own dates and requirements. Requirements never belong to a project as a whole. Built (US-39, #121): the project's edit page has a Sprints panel, where instructors create, rename and delete sprints and manage each sprint's requirements, including copying them from an earlier sprint. Dates are locked once a sprint has summaries.
 - A new sprint's dates are editable and default to 7 days: from today for the first sprint, or from the latest sprint's last day otherwise.
 - Two sprints can overlap only by one sprint's last day being the next one's first day, and can never start on the same day.
 - Each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today and is labelled in progress.

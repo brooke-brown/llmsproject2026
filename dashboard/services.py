@@ -18,6 +18,7 @@ from core.models import (
     Project,
     Repo,
     Requirement,
+    Sprint,
     Team,
     TeamMembership,
     User,
@@ -218,6 +219,12 @@ def get_project_for_instructor(user, project_id):
     project = get_object_or_404(Project.objects.select_related("course"), pk=project_id)
     check_course_instructor(user, project.course)
     return project
+
+
+def get_sprint_for_instructor(user, sprint_id):
+    sprint = get_object_or_404(Sprint.objects.select_related("project__course"), pk=sprint_id)
+    check_course_instructor(user, sprint.project.course)
+    return sprint
 
 
 def get_requirement_for_instructor(user, requirement_id):

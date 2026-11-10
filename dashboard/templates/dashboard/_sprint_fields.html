@@ -1,0 +1,15 @@
+{{ form.non_field_errors }}
+{{ form.name.errors }}
+<label for="{{ form.name.id_for_label }}">Sprint name</label>
+<input id="{{ form.name.id_for_label }}" type="text" name="name" value="{{ form.name.value|default_if_none:'' }}" maxlength="200" required autofocus>
+<div class="fields">
+  <label for="{{ form.start_date.id_for_label }}">Start date
+    {{ form.start_date }}
+    {{ form.start_date.errors }}
+  </label>
+  <label for="{{ form.end_date.id_for_label }}">End date
+    {{ form.end_date }}
+    {{ form.end_date.errors }}
+  </label>
+</div>
+{% if form.dates_locked %}<p class="keynote">This sprint has summaries, so its dates can't be changed: they would no longer match what the summaries cover. You can still rename it.</p>{% endif %}

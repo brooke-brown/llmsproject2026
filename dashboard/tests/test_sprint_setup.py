@@ -148,7 +148,7 @@ class NewSprintPageTests(SprintFixture):
         cases = [
             ("", "2026-11-12", "2026-11-19", "name"),
             ("sprint 1", "2026-11-12", "2026-11-19", "already has a sprint named"),
-            ("Sprint 2", "2026-11-19", "2026-11-12", "can't end before it starts"),
+            ("Sprint 2", "2026-11-19", "2026-11-12", "end before it starts"),
             ("Sprint 2", "2026-11-05", "2026-11-12", "overlap"),
             ("Sprint 2", "2026-11-02", "2026-11-12", "overlap"),
         ]
@@ -259,7 +259,7 @@ class SprintRequirementsTests(SprintFixture):
         self.requirement(self.target, 1, "Log in")
         page = self.client.get(url("sprint", self.target.id))
         self.assertContains(page, "Log in")
-        self.assertContains(page, url("requirement_edit", self.target.requirements.get().id))
+        self.assertContains(page, f"?edit_requirement={self.target.requirements.get().id}")
         self.assertContains(page, url("sprint_requirement_add", self.target.id))
 
     def test_with_none_it_offers_import_of_a_pdf_or_pasted_text(self):

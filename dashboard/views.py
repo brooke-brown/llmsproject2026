@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.db.models import Count
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordChangeView
 from django.http import JsonResponse
@@ -9,7 +10,8 @@ from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from core import services as setup
-from core.forms import ChangePasswordForm, RequirementImportForm
+from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
+from core.models import Sprint
 from summaries.models import Summary
 
 from . import services
@@ -210,6 +212,9 @@ def project_setup(request, project_id):
         {
             "project": project,
             "teams": services.project_setup_teams(project),
+            "sprints": project.sprints.annotate(requirement_count=Count("requirements")).order_by(
+                "start_date", "end_date"
+            ),
             "requirement_count": project.requirements.count(),
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
@@ -286,13 +291,20 @@ def requirements_import(request, project_id):
     return _render_requirements(request, project, form)
 
 
-def _change_requirement(request, project_id, change, *args):
+def _requirements_page(requirement):
+    """Where to go after changing a requirement: its sprint's page, or the project's."""
+    if requirement.sprint_id is not None:
+        return redirect("dashboard:sprint", sprint_id=requirement.sprint_id)
+    return redirect("dashboard:project_requirements", project_id=requirement.project_id)
+
+
+def _change_requirement(request, destination, change, *args):
     """Run a change, say if it was refused, and return to the requirements page."""
     try:
         change(*args)
     except setup.ProjectSetupError as error:
         messages.error(request, str(error))
-    return redirect("dashboard:project_requirements", project_id=project_id)
+    return destination
 
 
 @login_required
@@ -300,7 +312,8 @@ def _change_requirement(request, project_id, change, *args):
 def requirement_add(request, project_id):
     project = services.get_project_for_instructor(request.user, project_id)
     text = request.POST.get("text", "")
-    return _change_requirement(request, project.id, setup.add_requirement, project, text)
+    destination = redirect("dashboard:project_requirements", project_id=project.id)
+    return _change_requirement(request, destination, setup.add_requirement, project, text)
 
 
 @login_required
@@ -309,7 +322,7 @@ def requirement_edit(request, requirement_id):
     requirement = services.get_requirement_for_instructor(request.user, requirement_id)
     text = request.POST.get("text", "")
     return _change_requirement(
-        request, requirement.project_id, setup.edit_requirement, requirement, text
+        request, _requirements_page(requirement), setup.edit_requirement, requirement, text
     )
 
 
@@ -318,7 +331,7 @@ def requirement_edit(request, requirement_id):
 def requirement_delete(request, requirement_id):
     requirement = services.get_requirement_for_instructor(request.user, requirement_id)
     return _change_requirement(
-        request, requirement.project_id, setup.delete_requirement, requirement
+        request, _requirements_page(requirement), setup.delete_requirement, requirement
     )
 
 
@@ -427,3 +440,135 @@ def repo_remove(request, repo_id):
     repo = services.get_repo_for_instructor(request.user, repo_id)
     success = f"Removed {repo.full_name}."
     return _change_team(request, repo.team_id, success, setup.remove_repo, repo)
+
+
+def _render_sprint(request, sprint, import_form=None, edit_form=None):
+    locked = sprint.summaries.exists()
+    editing = edit_form is not None or request.GET.get("edit") == "1"
+    has_requirements = sprint.requirements.exists()
+    copy_sources = []
+    if not has_requirements:
+        copy_sources = list(
+            sprint.project.sprints.exclude(pk=sprint.pk)
+            .annotate(requirement_count=Count("requirements"))
+            .filter(requirement_count__gt=0)
+            .order_by("start_date")
+        )
+    return render(
+        request,
+        "dashboard/sprint.html",
+        {
+            "sprint": sprint,
+            "project": sprint.project,
+            "requirements": sprint.requirements.order_by("number"),
+            "editing_requirement_id": services.parse_id(request.GET.get("edit_requirement")),
+            "import_form": import_form or RequirementImportForm(),
+            "editing": editing,
+            "edit_form": edit_form
+            or (SprintForm(instance=sprint, project=sprint.project, dates_locked=locked) if editing else None),
+            "dates_locked": locked,
+            "copy_sources": copy_sources,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def sprint_create(request, project_id):
+    project = services.get_project_for_instructor(request.user, project_id)
+    if request.method == "POST":
+        form = SprintForm(request.POST, project=project)
+        if form.is_valid():
+            sprint = form.save()
+            messages.success(request, f"Added {sprint.name}.")
+            return redirect("dashboard:sprint", sprint_id=sprint.id)
+    else:
+        start, end = setup.default_sprint_dates(project)
+        form = SprintForm(project=project, initial={"start_date": start, "end_date": end})
+    return render(request, "dashboard/sprint_new.html", {"project": project, "form": form})
+
+
+@login_required
+def sprint(request, sprint_id):
+    return _render_sprint(request, services.get_sprint_for_instructor(request.user, sprint_id))
+
+
+@login_required
+@require_POST
+def sprint_edit(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    # The form edits a fresh copy, so a rejected edit doesn't change the name the page shows.
+    form = SprintForm(
+        request.POST,
+        instance=Sprint.objects.get(pk=sprint.pk),
+        project=sprint.project,
+        dates_locked=sprint.summaries.exists(),
+    )
+    if form.is_valid():
+        form.save()
+        messages.success(request, "Saved the sprint.")
+        return redirect("dashboard:sprint", sprint_id=sprint.id)
+    return _render_sprint(request, sprint, edit_form=form)
+
+
+@login_required
+@require_POST
+def sprint_delete(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    setup.delete_sprint(sprint)
+    messages.success(request, f"Deleted {sprint.name}.")
+    return redirect("dashboard:project_setup", project_id=sprint.project_id)
+
+
+@login_required
+@require_POST
+def sprint_requirements_import(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    if sprint.requirements.exists():
+        messages.error(request, setup.SPRINT_ALREADY_HAS_REQUIREMENTS)
+        return redirect("dashboard:sprint", sprint_id=sprint.id)
+    form = RequirementImportForm(request.POST, request.FILES)
+    if form.is_valid():
+        try:
+            requirements = setup.import_sprint_requirements(sprint, form.cleaned_data["text"])
+        except setup.RequirementImportError as error:
+            messages.error(request, str(error))
+        else:
+            count = len(requirements)
+            messages.success(
+                request, f"Imported {count} {ngettext('requirement', 'requirements', count)}."
+            )
+            return redirect("dashboard:sprint", sprint_id=sprint.id)
+    return _render_sprint(request, sprint, import_form=form)
+
+
+@login_required
+@require_POST
+def sprint_requirement_add(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    destination = redirect("dashboard:sprint", sprint_id=sprint.id)
+    return _change_requirement(
+        request, destination, setup.add_sprint_requirement, sprint, request.POST.get("text", "")
+    )
+
+
+@login_required
+@require_POST
+def sprint_requirements_copy(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    destination = redirect("dashboard:sprint", sprint_id=sprint.id)
+    source = Sprint.objects.filter(
+        pk=services.parse_id(request.POST.get("source")), project_id=sprint.project_id
+    ).first()
+    if source is None:
+        messages.error(request, "Choose a sprint from this project.")
+        return destination
+    try:
+        copied = setup.copy_sprint_requirements(source, sprint)
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+    else:
+        count = len(copied)
+        noun = ngettext("requirement", "requirements", count)
+        messages.success(request, f"Copied {count} {noun} from {source.name}.")
+    return destination
