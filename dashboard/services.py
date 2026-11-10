@@ -268,14 +268,9 @@ def team_repos(team):
 
 def remove_student(membership):
     """Take a student off their team, then recompute its flags, since the shares change.
-    Their disputes, offline contributions and confirmations on the team go too, since no page
-    could reach them once they're gone and a confirmation only counts from a teammate."""
+    Their disputes on the team go too, since no page could reach them once they're gone."""
     with transaction.atomic():
         FlagDispute.objects.filter(team=membership.team_id, student=membership.user_id).delete()
-        Contribution.objects.filter(team=membership.team_id, student=membership.user_id).delete()
-        Corroboration.objects.filter(
-            contribution__team=membership.team_id, teammate=membership.user_id
-        ).delete()
         setup_services.remove_student(membership)
         flags.compute_flags(membership.team)
 
@@ -288,7 +283,8 @@ def team_wide_flags(team):
 def team_memberships_with_summaries(team):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
     `team_flags` about them, their `team_disputes`, `team_contributions` and the
-    `team_corroborations` they gave."""
+    `team_corroborations` they gave. Each membership has `confirmations_of_their_work`, how
+    many times teammates confirmed the student's contributions on this team."""
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
@@ -297,6 +293,12 @@ def team_memberships_with_summaries(team):
     )
     return (
         team.memberships.select_related("user")
+        .annotate(
+            confirmations_of_their_work=Count(
+                "user__contributions__corroborations",
+                filter=Q(user__contributions__team=team),
+            )
+        )
         .order_by("user__last_name", "user__first_name", "user__github_login")
         .prefetch_related(
             Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"),

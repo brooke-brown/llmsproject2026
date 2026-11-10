@@ -4,9 +4,12 @@ from django.conf import settings
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.utils import timezone
 
 from core.models import Sprint, Team, TeamMembership
+from ingest.services import REPORTING_TIME_ZONE
 
 
 class Contribution(models.Model):
@@ -50,8 +53,11 @@ class Contribution(models.Model):
         """The project's sprints whose dates include this contribution's date, earliest first.
 
         Worked out from the date rather than stored, so a day shared by two sprints is in
-        both and a sprint set up later picks up what was already logged.
+        both and a sprint set up later picks up what was already logged. Empty until the team
+        and date are set, since a form can re-render a contribution that failed validation.
         """
+        if self.team_id is None or self.date is None:
+            return Sprint.objects.none()
         return Sprint.objects.filter(
             project_id=self.team.project_id, start_date__lte=self.date, end_date__gte=self.date
         ).order_by("start_date")
@@ -72,7 +78,7 @@ class Contribution(models.Model):
             ).exists()
         ):
             errors[NON_FIELD_ERRORS] = "This student isn't on this team."
-        if self.date is not None and self.date > timezone.localdate():
+        if self.date is not None and self.date > timezone.localdate(timezone=REPORTING_TIME_ZONE):
             errors["date"] = "The date can't be in the future."
         if errors:
             raise ValidationError(errors)
@@ -111,3 +117,13 @@ class Corroboration(models.Model):
         ).exists()
         if not on_team:
             raise ValidationError("Only someone on the contribution's team can corroborate it.")
+
+
+@receiver(post_delete, sender=TeamMembership)
+def delete_work_on_team(sender, instance, **kwargs):
+    """Delete what a departing student logged and confirmed on the team, which needs them to
+    be on it. A signal rather than a service, because deletes in the admin call no service."""
+    Contribution.objects.filter(team=instance.team_id, student=instance.user_id).delete()
+    Corroboration.objects.filter(
+        contribution__team=instance.team_id, teammate=instance.user_id
+    ).delete()
