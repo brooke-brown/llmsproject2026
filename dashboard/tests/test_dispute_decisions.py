@@ -16,15 +16,15 @@ from django.utils.html import escape
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag, FlagDispute
 
+from .sprint_helpers import flaggable_sprint, sprint_for
 from .test_course_overview import enroll, make_user, overview_url, team_url
 from .test_show_flags import article_containing
 
 Role = Enrollment.Role
 Severity = Flag.Severity
 Status = FlagDispute.Status
-WEEK = date(2026, 10, 26)
 RULE = "low-requirement-share"
-REASON = "Ada Sample did 10% of the team's requirement-tied work in the week of Oct 26."
+REASON = "Ada Sample did 10% of the team's requirement-tied work in Sprint 1."
 NOW = datetime(2026, 11, 5, 14, 30, tzinfo=ZoneInfo("America/New_York"))
 
 
@@ -33,14 +33,15 @@ def decide_url(dispute_id):
 
 
 def make_flag(team, user, severity=Severity.FLAG, reason=REASON, **fields):
-    values = {"rule": RULE, "week_start": WEEK, **fields}
+    values = {"rule": RULE, **fields}
+    values.setdefault("sprint", flaggable_sprint(team))
     return Flag.objects.create(team=team, user=user, severity=severity, reason=reason, **values)
 
 
 def make_dispute(team, student, **fields):
     values = {
         "rule": RULE,
-        "week_start": WEEK,
+        "sprint": sprint_for(team.project),
         "flag_reason": REASON,
         "severity": "flag",
         "explanation": "I ran our user interviews that week, which aren't in the repo.",
@@ -68,6 +69,11 @@ class DisputeFixture(TestCase):
         for student in [cls.ada, cls.grace]:
             enroll(student, cls.course, Role.STUDENT)
             TeamMembership.objects.create(user=student, team=cls.alpha)
+        # Only a team with students can raise flags.
+        for team in [cls.beta, cls.charlie]:
+            student = make_user(f"sample-{team.name.split()[-1].lower()}")
+            enroll(student, cls.course, Role.STUDENT)
+            TeamMembership.objects.create(user=student, team=team)
 
     def setUp(self):
         self.client.force_login(self.instructor)
@@ -80,6 +86,10 @@ class DisputeFixture(TestCase):
 
     def student_article(self, user, team=None):
         content = self.team_page(team)
+        # The name links to the student's latest summary once they have one.
+        linked = f"{user.display_name}</a></strong>"
+        if linked in content:
+            return article_containing(content, linked)
         return article_containing(content, f"<strong>{user.display_name}")
 
     def decide(self, dispute, decision, note=""):
@@ -477,17 +487,17 @@ class DecideTests(DisputeFixture):
         from dashboard import services
 
         self.decide(self.dispute, "withdraw")
-        # A rerun raises the same rule for the same student and week, reworded.
+        # A rerun raises the same rule for the same student and sprint, reworded.
         with mock.patch(
             "dashboard.flags.RULES",
-            [lambda team: [Flag(team=team, user=self.ada, rule=RULE, reason="Reworded.",
-                                severity=Severity.WARNING, week_start=WEEK)]],
+            [lambda team, sprint: [Flag(team=team, user=self.ada, rule=RULE, reason="Reworded.",
+                                        severity=Severity.WARNING, sprint=sprint)]],
         ):
             from dashboard.flags import compute_flags
 
             compute_flags(self.alpha)
 
-        self.assertEqual(services.team_status(self.alpha), "none")
+        self.assertEqual(services.team_status(self.alpha), "ok")
         self.assertIn("Withdrawn after dispute", self.student_article(self.ada))
         self.assertNotIn("Reworded.", self.student_article(self.ada))
 

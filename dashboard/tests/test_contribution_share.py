@@ -2,7 +2,7 @@
 
 The share is the one the low-share flag rule uses: each student's verified,
 requirement-tied claims weighted by significance, as a percentage of the team's total,
-for the latest week in which every student on the team has a summary. It's shown for
+for the latest sprint in which every student on the team has a summary. It's shown for
 every team, flagged or not.
 """
 
@@ -14,10 +14,7 @@ from core.models import Course, Enrollment, Project, Team, TeamMembership
 from summaries.models import Claim, Summary
 
 from .test_course_overview import enroll, make_user, team_url
-from .test_flag_rules import give
-
-WEEK = date(2026, 10, 26)
-EARLIER_WEEK = date(2026, 10, 19)
+from .sprint_helpers import give, sprint_for
 
 
 class ContributionShareTests(TestCase):
@@ -28,6 +25,10 @@ class ContributionShareTests(TestCase):
         enroll(cls.instructor, course, Enrollment.Role.INSTRUCTOR)
         project = Project.objects.create(course=course, name="Project One")
         cls.team = Team.objects.create(project=project, name="Team Alpha")
+        cls.sprint = sprint_for(project)
+        cls.earlier = sprint_for(
+            project, "Sprint 0", start=date(2026, 10, 19), end=date(2026, 10, 25)
+        )
         cls.ada = make_user("sample-ada", "Ada", "Sample")
         cls.grace = make_user("sample-grace", "Grace", "Example")
         for student in [cls.ada, cls.grace]:
@@ -62,20 +63,20 @@ class ContributionShareTests(TestCase):
         self.assertIn("50%", self.share_beside(content, "Ada Sample"))
         self.assertIn("50%", self.share_beside(content, "Grace Example"))
 
-    def test_says_which_week_the_shares_are_for(self):
+    def test_says_which_sprint_the_shares_are_for(self):
         give(self.ada, self.team, "major")
         give(self.grace, self.team, "minor")
 
-        self.assertIn("week of Oct 26, 2026", self.page())
+        self.assertIn("Sprint 1 (Oct 26 – Nov 1, 2026)", self.page())
 
-    def test_uses_the_latest_week_every_student_has_a_summary(self):
-        give(self.ada, self.team, "major", week=EARLIER_WEEK)
-        give(self.grace, self.team, "major", week=EARLIER_WEEK)
-        give(self.ada, self.team, "major")  # Grace has no summary this week.
+    def test_uses_the_latest_sprint_every_student_has_a_summary(self):
+        give(self.ada, self.team, "major", sprint=self.earlier)
+        give(self.grace, self.team, "major", sprint=self.earlier)
+        give(self.ada, self.team, "major")  # Grace has no summary this sprint.
 
         content = self.page()
 
-        self.assertIn("week of Oct 19, 2026", content)
+        self.assertIn("Sprint 0 (Oct 19 – Oct 25, 2026)", content)
         self.assertIn("50%", self.share_beside(content, "Ada Sample"))
 
     def test_only_verified_requirement_tied_claims_count(self):
@@ -98,7 +99,7 @@ class ContributionShareTests(TestCase):
 
     def test_no_shares_when_nobody_has_requirement_tied_work(self):
         give(self.ada, self.team, "major", tied=False)
-        Summary.objects.create(team=self.team, user=self.grace, week_start=WEEK)
+        Summary.objects.create(team=self.team, user=self.grace, sprint=self.sprint)
 
         content = self.page()
 

@@ -32,6 +32,7 @@ from ingest.models import Artifact
 from summaries import schemas
 from summaries.models import Claim, Summary
 
+from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user, overview_url, team_url
 from .test_generate_summary import generate_url, page_messages, team_article
 
@@ -793,7 +794,7 @@ class RemoveStudentTests(TeamSetupFixture):
             rule="low-requirement-share",
             reason="Sample reason.",
             severity=Flag.Severity.FLAG,
-            week_start=WEEK,
+            sprint=sprint_for(self.team.project),
         )
 
         self.remove()

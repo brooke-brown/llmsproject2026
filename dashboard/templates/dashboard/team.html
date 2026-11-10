@@ -56,7 +56,7 @@
     </header>
     {% for flag in membership.user.team_flags %}
     {% if flag.is_withdrawn %}
-    <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j" }}</p>
+    <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} in {{ flag.sprint.name }}</p>
     {% else %}
     <p class="finding {{ flag.severity }}"><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
     {% endif %}
@@ -89,10 +89,10 @@
   {% endfor %}
 </div>
 
-{% if share_week %}
+{% if share_sprint %}
 <section class="chart" aria-labelledby="share-title">
-  <h2 id="share-title">Share of requirement-tied work, week of {{ share_week|date:"M j" }}{% if share_week_note %} ({{ share_week_note }}){% endif %}</h2>
-  <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.{% if share_week_note %} This week's summaries are partial, so these shares may change, and flags don't use them.{% endif %}</p>
+  <h2 id="share-title">Share of requirement-tied work, {{ share_sprint.name }}{% if share_sprint_note %} ({{ share_sprint_note }}){% endif %}</h2>
+  <p class="why">Percentages are each student's share of the team's requirement-tied work in {{ share_sprint.name }} ({{ share_sprint.start_date|date:"M j" }} – {{ share_sprint.end_date|date:"M j, Y" }}), weighted by significance. Requirement tags and significance are LLM judgments.{% if share_sprint_note %} This sprint's summaries are partial, so these shares may change, and flags don't use them.{% endif %}</p>
   <div class="pie-wrap">
     <svg class="pie" viewBox="0 0 100 100" role="img" aria-label="Pie chart of each student's share of the team's requirement-tied work">
       {% for membership in legend %}{% if membership.pie %}

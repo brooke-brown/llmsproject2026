@@ -44,8 +44,8 @@ def student_home(request):
 
 @login_required
 @require_http_methods(["GET", "POST"])
-def flag_dispute(request, team_id, rule, week):
-    page = services.get_dispute_page(request.user, team_id, rule, week)
+def flag_dispute(request, team_id, rule, sprint_id):
+    page = services.get_dispute_page(request.user, team_id, rule, sprint_id)
     explanation = page.dispute.explanation if page.dispute else ""
     error = ""
     if request.method == "POST":
@@ -116,7 +116,7 @@ def course_generating_status(request, course_id):
 @login_required
 def team(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
-    memberships, share_week = services.add_contribution_shares(
+    memberships, share_sprint = services.add_contribution_shares(
         team, services.team_memberships_with_summaries(team)
     )
     services.add_disputes(memberships)
@@ -129,8 +129,10 @@ def team(request, team_id):
             "team_flags": services.team_wide_flags(team),
             "memberships": memberships,
             "legend": services.pie_legend(memberships),
-            "share_week": share_week,
-            "share_week_note": services.share_week_note(team, share_week) if share_week else "",
+            "share_sprint": share_sprint,
+            "share_sprint_note": (
+                services.share_sprint_note(team, share_sprint) if share_sprint else ""
+            ),
             "team_status": services.team_status(team),
             "equal_share": round(100 / len(memberships)) if memberships else None,
             "can_set_up": services.is_course_instructor(request.user, team.project.course),

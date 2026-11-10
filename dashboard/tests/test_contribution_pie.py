@@ -17,7 +17,7 @@ from dashboard.models import Flag
 from summaries.models import Summary
 
 from .test_course_overview import enroll, make_user, team_url
-from .test_flag_rules import WEEK, give
+from .sprint_helpers import give, sprint_for
 
 COLOUR = re.compile(r"var\(--[a-z0-9-]+\)")
 PATH = re.compile(r"M50 50 L(\S+) (\S+) A50 50 0 ([01]) 1 (\S+) (\S+) Z")
@@ -73,7 +73,8 @@ class PieFixture(TestCase):
 
     def flag(self, student, severity):
         Flag.objects.create(
-            team=self.team, user=student, rule="r", reason="x", severity=severity, week_start=WEEK
+            team=self.team, user=student, rule="r", reason="x", severity=severity,
+            sprint=sprint_for(self.team.project),
         )
 
     def page(self):
@@ -186,9 +187,10 @@ class LegendTests(PieFixture):
 
     def test_a_name_links_to_the_students_newest_summary(self):
         first, second = self.make_students(["major"], ["minor"])
-        newest = Summary.objects.create(
-            team=self.team, user=first, week_start=date(2026, 11, 2)
+        sprint_2 = sprint_for(
+            self.team.project, "Sprint 2", start=date(2026, 11, 2), end=date(2026, 11, 8)
         )
+        newest = Summary.objects.create(team=self.team, user=first, sprint=sprint_2)
 
         row = legend_rows(self.page())[0]
 
@@ -267,5 +269,5 @@ class EqualShareNoteTests(PieFixture):
 
         content = self.page()
 
-        self.assertIn("requirement-tied work in the week of Oct 26, 2026, weighted by significance", content)
+        self.assertIn("requirement-tied work in Sprint 1 (Oct 26 – Nov 1, 2026), weighted by significance", content)
         self.assertIn("LLM judgments", content)

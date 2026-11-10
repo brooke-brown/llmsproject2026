@@ -289,14 +289,15 @@ class SummarySprintModelTests(SprintTestCase):
             Summary.objects.create(team=self.team, user=self.student, week_start=date(2026, 10, 26))
 
 
-class WeeklyCodeIgnoresSprintSummariesTests(SprintTestCase):
-    """Until T-21, the weekly flag code runs beside sprint summaries and must not trip on them."""
+class SprintFlagCodeIgnoresWeeklySummariesTests(SprintTestCase):
+    """Until T-21, weekly summaries sit beside sprint summaries, and the sprint flag code
+    (US-41) must not trip on them."""
 
-    def test_weekly_requirement_shares_skip_a_sprint_summary(self):
+    def test_sprint_requirement_shares_skip_a_weekly_summary(self):
         from dashboard import flags
 
         for user in (self.student, self.other):
             Summary.objects.create(team=self.team, user=user, sprint=self.sprint)
             Summary.objects.create(team=self.team, user=user, week_start=date(2026, 10, 26))
-        # Both kinds exist, so the weekly code would compare a date with None without the guard.
-        self.assertIsNone(flags.requirement_shares(self.team, include_partial=True))
+        # Neither kind has claims, so there's nothing to compare.
+        self.assertIsNone(flags.requirement_shares(self.team))

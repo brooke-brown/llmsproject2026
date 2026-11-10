@@ -19,6 +19,7 @@ from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag
 from summaries.models import Summary
 
+from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user, team_url
 from .test_team_setup import (
     TeamSetupFixture,
@@ -44,7 +45,7 @@ def dispute_for(flag):
 def make_dispute(team, student, **fields):
     values = {
         "rule": RULE,
-        "week_start": WEEK,
+        "sprint": sprint_for(team.project),
         "flag_reason": "Ada Sample did 10% of the team's requirement-tied work.",
         "severity": "flag",
         "explanation": "I ran our user interviews that week, which aren't in the repo.",
@@ -58,7 +59,7 @@ def make_flag(team, user, **fields):
         "rule": RULE,
         "reason": "Ada Sample did 10% of the team's requirement-tied work.",
         "severity": Flag.Severity.FLAG,
-        "week_start": WEEK,
+        "sprint": sprint_for(team.project),
         **fields,
     }
     return Flag.objects.create(team=team, user=user, **values)
@@ -72,6 +73,9 @@ class DisputeFixture(TestCase):
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         cls.ada = make_user("sample-ada", "Ada", "Sample")
         cls.instructor = make_user("sample-instructor")
+        cls.next_sprint = sprint_for(
+            cls.project, "Sprint 2", start=date(2026, 11, 2), end=date(2026, 11, 8)
+        )
 
 
 class FlagDisputeModelTests(DisputeFixture):
@@ -82,7 +86,7 @@ class FlagDisputeModelTests(DisputeFixture):
         self.assertEqual(dispute.team, self.team)
         self.assertEqual(dispute.student, self.ada)
         self.assertEqual(dispute.rule, RULE)
-        self.assertEqual(dispute.week_start, WEEK)
+        self.assertEqual(dispute.sprint, sprint_for(self.project))
         self.assertEqual(dispute.severity, "warning")
         self.assertIn("user interviews", dispute.explanation)
         self.assertIn("10%", dispute.flag_reason)
@@ -130,20 +134,20 @@ class FlagDisputeModelTests(DisputeFixture):
         with self.assertRaises(IntegrityError), transaction.atomic():
             make_dispute(self.team, self.ada, severity="minor")
 
-    def test_a_student_can_dispute_a_rule_and_week_once(self):
+    def test_a_student_can_dispute_a_rule_and_sprint_once(self):
         make_dispute(self.team, self.ada)
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             make_dispute(self.team, self.ada, explanation="A second one.")
 
-    def test_a_student_can_dispute_another_week_or_rule(self):
+    def test_a_student_can_dispute_another_sprint_or_rule(self):
         make_dispute(self.team, self.ada)
-        make_dispute(self.team, self.ada, week_start=date(2026, 11, 2))
+        make_dispute(self.team, self.ada, sprint=self.next_sprint)
         make_dispute(self.team, self.ada, rule="another-rule")
 
         self.assertEqual(dispute_model().objects.count(), 3)
 
-    def test_teammates_can_dispute_the_same_rule_and_week(self):
+    def test_teammates_can_dispute_the_same_rule_and_sprint(self):
         teammate = make_user("sample-teammate")
         make_dispute(self.team, self.ada)
         make_dispute(self.team, teammate)
@@ -159,12 +163,12 @@ class FlagDisputeModelTests(DisputeFixture):
 
         self.assertNotIn(Flag, related)
 
-    def test_its_str_names_the_student_rule_and_week_but_not_the_explanation(self):
+    def test_its_str_names_the_student_rule_and_sprint_but_not_the_explanation(self):
         text = str(make_dispute(self.team, self.ada))
 
         self.assertIn("sample-ada", text)
         self.assertIn(RULE, text)
-        self.assertIn("2026-10-26", text)
+        self.assertIn("Sprint 1", text)
         self.assertNotIn("user interviews", text)
 
     def test_deleting_the_team_deletes_its_disputes(self):
@@ -199,7 +203,7 @@ class DisputeForTests(DisputeFixture):
     def test_it_returns_none_for_an_undisputed_flag(self):
         self.assertIsNone(dispute_for(make_flag(self.team, self.ada)))
 
-    def test_it_matches_on_team_student_rule_and_week(self):
+    def test_it_matches_on_team_student_rule_and_sprint(self):
         teammate = make_user("sample-teammate")
         other_team = Team.objects.create(project=self.project, name="Team Beta")
         make_dispute(self.team, self.ada)
@@ -208,7 +212,7 @@ class DisputeForTests(DisputeFixture):
             make_flag(self.team, teammate),
             make_flag(other_team, self.ada),
             make_flag(self.team, self.ada, rule="another-rule"),
-            make_flag(self.team, self.ada, week_start=date(2026, 11, 2)),
+            make_flag(self.team, self.ada, sprint=self.next_sprint),
         ]:
             with self.subTest(flag=str(flag)):
                 self.assertIsNone(dispute_for(flag))

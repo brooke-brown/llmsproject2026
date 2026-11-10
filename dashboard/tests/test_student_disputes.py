@@ -1,13 +1,13 @@
 """Tests for US-31 (#108): a student disputes a flag or warning about them.
 
-Until US-41 (#123) moves flags onto sprints, a flag and its dispute are matched by week, and
-the page labels the flag by its week.
+A flag and its dispute are matched by sprint (US-41), and the page labels the flag by its
+sprint.
 
 URLs are reversed per test rather than at module level, so each criterion passes or fails
 on its own instead of the whole module failing on a single NoReverseMatch.
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 from unittest import mock
 
 from django.test import Client
@@ -16,17 +16,17 @@ from django.utils import timezone
 from django.utils.formats import date_format
 from django.utils.html import escape
 
-from core.models import Enrollment
+from core.models import Enrollment, Project
 from dashboard import services
 from dashboard.flags import compute_flags
 from dashboard.models import Flag, FlagDispute
 
+from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user
 from .test_student_home import StudentHomeFixture, make_flag, student_home_url
 
 Role = Enrollment.Role
-WEEK = date(2026, 11, 2)
-REASON = "Casey Sample did 10% of the team's requirement-tied work in the week of Nov 2."
+REASON = "Casey Sample did 10% of the team's requirement-tied work in Sprint 2."
 
 
 def dispute_url(flag_or_dispute):
@@ -36,14 +36,14 @@ def dispute_url(flag_or_dispute):
         args=[
             flag_or_dispute.team_id,
             flag_or_dispute.rule,
-            flag_or_dispute.week_start.isoformat(),
+            flag_or_dispute.sprint_id,
         ],
     )
 
 
 class DisputeFixture(StudentHomeFixture):
     def setUp(self):
-        self.flag = make_flag(self.team, self.student, WEEK, REASON)
+        self.flag = make_flag(self.team, self.student, self.sprint2, REASON)
         self.client.force_login(self.student)
 
     def submit(self, explanation, flag=None):
@@ -54,7 +54,7 @@ class DisputeFixture(StudentHomeFixture):
             team=self.team,
             student=self.student,
             rule=self.flag.rule,
-            week_start=self.flag.week_start,
+            sprint=self.flag.sprint,
             flag_reason=self.flag.reason,
             severity=self.flag.severity,
             explanation=fields.pop("explanation", "I paired on most of it."),
@@ -69,11 +69,11 @@ class OpeningADisputeTests(DisputeFixture):
         self.assertContains(response, f'href="{dispute_url(self.flag)}"')
         self.assertContains(response, ">Dispute<")
 
-    def test_the_page_shows_the_flags_severity_week_and_reason_and_a_text_box(self):
+    def test_the_page_shows_the_flags_severity_sprint_and_reason_and_a_text_box(self):
         response = self.client.get(dispute_url(self.flag))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Flag")
-        self.assertContains(response, "Week of Nov 2, 2026")
+        self.assertContains(response, "Sprint 2 (Nov 2 – Nov 8, 2026)")
         self.assertContains(response, escape(REASON))
         self.assertContains(response, 'name="explanation"')
 
@@ -88,7 +88,7 @@ class OpeningADisputeTests(DisputeFixture):
         self.assertEqual(dispute.team, self.team)
         self.assertEqual(dispute.student, self.student)
         self.assertEqual(dispute.rule, self.flag.rule)
-        self.assertEqual(dispute.week_start, WEEK)
+        self.assertEqual(dispute.sprint, self.sprint2)
         self.assertEqual(dispute.flag_reason, REASON)
         self.assertEqual(dispute.severity, Flag.Severity.FLAG)
         self.assertEqual(dispute.explanation, "I paired with Riley on PR 12.")
@@ -128,7 +128,7 @@ class OpeningADisputeTests(DisputeFixture):
 
     def test_a_warning_can_be_disputed_too(self):
         warning = make_flag(
-            self.team, self.student, WEEK - timedelta(days=7), "A warning.",
+            self.team, self.student, self.sprint1, "A warning.",
             Flag.Severity.WARNING,
         )
         self.submit("My explanation.", flag=warning)
@@ -257,7 +257,7 @@ class AfterRegeneratingTests(DisputeFixture):
         self.make_dispute(explanation="My side.")
         self.flag.delete()
         again = make_flag(
-            self.team, self.student, WEEK, "New wording.", Flag.Severity.WARNING
+            self.team, self.student, self.sprint2, "New wording.", Flag.Severity.WARNING
         )
         response = self.client.get(dispute_url(again))
         self.assertContains(response, "My side.")
@@ -267,7 +267,7 @@ class AfterRegeneratingTests(DisputeFixture):
         # Todd's #2: compute_flags deletes and recreates flags, so Flag.pk changes.
         url = dispute_url(self.flag)
         self.flag.delete()
-        again = make_flag(self.team, self.student, WEEK, REASON)
+        again = make_flag(self.team, self.student, self.sprint2, REASON)
         self.assertNotEqual(again.pk, self.flag.pk)
         self.assertEqual(self.client.get(url).status_code, 200)
         response = self.client.post(url, {"explanation": "Typed while it was regenerating."})
@@ -280,7 +280,7 @@ class AfterRegeneratingTests(DisputeFixture):
         # Todd's #4.
         self.make_dispute(status=FlagDispute.Status.FLAG_KEPT, resolution_note="About the 10%.")
         self.flag.delete()
-        make_flag(self.team, self.student, WEEK, "Did 30% this time.", Flag.Severity.WARNING)
+        make_flag(self.team, self.student, self.sprint2, "Did 30% this time.", Flag.Severity.WARNING)
         response = self.client.get(dispute_url(self.flag))
         self.assertContains(response, escape(REASON))
         self.assertNotContains(response, "Did 30% this time.")
@@ -346,8 +346,8 @@ class DisputeAccessTests(DisputeFixture):
         self.assertFalse(FlagDispute.objects.exists())
 
     def test_a_flag_about_the_whole_team_gets_403(self):
-        # Another week, so the URL doesn't also name the flag about me.
-        team_flag = make_flag(self.team, None, WEEK - timedelta(days=7), "About the whole team.")
+        # Another sprint, so the URL doesn't also name the flag about me.
+        team_flag = make_flag(self.team, None, self.sprint1, "About the whole team.")
         self.assertEqual(self.client.get(dispute_url(team_flag)).status_code, 403)
 
     def test_a_flag_on_a_team_im_no_longer_on_gets_403(self):
@@ -359,11 +359,14 @@ class DisputeAccessTests(DisputeFixture):
         self.assertEqual(self.client.get(dispute_url(self.flag)).status_code, 403)
 
     def test_a_flag_that_doesnt_exist_gets_404(self):
+        other_project = Project.objects.create(course=self.course, name="Project Two")
+        other_project_sprint = sprint_for(other_project)
         for args in (
-            [self.team.id, self.flag.rule, "2026-10-26"],  # No flag that week.
-            [self.team.id, "no-such-rule", WEEK.isoformat()],
-            [self.team.id + 1000, self.flag.rule, WEEK.isoformat()],
-            [self.team.id, self.flag.rule, "2026-13-40"],  # Not a date.
+            [self.team.id, self.flag.rule, self.sprint1.id],  # No flag that sprint.
+            [self.team.id, "no-such-rule", self.sprint2.id],
+            [self.team.id + 1000, self.flag.rule, self.sprint2.id],
+            [self.team.id, self.flag.rule, self.sprint2.id + 1000],  # No such sprint.
+            [self.team.id, self.flag.rule, other_project_sprint.id],
         ):
             with self.subTest(args=args):
                 url = reverse("dashboard:flag_dispute", args=args)

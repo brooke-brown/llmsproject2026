@@ -22,8 +22,7 @@ from dashboard.models import Flag, FlagDispute
 from ingest.models import Artifact
 from summaries.models import Claim, Summary, ValidationRun
 
-from .test_course_overview import enroll, make_user, overview_url
-from .test_flag_rules import give as give_week
+from .test_course_overview import enroll, make_user, overview_url, team_url
 from .test_show_flags import article_containing
 
 Role = Enrollment.Role
@@ -232,8 +231,16 @@ class ShareTests(SprintFlagFixture):
         self.assertEqual(self.flagged(solo, self.sprint2), {})
 
     def test_weekly_summaries_raise_no_flags(self):
-        give_week(self.ada, self.pair, "minor", week=date(2026, 10, 26))
-        give_week(self.grace, self.pair, "major", "major", week=date(2026, 10, 26))
+        for student, significances in [(self.ada, ["minor"]), (self.grace, ["major", "major"])]:
+            summary = Summary.objects.create(
+                team=self.pair, user=student, week_start=date(2026, 10, 26)
+            )
+            for significance in significances:
+                Claim.objects.create(
+                    summary=summary, text="Sample work", category="feature", artifact_ids=[],
+                    requirement_ids=[1], significance=significance,
+                    status=Claim.Status.VERIFIED,
+                )
 
         self.compute(self.pair)
 
@@ -469,3 +476,88 @@ class CourseOverviewTests(SprintFlagFixture):
         self.compute(self.pair)
 
         self.assertEqual(self.label(self.pair), "Flag")
+
+
+class TeamPageShareTests(SprintFlagFixture):
+    """The team page's shares use the latest sprint every student has a summary for, partial
+    or not, and only mark a student's slice for a flag in that sprint."""
+
+    def give_finished_sprint(self):
+        """Ada did most of Sprint 2's work, so Grace gets a warning."""
+        self.give(self.ada, self.pair, self.sprint2, "major")
+        self.give(self.grace, self.pair, self.sprint2, "minor")
+
+    def team_page(self):
+        self.client.force_login(self.instructor)
+        return self.client.get(team_url(self.pair.id))
+
+    def team_page_with_a_running_sprint(self, ada="major", grace="minor"):
+        self.give_finished_sprint()
+        self.compute(self.pair)
+        self.give(self.ada, self.pair, self.sprint3, ada, generated=NOW)
+        self.give(self.grace, self.pair, self.sprint3, grace, generated=NOW)
+        return self.team_page()
+
+    def test_the_chart_shows_a_running_sprint_and_says_so(self):
+        response = self.team_page_with_a_running_sprint()
+
+        self.assertContains(response, "Sprint 3 (in progress)")
+        self.assertContains(response, "flags don't use them")
+        self.assertEqual(response.context["share_sprint"], self.sprint3)
+        shares = {m.user_id: m.contribution_share for m in response.context["memberships"]}
+        self.assertEqual(shares, {self.ada.id: 75, self.grace.id: 25})
+
+    def test_the_chart_says_partial_once_the_sprint_has_ended(self):
+        self.give(self.ada, self.pair, self.sprint2, "major", generated=DURING_SPRINT_2)
+        self.give(self.grace, self.pair, self.sprint2, "minor", generated=DURING_SPRINT_2)
+
+        self.assertContains(self.team_page(), "Sprint 2 (partial)")
+
+    def test_a_complete_chart_has_no_note(self):
+        self.give_finished_sprint()
+
+        response = self.team_page()
+
+        self.assertContains(response, "work, Sprint 2</h2>")
+        self.assertNotContains(response, "flags don't use them")
+
+    def test_a_student_missing_from_the_running_sprint_keeps_the_chart_on_a_full_one(self):
+        self.give_finished_sprint()
+        self.give(self.ada, self.pair, self.sprint3, "major", generated=NOW)
+
+        self.assertEqual(self.team_page().context["share_sprint"], self.sprint2)
+
+    def test_a_running_sprint_cant_raise_a_flag_or_clear_an_earlier_one(self):
+        self.give_finished_sprint()
+        self.compute(self.pair)
+        before = list(Flag.objects.values_list("user_id", "sprint_id"))
+        self.assertEqual(before, [(self.grace.id, self.sprint2.id)])
+        self.give(self.ada, self.pair, self.sprint3, "minor", generated=NOW)
+        self.give(self.grace, self.pair, self.sprint3, "major", "major", generated=NOW)
+
+        self.compute(self.pair)
+
+        self.assertEqual(list(Flag.objects.values_list("user_id", "sprint_id")), before)
+
+    def test_a_flag_from_another_sprint_doesnt_mark_the_chart(self):
+        """Grace's warning is about Sprint 2, and she's at 75% in the sprint on the chart."""
+        response = self.team_page_with_a_running_sprint(ada="minor", grace="major")
+
+        rows = {m.user_id: m for m in response.context["legend"]}
+        self.assertIsNone(rows[self.grace.id].chart_flag)
+        self.assertNotIn("var(--warn)", rows[self.grace.id].pie["color"])
+        self.assertNotIn("var(--flag)", rows[self.grace.id].pie["color"])
+
+    def test_that_flag_still_shows_on_the_students_card_naming_its_sprint(self):
+        response = self.team_page_with_a_running_sprint(ada="minor", grace="major")
+
+        self.assertContains(response, "work in Sprint 2")
+
+    def test_a_flag_for_the_sprint_on_the_chart_still_marks_it(self):
+        self.give_finished_sprint()
+        self.compute(self.pair)
+
+        rows = {m.user_id: m for m in self.team_page().context["legend"]}
+
+        self.assertEqual(rows[self.grace.id].chart_flag.severity, Flag.Severity.WARNING)
+        self.assertEqual(rows[self.grace.id].pie["color"], "var(--warn)")
