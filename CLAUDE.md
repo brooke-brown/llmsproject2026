@@ -35,7 +35,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 
 These are the interfaces between apps. Changing them silently breaks other work. If a task seems to need a contract change, stop and say so instead of making it, unless its issue already calls for that change.
 
-The `Sprint` model and `generate_sprint_summary` (T-19) are built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
+The `Sprint` model and `generate_sprint_summary` (T-19, with the T-20 chunking and merge) are built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
 
 - **Models in `core/` and `ingest/`** (field names and types)
 - **Claim schema** in `summaries/schemas.py`. Requirement mapping and significance are based on what the work accomplishes, not lines changed; empty `requirement_ids` means not tied to a requirement.
