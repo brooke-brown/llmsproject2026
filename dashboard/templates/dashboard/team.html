@@ -68,7 +68,7 @@
     {% endfor %}
     <ul class="pills">
       {% for summary in membership.user.team_summaries %}
-      <li><a href="{% url 'dashboard:summary' summary.id %}">Week of {{ summary.week_start|date:"M j, Y" }}<span class="count">{% if summary.claim_count %}{{ summary.claim_count }} claim{{ summary.claim_count|pluralize }}{% elif not summary.artifact_count %}no activity{% else %}no claims{% endif %}</span>{% if summary.is_partial %}<span class="count">{% if summary.week_is_running %}in progress{% else %}partial{% endif %}</span>{% endif %}</a></li>
+      <li><a href="{% url 'dashboard:summary' summary.id %}">{% if summary.sprint %}{{ summary.sprint.name }} ({{ summary.sprint.start_date|date:"M j" }} – {{ summary.sprint.end_date|date:"M j" }}){% else %}Week of {{ summary.week_start|date:"M j, Y" }}{% endif %}<span class="count">{% if summary.claim_count %}{{ summary.claim_count }} claim{{ summary.claim_count|pluralize }}{% elif not summary.artifact_count %}no activity{% else %}no claims{% endif %}</span>{% if summary.is_partial %}<span class="count">{% if summary.week_is_running %}in progress{% else %}partial{% endif %}</span>{% endif %}</a></li>
       {% empty %}
       <li>No summaries yet.</li>
       {% endfor %}
