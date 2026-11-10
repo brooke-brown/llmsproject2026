@@ -44,6 +44,47 @@ SPRINT_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
 )
 
 
+MERGE_SYSTEM_PROMPT = """\
+You merge one student's validated claims for one sprint into a single report. The claims \
+were written for separate parts of the sprint, so some describe the same work.
+
+Rules:
+- Combine claims about the same work into one claim, and keep the rest as they are.
+- Cite only artifact IDs that appear in the claims you are given, copied exactly. Never \
+add, invent or change an ID.
+- Keep every claim's category, significance and requirement_ids sensible for the work it \
+describes, using only the requirement numbers in the sprint's list.
+- Describe observable activity only, with no judgments of character, effort or ability.
+- Write each claim as one plain sentence.
+"""
+
+
+def build_merge_prompt(claims, requirements=(), period="the sprint") -> str:
+    """The sprint's requirements, then the validated claims to merge, numbered.
+
+    Only claims go in, never raw artifacts, so the merge has nothing else to cite.
+    """
+    blocks = []
+    for number, claim in enumerate(claims, start=1):
+        blocks.append(
+            "\n".join(
+                [
+                    f"Claim {number}:",
+                    f"text: {claim.text}",
+                    f"category: {claim.category}",
+                    f"significance: {claim.significance}",
+                    f"requirement IDs: {', '.join(map(str, claim.requirement_ids)) or 'none'}",
+                    f"artifact IDs: {', '.join(claim.artifact_ids)}",
+                ]
+            )
+        )
+    return (
+        _requirements_section(requirements)
+        + f"This student's validated claims for {period}, to merge into one report:\n\n"
+        + "\n\n".join(blocks)
+    )
+
+
 def build_prompt(artifacts, requirements=(), period="the week") -> str:
     """The project's requirements, then the student's artifacts for the week, oldest first.
 

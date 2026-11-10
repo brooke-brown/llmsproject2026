@@ -26,6 +26,7 @@ ARTIFACT_NOT_FOUND = "artifact_not_found"
 OUTSIDE_WEEK = "outside_week"
 NOT_CONTRIBUTOR = "not_contributor"
 UNKNOWN_REQUIREMENT = "unknown_requirement"
+NOT_IN_SOURCE = "not_in_source"
 
 _ARTIFACT_ID_RE = re.compile(ARTIFACT_ID_PATTERN)
 
@@ -76,22 +77,36 @@ def validate_claims(claims, user, team, week_start: date) -> list[ClaimResult]:
     return _validate_all(claims, user, team, week, requirements)
 
 
-def validate_sprint_claims(claims, user, team, sprint, last_day: date) -> list[ClaimResult]:
-    """Check each claim against a sprint: `sprint.start_date` through `last_day`, inclusive.
+def validate_sprint_claims(
+    claims, user, team, sprint, last_day: date, *, first_day: date | None = None,
+    allowed_artifact_ids=None,
+) -> list[ClaimResult]:
+    """Check each claim against a sprint: `first_day` (default `sprint.start_date`) through
+    `last_day`, inclusive.
 
-    `last_day` is the sprint's covered_through, so a running sprint stops at today. It needn't
-    start on a Monday, and requirement numbers are looked up in the sprint alone.
+    `last_day` is the sprint's covered_through, so a running sprint stops at today. A chunk
+    passes its own first and last day. It needn't start on a Monday, and requirement numbers
+    are looked up in the sprint alone. If `allowed_artifact_ids` is given, a claim may cite
+    only those artifacts, as a merged claim may cite only the ones it was merged from.
     """
-    window = _Week(sprint.start_date, last_day)
-    return _validate_all(claims, user, team, window, Requirement.objects.filter(sprint=sprint))
+    window = _Week(first_day or sprint.start_date, last_day)
+    return _validate_all(
+        claims, user, team, window, Requirement.objects.filter(sprint=sprint),
+        allowed_artifact_ids,
+    )
 
 
-def _validate_all(claims, user, team, week, requirements):
+def _validate_all(claims, user, team, week, requirements, allowed_artifact_ids=None):
     login = user.github_login.lower()
     # Looked up once for the whole list.
     requirement_numbers = set(requirements.values_list("number", flat=True))
     return [
-        ClaimResult(index, _validate_claim(index, claim, team, login, week, requirement_numbers))
+        ClaimResult(
+            index,
+            _validate_claim(
+                index, claim, team, login, week, requirement_numbers, allowed_artifact_ids
+            ),
+        )
         for index, claim in enumerate(claims)
     ]
 
@@ -112,10 +127,10 @@ class _Week:
         return self.start <= moment < self.end
 
 
-def _validate_claim(index, claim, team, login, week, requirement_numbers):
+def _validate_claim(index, claim, team, login, week, requirement_numbers, allowed=None):
     errors = []
     for artifact_id in claim.artifact_ids:
-        errors.extend(_validate_citation(index, artifact_id, team, login, week))
+        errors.extend(_validate_citation(index, artifact_id, team, login, week, allowed))
     # Each unknown number once, even if the claim repeats it.
     for number in dict.fromkeys(claim.requirement_ids):
         if number not in requirement_numbers:
@@ -131,7 +146,7 @@ def _validate_claim(index, claim, team, login, week, requirement_numbers):
     return errors
 
 
-def _validate_citation(index, artifact_id, team, login, week):
+def _validate_citation(index, artifact_id, team, login, week, allowed=None):
     def error(check, message):
         return ClaimError(index, artifact_id, check, message)
 
@@ -144,6 +159,13 @@ def _validate_citation(index, artifact_id, team, login, week):
         return [error(ARTIFACT_NOT_FOUND, f"{artifact_id} isn't in any of this team's repos.")]
 
     errors = []
+    if allowed is not None and artifact_id not in allowed:
+        errors.append(
+            error(
+                NOT_IN_SOURCE,
+                f"{artifact_id} isn't cited by any of the claims being merged, so it can't be cited here.",
+            )
+        )
     when = artifact.timestamp.astimezone(REPORTING_TIME_ZONE)
     if not week.contains(when):
         errors.append(
