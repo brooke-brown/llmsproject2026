@@ -61,8 +61,6 @@ def course_overview(request, course_id):
         {
             "course": course,
             "projects": services.course_projects_with_teams(course),
-            "default_week_start": services.last_completed_week_start(),
-            "current_week_start": services.current_week_start(),
             "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),
@@ -132,8 +130,13 @@ def _show_generation(request, generation):
 def generate_team_summaries(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
     try:
-        week_start = services.parse_week_start(request.POST.get("week_start"))
-        generation = services.generate_team_summaries(team, week_start)
+        if "sprint" in request.POST:
+            sprint = services.parse_sprint(team, request.POST["sprint"])
+            generation = services.generate_team_sprint_summaries(team, sprint)
+        else:
+            # The weekly flow, kept until T-21 (#125) removes it.
+            week_start = services.parse_week_start(request.POST.get("week_start"))
+            generation = services.generate_team_summaries(team, week_start)
     except services.GenerationError as error:
         return _show_refusal(request, team, error)
     return _show_generation(request, generation)
@@ -172,12 +175,14 @@ def dispute_decide(request, dispute_id):
 def summary(request, summary_id):
     summary = services.get_summary_for_staff(request.user, summary_id)
     claims = services.verified_claims(summary)
+    period_start, period_end = services.summary_period(summary)
     return render(
         request,
         "dashboard/summary.html",
         {
             "summary": summary,
-            "week_end": services.week_end(summary.week_start),
+            "period_start": period_start,
+            "period_end": period_end,
             "claims": claims,
             "tied_count": sum(1 for claim in claims if claim.requirement_ids),
             "unverified_count": summary.unverified_count,

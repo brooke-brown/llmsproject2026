@@ -162,7 +162,13 @@ Good to know:
 
 ### Generating summaries
 
-On the course overview, pick a week for a team and click **Generate summaries**.
+On the course overview, pick a sprint for a team and click **Generate summaries**.
+
+- **The menu lists the project's started sprints,** such as "Sprint 2 (Oct 30 – Nov 5)". Sprints that haven't started aren't offered, and a project with none shows a message instead. It defaults to the current sprint, or on a day shared by two sprints the one that just started, or else the most recently ended. Generating ingests each repo from the sprint's first day through today (or its last day once it has ended), then writes one summary per student. A sprint still running is labelled **in progress**, with the date it covers through, and generating it again after it ends covers all of it. Flags per sprint are not raised yet: that is the next beta issue (#123).
+- **Retrying works by sprint.** A failed student is retried for the same sprint, without another ingest.
+
+The notes below describe the weekly flow, which still works through the same button's endpoint until T-21 (#125) removes it, so they apply to sprints except where they mention weeks and Mondays.
+
 
 - The date must be a **Monday**, for this week or an earlier one. Other days can't be picked in browsers that honour the date field's `step`, and are refused either way. It defaults to the most recent completed week.
 - **You can generate the current week to check on a team mid-week.** Its summaries are labelled **in progress**. The team page's contribution shares include them and say so, but flags don't count them. After the week ends they're labelled **partial** and flags still skip them until you generate that week again, so a Wednesday snapshot never affects a flag.

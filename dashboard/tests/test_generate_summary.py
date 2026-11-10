@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from django.test import TestCase
 from django.urls import NoReverseMatch, reverse
 
-from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
+from core.models import Course, Enrollment, Project, Repo, Requirement, Sprint, Team, TeamMembership
 from dashboard import services
 from dashboard.models import Flag
 from ingest import services as ingest_services
@@ -80,6 +80,10 @@ class TeamGenerationFixture(TestCase):
             TeamMembership.objects.create(user=student, team=cls.team)
 
         cls.empty_team = Team.objects.create(project=cls.project, name="Team Beta")
+        # The overview only offers the Generate summaries control once a sprint has started.
+        cls.sprint = Sprint.objects.create(
+            project=cls.project, name="Sprint 1", start_date=date(2026, 10, 19), end_date=date(2026, 11, 15)
+        )
 
     def setUp(self):
         clock = mock.patch("django.utils.timezone.now", return_value=NOW)

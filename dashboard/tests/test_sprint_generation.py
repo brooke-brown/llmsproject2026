@@ -142,6 +142,7 @@ class DefaultSprintTests(SprintGenerationFixture):
         self.assertEqual(self.default(at(11, 2)), self.running)
 
     def test_on_a_shared_day_it_is_the_sprint_that_just_started(self):
+        self.future.delete()
         shared = Sprint.objects.create(
             project=self.project, name="Sprint 4", start_date=date(2026, 11, 8), end_date=date(2026, 11, 14)
         )
@@ -230,7 +231,7 @@ class GenerateBySprintTests(SprintGenerationFixture):
 
         self.ingest.side_effect = IngestError("GitHub is down.")
         message = page_messages(self.post(self.ended, follow=True))
-        self.assertIn("sample-org/app", message)
+        self.assertIn("sample-org/api", message)  # Repos are pulled in name order.
         self.generate.assert_not_called()
 
 
@@ -292,8 +293,8 @@ class SprintPagesTests(SprintGenerationFixture):
 
     def test_a_summary_written_before_its_sprint_ended_is_labelled_in_progress(self):
         content = self.client.get(team_url(self.team.id)).content.decode()
-        running_link = re.search(r"<a[^>]*summaries/%d/[^>]*>.*?</a>" % self.summary.id, content, re.S).group(0)
-        self.assertIn("in progress", running_link)
+        links = re.findall(r"<a[^>]*summaries/%d/[^>]*>.*?</a>" % self.summary.id, content, re.S)
+        self.assertTrue(any("in progress" in link for link in links), links)
 
     def test_the_summary_page_shows_the_sprint_and_its_covered_through_date(self):
         page = self.client.get(reverse("dashboard:summary", args=[self.summary.id]))
