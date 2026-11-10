@@ -32,7 +32,12 @@ def home(request):
 
 @login_required
 def student_home(request):
-    return render(request, "dashboard/student_home.html")
+    services.check_any_course_student(request.user)
+    return render(
+        request,
+        "dashboard/student_home.html",
+        {"courses": services.student_home_courses(request.user)},
+    )
 
 
 class ChangePasswordView(PasswordChangeView):

@@ -4,5 +4,56 @@
 
 {% block content %}
 <h1 style="margin-bottom:18px">Your projects</h1>
-<p>Your projects and any flags about you will appear here.</p>
+{% for course in courses %}
+<section class="project">
+  <h2>{{ course.name }}</h2>
+  <div class="cards">
+    {% for membership in course.memberships %}
+    <article class="card">
+      <header>
+        <strong>{{ membership.team.project.name }}</strong>
+        <code>{{ membership.team.name }}</code>
+      </header>
+      <ul class="people">
+        {% for teammate in membership.teammates %}
+        <li>{{ teammate.display_name }}</li>
+        {% empty %}
+        <li>No teammates yet.</li>
+        {% endfor %}
+      </ul>
+      <div>
+        {# Worded as instructors see them on the team page. #}
+        {% for flag in membership.my_flags %}
+        {% if flag.is_withdrawn %}
+        <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j, Y" }}</p>
+        {% else %}
+        <p class="finding {{ flag.severity }}">
+          <mark>{{ flag.get_severity_display }}</mark>
+          <small>Week of {{ flag.week_start|date:"M j, Y" }}</small>
+          {{ flag.reason }}
+          {% if flag.dispute %}<span class="tag dispute">Disputed · {{ flag.dispute.get_status_display }}</span>{% endif %}
+        </p>
+        {% endif %}
+        {% if flag.dispute %}{% include "dashboard/_dispute_note.html" with dispute=flag.dispute %}{% endif %}
+        {% endfor %}
+        {% for dispute in membership.unraised_disputes %}
+        <p class="finding gone">
+          <mark>Flag no longer raised</mark>
+          <small>Week of {{ dispute.week_start|date:"M j, Y" }}</small>
+          {% if dispute.status != "flag_withdrawn" %}{{ dispute.flag_reason }}{% endif %}
+          <span class="tag dispute">Disputed · {{ dispute.get_status_display }}</span>
+        </p>
+        {% include "dashboard/_dispute_note.html" %}
+        {% endfor %}
+        {% if not membership.my_flags and not membership.unraised_disputes %}
+        <p class="tags"><span class="tag ok">No flags about you</span></p>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% empty %}
+<p>You aren't on a team yet. Your instructor adds you to one, and it will appear here.</p>
+{% endfor %}
 {% endblock %}
