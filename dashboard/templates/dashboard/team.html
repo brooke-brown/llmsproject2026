@@ -76,7 +76,7 @@
     {% if can_set_up %}
     <span class="row-actions card-actions">
       <a class="edit-link" href="?edit_student={{ membership.id }}">edit</a>
-      <form action="{% url 'dashboard:membership_remove' membership.id %}" method="post" onsubmit="return confirm('Remove {{ membership.user.display_name|escapejs }} from this team?{% with count=membership.user.team_summaries|length disputes=membership.user.team_disputes|length %}{% if count or disputes %} This permanently deletes their {% if count %}{{ count }} summar{{ count|pluralize:"y,ies" }}{% if disputes %} and {% endif %}{% endif %}{% if disputes %}{{ disputes }} dispute{{ disputes|pluralize }}{% endif %} on this team.{% endif %}{% endwith %} Their account stays.')">
+      <form action="{% url 'dashboard:membership_remove' membership.id %}" method="post" onsubmit="return confirm('Remove {{ membership.user.display_name|escapejs }} from this team?{% with count=membership.user.team_summaries|length disputes=membership.user.team_disputes|length %}{% if count or disputes %} This permanently deletes their {% if count %}{{ count }} summar{{ count|pluralize:"y,ies" }}{% if disputes %} and {% endif %}{% endif %}{% if disputes %}{{ disputes }} dispute{{ disputes|pluralize }}{% endif %} on this team.{% endif %}{% endwith %}{% with contributions=membership.user.team_contributions|length confirmations=membership.user.team_corroborations|length received=membership.confirmations_of_their_work %}{% if contributions or confirmations %} Their {% if contributions %}{{ contributions }} offline contribution{{ contributions|pluralize }}{% if received %} with {{ received }} confirmation{{ received|pluralize }} from teammates{% endif %}{% if confirmations %} and {% endif %}{% endif %}{% if confirmations %}{{ confirmations }} confirmation{{ confirmations|pluralize }} of teammates\' work{% endif %} on this team will be permanently deleted.{% endif %}{% endwith %} Their account stays.')">
         {% csrf_token %}
         <button type="submit" class="text-button">remove</button>
       </form>
@@ -182,9 +182,9 @@
 
 <section class="setup-panel">
   <h2>Delete team</h2>
-  <p class="keynote">Deleting a team permanently deletes its summaries, students' disputes, its repo and any activity pulled from it. Students keep their accounts.</p>
-  {% with count=team.summaries.count disputes=team.flag_disputes.count %}
-  <form action="{% url 'dashboard:team_delete' team.id %}" method="post" onsubmit="return confirm('Delete {{ team.name|escapejs }}? This permanently deletes {% if count %}its {{ count }} summar{{ count|pluralize:"y,ies" }}, {% endif %}{% if disputes %}{{ disputes }} dispute{{ disputes|pluralize }}, {% endif %}its repo and any activity pulled from it. Students keep their accounts.')">
+  <p class="keynote">Deleting a team permanently deletes its summaries, students' disputes, offline contributions, its repo and any activity pulled from it. Students keep their accounts.</p>
+  {% with count=team.summaries.count disputes=team.flag_disputes.count contributions=team.contributions.count %}
+  <form action="{% url 'dashboard:team_delete' team.id %}" method="post" onsubmit="return confirm('Delete {{ team.name|escapejs }}? This permanently deletes {% if count %}its {{ count }} summar{{ count|pluralize:"y,ies" }}, {% endif %}{% if disputes %}{{ disputes }} dispute{{ disputes|pluralize }}, {% endif %}{% if contributions %}{{ contributions }} offline contribution{{ contributions|pluralize }}, {% endif %}its repo and any activity pulled from it. Students keep their accounts.')">
     {% csrf_token %}
     <button type="submit" class="outline">Delete {{ team.name }}</button>
   </form>

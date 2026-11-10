@@ -12,6 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.formats import date_format
 
+from contributions.models import Contribution, Corroboration
 from core.models import (
     Course,
     Enrollment,
@@ -440,7 +441,9 @@ def team_wide_flags(team):
 
 def team_memberships_with_summaries(team):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
-    `team_flags` about them and their `team_disputes`."""
+    `team_flags` about them, their `team_disputes`, `team_contributions` and the
+    `team_corroborations` they gave. Each membership has `confirmations_of_their_work`, how
+    many times teammates confirmed the student's contributions on this team."""
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
@@ -449,6 +452,12 @@ def team_memberships_with_summaries(team):
     )
     return (
         team.memberships.select_related("user")
+        .annotate(
+            confirmations_of_their_work=Count(
+                "user__contributions__corroborations",
+                filter=Q(user__contributions__team=team),
+            )
+        )
         .order_by("user__last_name", "user__first_name", "user__github_login")
         .prefetch_related(
             Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"),
@@ -463,6 +472,16 @@ def team_memberships_with_summaries(team):
                 .select_related("resolved_by")
                 .order_by("week_start", "id"),
                 to_attr="team_disputes",
+            ),
+            Prefetch(
+                "user__contributions",
+                queryset=Contribution.objects.filter(team=team),
+                to_attr="team_contributions",
+            ),
+            Prefetch(
+                "user__corroborations",
+                queryset=Corroboration.objects.filter(contribution__team=team),
+                to_attr="team_corroborations",
             ),
         )
     )
