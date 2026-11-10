@@ -40,6 +40,44 @@ def student_home(request):
     )
 
 
+@login_required
+@require_http_methods(["GET", "POST"])
+def flag_dispute(request, flag_id):
+    flag = services.get_flag_for_student(request.user, flag_id)
+    dispute = services.dispute_for(flag)
+    explanation = dispute.explanation if dispute else ""
+    error = ""
+    if request.method == "POST":
+        if dispute and dispute.status != FlagDispute.Status.OPEN:
+            messages.error(
+                request, "Your instructor has decided on this dispute, so it can't be changed."
+            )
+            return redirect("dashboard:flag_dispute", flag_id=flag.id)
+        explanation = request.POST.get("explanation", "")
+        try:
+            services.submit_dispute(flag, explanation)
+        except services.DisputeError as refusal:
+            # Rendered here rather than redirected, so what was typed is still there.
+            error = str(refusal)
+        else:
+            if dispute:
+                messages.success(request, "Your dispute was updated.")
+            else:
+                messages.success(request, "Your dispute was sent to your instructor.")
+            return redirect("dashboard:student_home")
+    return render(
+        request,
+        "dashboard/flag_dispute.html",
+        {
+            "flag": flag,
+            "dispute": dispute,
+            "explanation": explanation,
+            "error": error,
+            "limit": services.DISPUTE_EXPLANATION_LIMIT,
+        },
+    )
+
+
 class ChangePasswordView(PasswordChangeView):
     # Not Django's default name: the admin ships a template with that name, and it comes first.
     template_name = "dashboard/password_change.html"

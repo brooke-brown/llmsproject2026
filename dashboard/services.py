@@ -133,6 +133,58 @@ def decide_dispute(dispute, decision, note, decided_by):
     return dispute
 
 
+DISPUTE_EXPLANATION_LIMIT = 2000
+
+
+def get_flag_for_student(user, flag_id):
+    """A flag about this user, for disputing. 404 if it doesn't exist, and 403 unless it's
+    about them, on a team they're on, in a course they're a student in."""
+    flag = get_object_or_404(Flag.objects.select_related("team__project__course"), pk=flag_id)
+    get_team_for_student(user, flag.team_id)
+    if flag.user_id != user.id or not is_course_student(user, flag.team.project.course):
+        raise PermissionDenied
+    return flag
+
+
+def submit_dispute(flag, explanation):
+    """File the student's dispute of this flag, or edit it while it's open. Raise
+    DisputeError, saying why, for a blank or too-long explanation or a decided dispute.
+
+    The explanation is stored exactly as typed. A new dispute keeps the flag's reason and
+    severity as they are now; an edit leaves them as they were when it was filed.
+    """
+    if not explanation.strip():
+        raise DisputeError("Write your explanation before sending it.")
+    # Browsers send each line break as two characters but count it as one.
+    length = len(explanation.replace("\r\n", "\n"))
+    if length > DISPUTE_EXPLANATION_LIMIT:
+        raise DisputeError(
+            f"Your explanation can be up to {DISPUTE_EXPLANATION_LIMIT:,} characters, and this "
+            f"one has {length:,}. Nothing was sent."
+        )
+    dispute = dispute_for(flag)
+    if dispute is None:
+        try:
+            with transaction.atomic():
+                return FlagDispute.objects.create(
+                    team_id=flag.team_id,
+                    student_id=flag.user_id,
+                    rule=flag.rule,
+                    week_start=flag.week_start,
+                    flag_reason=flag.reason,
+                    severity=flag.severity,
+                    explanation=explanation,
+                )
+        except IntegrityError:
+            # Sent twice at once: the other request filed it, so this one edits it.
+            dispute = dispute_for(flag)
+    if dispute.status != FlagDispute.Status.OPEN:
+        raise DisputeError("Your instructor has decided on this dispute, so it can't be changed.")
+    dispute.explanation = explanation
+    dispute.save(update_fields=["explanation", "updated_at"])
+    return dispute
+
+
 def staff_courses(user):
     """Courses where the user is an instructor or TA."""
     return Course.objects.filter(

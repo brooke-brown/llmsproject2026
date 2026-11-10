@@ -1,0 +1,49 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Dispute · STRIVE{% endblock %}
+
+{# A student's nav is the student home and logout only. #}
+{% block brand_url %}{% url 'dashboard:student_home' %}{% endblock %}
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:student_home' %}">Your projects</a> / Dispute</span>{% endblock %}
+
+{% block content %}
+<div class="narrow">
+  <h1 style="margin-bottom:6px">{% if dispute %}Your dispute{% else %}Dispute this {{ flag.get_severity_display|lower }}{% endif %}</h1>
+  <p class="keynote">{{ flag.team.project.name }} · {{ flag.team.name }}</p>
+
+  <p class="finding {{ flag.severity }}">
+    <mark>{{ flag.get_severity_display }}</mark>
+    <small>Week of {{ flag.week_start|date:"M j, Y" }}</small>
+    {{ flag.reason }}
+  </p>
+
+  {% if dispute %}
+  <div class="dispute-panel">
+    <div class="row">
+      <span class="tag dispute">{% if dispute.status == "open" %}Disputed, waiting for your instructor{% else %}Disputed · {{ dispute.get_status_display }}{% endif %}</span>
+      <small>{% if dispute.was_edited %}Last edited {{ dispute.updated_at|date:"M j, Y" }}{% else %}Submitted {{ dispute.created_at|date:"M j, Y" }}{% endif %}</small>
+    </div>
+    {% if dispute.status != "open" %}
+    <blockquote>{{ dispute.explanation|linebreaksbr }}</blockquote>
+    <p class="decided">{{ dispute.get_status_display }}{% if dispute.resolved_by %} by {{ dispute.resolved_by.display_name }}{% endif %}{% if dispute.resolved_at %} on {{ dispute.resolved_at|date:"M j, Y" }}{% endif %}.</p>
+    {% if dispute.resolution_note %}<p class="note">Note from your instructor: {{ dispute.resolution_note }}</p>{% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if not dispute or dispute.status == "open" %}
+  <form action="{% url 'dashboard:flag_dispute' flag.id %}" method="post" class="setup-panel">
+    {% csrf_token %}
+    <p class="keynote">Your instructor and TAs will read this. The {{ flag.get_severity_display|lower }} stays visible to them until they decide.</p>
+    {% if error %}<ul class="errorlist"><li>{{ error }}</li></ul>{% endif %}
+    <label>Your explanation <small>(up to {{ limit|floatformat:"0g" }} characters)</small>
+      <textarea name="explanation" rows="6" maxlength="{{ limit }}" required>{{ explanation }}</textarea>
+    </label>
+    <div class="form-actions">
+      <button type="submit" class="primary">{% if dispute %}Save changes{% else %}Send dispute{% endif %}</button>
+      <a href="{% url 'dashboard:student_home' %}">Cancel</a>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

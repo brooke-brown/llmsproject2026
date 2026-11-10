@@ -30,7 +30,11 @@
           <mark>{{ flag.get_severity_display }}</mark>
           <small>Week of {{ flag.week_start|date:"M j, Y" }}</small>
           {{ flag.reason }}
-          {% if flag.dispute %}<span class="tag dispute">Disputed · {{ flag.dispute.get_status_display }}</span>{% endif %}
+          {% if flag.dispute %}
+          <a class="tag dispute" href="{% url 'dashboard:flag_dispute' flag.id %}">{% if flag.dispute.status == "open" %}Disputed, waiting for your instructor{% else %}Disputed · {{ flag.dispute.get_status_display }}{% endif %}</a>
+          {% else %}
+          <a href="{% url 'dashboard:flag_dispute' flag.id %}">Dispute</a>
+          {% endif %}
         </p>
         {% empty %}
         <p class="tags"><span class="tag ok">No flags about you</span></p>

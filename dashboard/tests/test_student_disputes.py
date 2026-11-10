@@ -8,6 +8,7 @@ on its own instead of the whole module failing on a single NoReverseMatch.
 """
 
 from datetime import date, timedelta
+from unittest import mock
 
 from django.test import Client
 from django.urls import reverse
@@ -16,6 +17,7 @@ from django.utils.formats import date_format
 from django.utils.html import escape
 
 from core.models import Enrollment
+from dashboard import services
 from dashboard.flags import compute_flags
 from dashboard.models import Flag, FlagDispute
 
@@ -274,3 +276,26 @@ class DisputeAccessTests(DisputeFixture):
         response = self.client.get(dispute_url(self.flag))
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse("login"), response["Location"])
+
+
+class SubmitDisputeServiceTests(DisputeFixture):
+    """The cases the page never reaches on its own."""
+
+    def test_a_decided_dispute_is_refused_even_without_the_views_check(self):
+        self.make_dispute(status=FlagDispute.Status.FLAG_KEPT)
+        with self.assertRaises(services.DisputeError):
+            services.submit_dispute(self.flag, "Changed.")
+        self.assertEqual(FlagDispute.objects.get().explanation, "I paired on most of it.")
+
+    def test_two_submissions_at_once_leave_one_dispute(self):
+        # The other request files the dispute between this one's lookup and its insert.
+        existing = self.make_dispute(explanation="From the other request.")
+        with mock.patch.object(services, "dispute_for", side_effect=[None, existing]):
+            services.submit_dispute(self.flag, "From this request.")
+        self.assertEqual(FlagDispute.objects.count(), 1)
+        self.assertEqual(FlagDispute.objects.get().explanation, "From this request.")
+
+    def test_a_browser_line_break_counts_as_one_character(self):
+        text = "x" * 1998 + "\r\n" + "x"
+        services.submit_dispute(self.flag, text)
+        self.assertEqual(FlagDispute.objects.get().explanation, text)
