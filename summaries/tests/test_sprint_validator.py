@@ -30,6 +30,12 @@ class SprintValidatorTests(SprintTestCase):
             self.assertEqual([error.check for error in result.errors], ["outside_week"])
             self.assertIn("2026-10-23", result.errors[0].message)
 
+    def test_the_date_error_names_the_sprint_not_a_reporting_week(self):
+        result = self.check(self.add_commit("aa1", at(10, 30, 0, 30)))
+        message = result.errors[0].message
+        self.assertIn("outside Sprint 1 (2026-10-23 to 2026-10-29)", message)
+        self.assertNotIn("week", message)
+
     def test_the_covered_range_can_end_before_the_sprint_does(self):
         later = self.add_commit("aa1", at(10, 27))
         self.assertFalse(self.check(later, last_day=date(2026, 10, 25)).ok)
