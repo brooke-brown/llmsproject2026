@@ -1,9 +1,8 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.views import PasswordChangeView
+from django.contrib.auth.views import PasswordChangeView, RedirectURLMixin
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
-from django.urls import reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -40,11 +39,12 @@ def student_home(request):
     )
 
 
-class ChangePasswordView(PasswordChangeView):
+class ChangePasswordView(RedirectURLMixin, PasswordChangeView):
     # Not Django's default name: the admin ships a template with that name, and it comes first.
     template_name = "dashboard/password_change.html"
     form_class = ChangePasswordForm
-    success_url = reverse_lazy("dashboard:home")
+    # Where to go with no `next`, or one on another site.
+    next_page = "dashboard:home"
 
     def form_valid(self, form):
         response = super().form_valid(form)

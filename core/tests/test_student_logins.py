@@ -8,6 +8,8 @@ URLs are reversed per test rather than at module level, so each criterion passes
 on its own instead of the whole module failing on a single NoReverseMatch.
 """
 
+from urllib.parse import urlencode
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -23,6 +25,8 @@ User = get_user_model()
 OLD_PASSWORD = "not-a-real-password"
 NEW_PASSWORD = "a-fresh-Passphrase-42"
 TEMPORARY_PASSWORD = "river-Lantern-9317"
+# What a browser sends when opening a page. A plain fetch() sends */* instead.
+BROWSER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 
 
 def make_user(login, **extra):
@@ -188,12 +192,82 @@ class ForcedPasswordChangeTests(TestCase):
         self.client.force_login(make_user("sample-staff", is_staff=True, must_change_password=True))
         self.assert_sent_to_password_change(self.client.get(reverse("admin:index")))
 
-    def test_a_post_is_redirected_and_does_nothing(self):
+    def assert_refused_as_json(self, response):
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(response.json()["error"], "password_change_required")
+
+    def test_a_post_is_refused_as_json_and_does_nothing(self):
         response = self.client.post(
             reverse("dashboard:team_rename", args=[self.team.id]), {"name": "Renamed"}
         )
-        self.assert_sent_to_password_change(response)
+        self.assert_refused_as_json(response)
         self.assertEqual(Team.objects.get(pk=self.team.pk).name, "Team Alpha")
+
+    def test_a_script_asking_for_data_is_refused_as_json(self):
+        poll = reverse("dashboard:course_generating_status", args=[self.course.id])
+        for accept in ("*/*", "application/json"):
+            with self.subTest(accept=accept):
+                self.assert_refused_as_json(self.client.get(poll, headers={"accept": accept}))
+
+    def test_opening_a_page_in_a_browser_is_redirected(self):
+        response = self.client.get(
+            reverse("dashboard:student_home"), headers={"accept": BROWSER_ACCEPT}
+        )
+        self.assert_sent_to_password_change(response)
+
+    def team_page_with_query(self):
+        return reverse("dashboard:team", args=[self.team.id]) + "?edit_student=1"
+
+    def test_the_redirect_remembers_the_page_and_its_query(self):
+        page = self.team_page_with_query()
+
+        response = self.client.get(page)
+
+        self.assertEqual(response.url, f"{password_change_url()}?{urlencode({'next': page})}")
+
+    def test_the_login_page_is_not_remembered(self):
+        """Going back to it after the change would show a logged-in user the login form."""
+        self.assertEqual(self.client.get(reverse("login")).url, password_change_url())
+
+    def post_change_to(self, url):
+        return self.client.post(
+            url,
+            {
+                "old_password": OLD_PASSWORD,
+                "new_password1": NEW_PASSWORD,
+                "new_password2": NEW_PASSWORD,
+            },
+        )
+
+    def test_after_changing_it_they_go_to_the_page_they_asked_for(self):
+        page = self.team_page_with_query()
+        redirected_to = self.client.get(page).url
+
+        response = self.post_change_to(redirected_to)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, page)
+
+    def test_the_form_posts_back_to_the_url_holding_next(self):
+        response = self.client.get(self.client.get(self.team_page_with_query()).url)
+
+        self.assertContains(response, '<form method="post">')
+
+    def test_a_next_on_another_site_is_ignored(self):
+        for target in ("https://evil.example/", "//evil.example/"):
+            with self.subTest(target=target):
+                self.student.set_password(OLD_PASSWORD)
+                self.student.must_change_password = True
+                self.student.save()
+                self.client.force_login(self.student)
+
+                response = self.post_change_to(
+                    f"{password_change_url()}?{urlencode({'next': target})}"
+                )
+
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.url, reverse("dashboard:home"))
 
     def test_the_password_change_page_itself_is_not_redirected(self):
         self.assertEqual(self.client.get(password_change_url()).status_code, 200)
@@ -268,6 +342,25 @@ class PasswordChangePageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "dashboard/base.html")
         self.assertTemplateNotUsed(response, "admin/base.html")
+
+    def test_the_top_bar_links_to_the_page(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("dashboard:home"))
+        self.assertContains(response, f'href="{password_change_url()}"')
+
+    def test_the_top_bar_has_no_link_when_logged_out(self):
+        response = self.client.get(reverse("login"))
+        self.assertNotContains(response, f'href="{password_change_url()}"')
+
+    def test_the_generating_poll_reloads_when_a_password_change_is_required(self):
+        """Reloading lets the middleware redirect the page, remembering where they were."""
+        course = Course.objects.create(name="CS 4501, Fall 2026")
+        Enrollment.objects.create(user=self.user, course=course, role=Role.INSTRUCTOR)
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("dashboard:course_overview", args=[course.id]))
+
+        self.assertContains(response, 'status.error === "password_change_required"')
 
     def test_a_user_not_required_to_change_is_not_redirected_elsewhere(self):
         self.client.force_login(self.user)
