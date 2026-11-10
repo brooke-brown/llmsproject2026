@@ -7,7 +7,13 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import path, reverse
 from django.utils.translation import ngettext
 
-from core.forms import RepoForm, RepoInlineFormSet, RequirementImportForm
+from core.forms import (
+    AdminAddUserForm,
+    AdminSetPasswordForm,
+    RepoForm,
+    RepoInlineFormSet,
+    RequirementImportForm,
+)
 from core.models import (
     Course,
     Enrollment,
@@ -28,7 +34,9 @@ from core.services import (
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ("username", "github_login", "email", "first_name", "last_name", "is_staff")
+    add_form = AdminAddUserForm
+    change_password_form = AdminSetPasswordForm
+    list_display =("username", "github_login", "email", "first_name", "last_name", "is_staff")
     search_fields = ("github_login", *BaseUserAdmin.search_fields)
     fieldsets = (
         (None, {"fields": ("username", "github_login", "password", "must_change_password")}),
