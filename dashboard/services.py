@@ -7,7 +7,7 @@ from fractions import Fraction
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, transaction
-from django.db.models import Case, Count, Exists, Max, OuterRef, Prefetch, Q, Value, When
+from django.db.models import Case, Count, Exists, F, Max, OuterRef, Prefetch, Q, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.formats import date_format
@@ -572,9 +572,11 @@ def course_projects_with_teams(course):
             Prefetch("requirements", queryset=Requirement.objects.order_by("number")),
         )
     )
+    runs = active_generation_runs(course=course)
     for project in projects:
         for team in project.teams.all():
             _add_summary_status(team)
+            team.active_run = runs.get(team.id)
     return projects
 
 
@@ -726,9 +728,36 @@ def _write_summaries(team, students, week_start):
             # Anything else is unexpected. Its error isn't shown, so no student work can
             # reach the page.
             failures.append(SummaryFailure(student, "an unexpected error"))
+        _record_progress(team, student, failures[-1] if failures and failures[-1].student == student else None)
     if not failures:
         flags.compute_flags(team)
     return TeamGeneration(team, week_start, len(students), failures)
+
+
+def _record_progress(team, student, failure):
+    """Count a student as done on the team's run, naming them if their summary failed."""
+    try:
+        with transaction.atomic():
+            run = GenerationRun.objects.select_for_update().filter(team=team).first()
+            if run is None:
+                return
+            run.done_count += 1
+            if failure is not None:
+                run.failures = [*run.failures, {"name": student_name(student), "reason": failure.reason}]
+            run.save(update_fields=["done_count", "failures"])
+    except OperationalError:
+        # Progress is only for show, so a busy database mustn't fail the run.
+        pass
+
+
+def active_generation_runs(team_ids=None, course=None):
+    """The runs going right now, by team ID, for the progress display."""
+    runs = GenerationRun.objects.filter(expires_at__gt=timezone.now())
+    if course is not None:
+        runs = runs.filter(team__project__course=course)
+    if team_ids is not None:
+        runs = runs.filter(team_id__in=team_ids)
+    return {run.team_id: run for run in runs}
 
 
 def generating_team_ids(course):
@@ -764,7 +793,7 @@ def _start_run(team, student_count):
         with transaction.atomic():
             GenerationRun.objects.filter(team=team, expires_at__lte=now).delete()
             return GenerationRun.objects.create(
-                team=team, expires_at=now + timedelta(minutes=limit)
+                team=team, expires_at=now + timedelta(minutes=limit), student_count=student_count
             )
     except IntegrityError:
         raise GenerationError(_already_running_message(team)) from None

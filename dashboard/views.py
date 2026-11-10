@@ -86,6 +86,7 @@ def team(request, team_id):
         request,
         "dashboard/team.html",
         {
+            "generation_run": services.active_generation_runs(team_ids=[team.id]).get(team.id),
             "team": team,
             "repos": services.team_repos(team),
             "team_flags": services.team_wide_flags(team),

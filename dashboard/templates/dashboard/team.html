@@ -6,7 +6,13 @@
 
 {% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' team.project.course.id %}">{{ team.project.course.name }}</a> · {% if can_set_up %}<a href="{% url 'dashboard:project_setup' team.project_id %}">{{ team.project.name }}</a>{% else %}{{ team.project.name }}{% endif %} › {{ team.name }}</span>{% endblock %}
 
+{% block head_extra %}{% if generation_run %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+
 {% block content %}
+{% if generation_run %}
+<p class="keynote">Summaries are generating for this team.</p>
+{% include "dashboard/_generation_progress.html" with run=generation_run %}
+{% endif %}
 <div class="headrow">
   <div>
     {% if can_set_up and editing %}
