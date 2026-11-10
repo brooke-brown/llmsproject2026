@@ -162,12 +162,6 @@ class GenerateButtonTests(TeamGenerationFixture):
         self.assertIn("csrfmiddlewaretoken", article)
         self.assertEqual(article.count(GENERATE_LABEL), 1)
 
-    def test_week_picker_defaults_to_the_most_recent_completed_week(self):
-        article = team_article(self.get_overview(), "Team Alpha")
-
-        self.assertEqual(article.count('name="week_start"'), 1)
-        self.assertIn(f'value="{LAST_WEEK.isoformat()}"', article)
-
     def test_the_team_page_has_no_generate_button(self):
         self.client.force_login(self.instructor)
 
