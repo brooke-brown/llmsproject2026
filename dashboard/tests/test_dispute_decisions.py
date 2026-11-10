@@ -343,8 +343,9 @@ class TeamPageTests(DisputeFixture):
         make_flag(self.alpha, self.ada)
         make_dispute(self.alpha, self.ada, status=Status.FLAG_WITHDRAWN)
 
-        memberships = list(services.team_memberships_with_summaries(self.alpha))
-        memberships, _ = services.add_contribution_shares(self.alpha, memberships)
+        sprint = sprint_for(self.alpha.project)
+        memberships = list(services.team_memberships_with_summaries(self.alpha, sprint))
+        memberships = services.add_contribution_shares(self.alpha, memberships, sprint)
 
         self.assertTrue(all(m.chart_flag is None for m in memberships))
 

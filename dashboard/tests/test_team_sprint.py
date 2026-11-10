@@ -11,6 +11,7 @@ The clock is fixed at Tuesday Nov 10, 2026, noon in New York (see test_sprint_fl
 from datetime import date, datetime
 
 from django.test import TestCase
+from django.utils.html import escape
 
 from core.models import Course, Enrollment, Project, Sprint, Team, TeamMembership
 from dashboard.models import Flag, FlagDispute
@@ -173,9 +174,9 @@ class SelectedSprintSharesTests(TeamSprintFixture):
         sprint1 = self.content(sprint=self.sprint1)
         sprint2 = self.content(sprint=self.sprint2)
 
-        self.assertIn("Ada Sample did 14% of the team's requirement-tied work in Sprint 1", sprint1)
+        self.assertIn(escape("Ada Sample did 14% of the team's requirement-tied work in Sprint 1"), sprint1)
         self.assertNotIn("work in Sprint 2", sprint1)
-        self.assertIn("Grace Example did 25% of the team's requirement-tied work in Sprint 2", sprint2)
+        self.assertIn(escape("Grace Example did 25% of the team's requirement-tied work in Sprint 2"), sprint2)
         self.assertNotIn("work in Sprint 1", sprint2)
 
     def test_the_chart_marks_only_the_selected_sprints_flags(self):
@@ -194,6 +195,7 @@ class SelectedSprintSharesTests(TeamSprintFixture):
         self.compute(self.pair)
         FlagDispute.objects.create(
             team=self.pair, student=self.grace, rule=RULE, sprint=self.sprint2,
+            flag_reason="Low share.", severity=Flag.Severity.WARNING,
             explanation="I paired on most of Sprint 2.",
         )
 
@@ -209,6 +211,38 @@ class SelectedSprintSharesTests(TeamSprintFixture):
         self.assertEqual(self.shares(response), {self.ada.id: 14, self.grace.id: 86})
         self.assertNotContains(response, "<mark>Flag</mark>")
         self.assertNotContains(response, "<mark>Warning</mark>")
+
+
+class HeaderTagTests(TeamSprintFixture):
+    """The tag beside the team's name is for the selected sprint too."""
+
+    def setUp(self):
+        super().setUp()
+        self.give_sprint2()  # Grace gets a warning.
+        self.give_sprint3()
+        self.compute(self.pair)
+
+    def test_a_sprint_with_a_warning_is_tagged_warning(self):
+        self.assertEqual(self.team_page(sprint=self.sprint2).context["team_status"], "warning")
+
+    def test_a_running_sprint_is_tagged_in_progress_not_with_an_earlier_flag(self):
+        self.assertEqual(self.team_page(sprint=self.sprint3).context["team_status"], "in_progress")
+
+    def test_a_finished_sprint_with_no_flags_is_tagged_no_flags(self):
+        self.give(self.ada, self.pair, self.sprint1, "major")
+        self.give(self.grace, self.pair, self.sprint1, "major")
+        self.compute(self.pair)
+
+        self.assertEqual(self.team_page(sprint=self.sprint1).context["team_status"], "ok")
+
+    def test_a_withdrawn_flag_doesnt_tag_the_sprint(self):
+        FlagDispute.objects.create(
+            team=self.pair, student=self.grace, rule=RULE, sprint=self.sprint2,
+            flag_reason="Low share.", severity=Flag.Severity.WARNING, explanation="x",
+            status=FlagDispute.Status.FLAG_WITHDRAWN,
+        )
+
+        self.assertEqual(self.team_page(sprint=self.sprint2).context["team_status"], "ok")
 
 
 class InProgressLabelTests(TeamSprintFixture):

@@ -116,24 +116,34 @@ def course_generating_status(request, course_id):
 @login_required
 def team(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
-    memberships, share_sprint = services.add_contribution_shares(
-        team, services.team_memberships_with_summaries(team)
-    )
+    sprints = services.team_page_sprints(team.project)
+    sprint = services.team_page_sprint(team, sprints, request.GET.get("sprint"))
+    memberships = list(services.team_memberships_with_summaries(team, sprint))
+    in_progress_through = services.add_sprint_summaries(memberships, sprint)
+    memberships = services.add_contribution_shares(team, memberships, sprint)
     services.add_disputes(memberships)
+    has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
         request,
         "dashboard/team.html",
         {
             "team": team,
             "repos": services.team_repos(team),
-            "team_flags": services.team_wide_flags(team),
+            "has_sprints": has_sprints,
+            "sprints": sprints,
+            "sprint": sprint,
+            "in_progress_through": in_progress_through,
+            "every_student_has_summary": (
+                sprint is not None and services.every_student_has_summary(memberships, sprint)
+            ),
+            "team_flags": services.team_wide_flags(team, sprint),
             "memberships": memberships,
             "legend": services.pie_legend(memberships),
-            "share_sprint": share_sprint,
-            "share_sprint_note": (
-                services.share_sprint_note(team, share_sprint) if share_sprint else ""
+            "team_status": (
+                services.team_sprint_status(team, sprint, in_progress_through)
+                if has_sprints
+                else services.team_status(team)
             ),
-            "team_status": services.team_status(team),
             "equal_share": round(100 / len(memberships)) if memberships else None,
             "can_set_up": services.is_course_instructor(request.user, team.project.course),
             "editing": request.GET.get("edit") == "1",
