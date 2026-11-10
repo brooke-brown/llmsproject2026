@@ -25,6 +25,7 @@ urlpatterns = [
         name="retry_failed_summaries",
     ),
     path("summaries/<int:summary_id>/", views.summary, name="summary"),
+    path("disputes/<int:dispute_id>/decide/", views.dispute_decide, name="dispute_decide"),
     path("courses/<int:course_id>/projects/new/", views.project_create, name="project_create"),
     path("projects/<int:project_id>/setup/", views.project_setup, name="project_setup"),
     path("projects/<int:project_id>/delete/", views.project_delete, name="project_delete"),

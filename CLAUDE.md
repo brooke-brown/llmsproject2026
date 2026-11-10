@@ -128,7 +128,8 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 
 **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
 
-**Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115).
+**Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
+- Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
 
 **Later, with no issues yet:** polished per-requirement progress view, numeric diff checks, GitHub OAuth login, consent, background jobs, "paired with" detection.
 
