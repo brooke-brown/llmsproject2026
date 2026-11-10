@@ -19,6 +19,7 @@ from django.db import IntegrityError, connection, models, transaction
 from django.db.migrations.loader import MigrationLoader
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from core.models import Course, Project, Sprint, Team, TeamMembership, User
 from ingest.models import Artifact
@@ -246,6 +247,17 @@ class ContributionSprintTests(ContributionTestCase):
         sprint = self.make_sprint("Sprint 1", day(1), day(7))
         self.assertCountEqual(contribution.sprints, [sprint])
 
+    def test_with_no_team_it_is_empty_rather_than_crashing(self):
+        """A form can re-render an invalid contribution, and its labels ask for this."""
+        self.make_sprint("Sprint 1", day(1), day(7))
+        contribution = contribution_model()(date=day(3))
+        self.assertEqual(contribution.sprints.count(), 0)
+
+    def test_with_no_date_it_is_empty_rather_than_crashing(self):
+        self.make_sprint("Sprint 1", day(1), day(7))
+        contribution = contribution_model()(team=self.team)
+        self.assertEqual(contribution.sprints.count(), 0)
+
     def test_another_projects_sprint_on_the_same_dates_is_ignored(self):
         sprint = self.make_sprint("Sprint 1", day(1), day(7))
         self.make_sprint("Sprint 1", day(1), day(7), project=self.other_project)
@@ -276,6 +288,20 @@ class ContributionCleanTests(ContributionTestCase):
 
     def test_today_in_new_york_is_accepted(self):
         self.build(date=TODAY).clean()
+
+    def test_tomorrow_in_new_york_is_refused_whatever_zone_is_active(self):
+        """It's already Sep 4 in Tokyo at this moment, but not in New York."""
+        with timezone.override("Asia/Tokyo"):
+            self.assertEqual(timezone.localdate(), TOMORROW)
+            with self.assertRaises(ValidationError):
+                self.build(date=TOMORROW).clean()
+
+    def test_today_in_new_york_is_accepted_whatever_zone_is_active(self):
+        """At 2am on Sep 4 in New York, it's still Sep 3 in Honolulu."""
+        with freeze(datetime(2026, 9, 4, 6, 0, tzinfo=UTC)):
+            with timezone.override("Pacific/Honolulu"):
+                self.assertEqual(timezone.localdate(), TODAY)
+                self.build(date=day(4)).clean()
 
     def test_past_date_is_accepted(self):
         self.build(date=date(2026, 1, 15)).clean()

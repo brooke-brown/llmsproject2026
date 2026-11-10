@@ -3,10 +3,13 @@ and the confirmation says so first."""
 
 from datetime import date
 
-from django.test import TestCase
+from django.contrib.auth import get_user_model
+from django.test import Client, TestCase
+from django.urls import reverse
 
 from contributions.models import Contribution, Corroboration
 from contributions.tests.test_delete_warnings import form_tag
+from core import services as core_services
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.tests.test_course_overview import enroll, make_user, team_url
 from dashboard.tests.test_team_setup import membership_remove_url
@@ -92,6 +95,68 @@ class RemovalDeletesTests(RemovalFixture):
         self.assertTrue(Corroboration.objects.filter(pk=confirmation.pk).exists())
 
 
+class EveryRemovalPathTests(RemovalFixture):
+    """A contribution or confirmation must never outlive its student's place on the team,
+    since `Contribution.clean` and `Corroboration.clean` both require that place."""
+
+    def setUp(self):
+        super().setUp()
+        self.theirs = contribute(self.team, self.student)
+        Corroboration.objects.create(contribution=self.theirs, teammate=self.teammate)
+        self.teammates = contribute(self.team, self.teammate)
+        Corroboration.objects.create(contribution=self.teammates, teammate=self.student)
+
+    def assert_cleaned_up(self):
+        self.assertEqual(list(Contribution.objects.all()), [self.teammates])
+        self.assertFalse(Corroboration.objects.exists())
+
+    def admin(self):
+        client = Client()
+        client.force_login(
+            get_user_model().objects.create_superuser(
+                username="sample-root", github_login="sample-root"
+            )
+        )
+        return client
+
+    def test_the_core_service(self):
+        core_services.remove_student(self.membership)
+        self.assert_cleaned_up()
+
+    def test_deleting_the_membership(self):
+        self.membership.delete()
+        self.assert_cleaned_up()
+
+    def test_deleting_memberships_in_bulk(self):
+        TeamMembership.objects.filter(pk=self.membership.pk).delete()
+        self.assert_cleaned_up()
+
+    def test_the_admins_delete_page(self):
+        response = self.admin().post(
+            reverse("admin:core_teammembership_delete", args=[self.membership.pk]),
+            {"post": "yes"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assert_cleaned_up()
+
+    def test_the_admins_delete_action(self):
+        response = self.admin().post(
+            reverse("admin:core_teammembership_changelist"),
+            {
+                "action": "delete_selected",
+                "_selected_action": [self.membership.pk],
+                "post": "yes",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assert_cleaned_up()
+
+    def test_deleting_the_team_still_works(self):
+        self.team.delete()
+        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Corroboration.objects.exists())
+
+
 class RemovalConfirmationTests(RemovalFixture):
     def test_counts_their_contributions(self):
         contribute(self.team, self.student)
@@ -115,6 +180,34 @@ class RemovalConfirmationTests(RemovalFixture):
         self.assertIn("1 offline contribution and 1 confirmation of", tag)
         # The apostrophe sits inside a single-quoted JavaScript string.
         self.assertIn("teammates\\' work", tag)
+
+    def test_counts_teammates_confirmations_of_their_contributions(self):
+        for _ in range(2):
+            Corroboration.objects.create(
+                contribution=contribute(self.team, self.student), teammate=self.teammate
+            )
+        self.assertIn(
+            "2 offline contributions with 2 confirmations from teammates", self.confirmation()
+        )
+
+    def test_joins_all_three_counts(self):
+        Corroboration.objects.create(
+            contribution=contribute(self.team, self.student), teammate=self.teammate
+        )
+        Corroboration.objects.create(
+            contribution=contribute(self.team, self.teammate), teammate=self.student
+        )
+        self.assertIn(
+            "1 offline contribution with 1 confirmation from teammates and 1 confirmation of",
+            self.confirmation(),
+        )
+
+    def test_doesnt_count_confirmations_of_their_work_on_another_team(self):
+        contribute(self.team, self.student)
+        Corroboration.objects.create(
+            contribution=contribute(self.later_team, self.student), teammate=self.teammate
+        )
+        self.assertNotIn("from teammates", self.confirmation())
 
     def test_ignores_what_they_have_on_another_team(self):
         contribute(self.later_team, self.student)
