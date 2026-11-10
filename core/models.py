@@ -13,11 +13,20 @@ class User(AbstractUser):
 
     # 39 is GitHub's maximum login length.
     github_login = models.CharField(max_length=39)
-    # Set by a temporary password. Until it's cleared, ForcePasswordChangeMiddleware holds
-    # this user on the password change page.
+    # Set by a temporary password or one set in the admin. Until it's cleared,
+    # ForcePasswordChangeMiddleware holds this user on the password change page.
     must_change_password = models.BooleanField(default=False)
 
     REQUIRED_FIELDS = ["email", "github_login"]
+
+    @property
+    def has_set_own_password(self):
+        """Whether this person has logged in and their password is one only they know."""
+        return (
+            self.last_login is not None
+            and self.has_usable_password()
+            and not self.must_change_password
+        )
 
     @property
     def display_name(self):

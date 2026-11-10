@@ -32,7 +32,8 @@ def requirement_shares(team, include_partial=False):
         return None
     # Checked in Python, because whether a summary is partial depends on its generation log.
     counted = defaultdict(set)
-    summaries = Summary.objects.filter(team=team, user__in=students)
+    # Weekly summaries only: sprint summaries have no week and are handled by US-41.
+    summaries = Summary.objects.filter(team=team, user__in=students, week_start__isnull=False)
     for summary in summaries.prefetch_related("validation_runs"):
         if include_partial or not summary.is_partial:
             counted[summary.week_start].add(summary.user_id)

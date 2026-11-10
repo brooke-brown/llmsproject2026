@@ -324,6 +324,7 @@
       {% if user.is_authenticated %}
       <span class="who">
         {{ user.display_name }}
+        {% if not nav_restricted %}<a href="{% url 'password_change' %}">Change password</a>{% endif %}
         <form action="{% url 'logout' %}" method="post">
           {% csrf_token %}
           <button type="submit" class="secondary outline">Log out</button>
