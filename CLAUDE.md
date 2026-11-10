@@ -35,7 +35,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 
 These are the interfaces between apps. Changing them silently breaks other work. If a task seems to need a contract change, stop and say so instead of making it, unless its issue already calls for that change.
 
-The `Sprint` model is built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
+The `Sprint` model and `generate_sprint_summary` (T-19) are built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
 
 - **Models in `core/` and `ingest/`** (field names and types)
 - **Claim schema** in `summaries/schemas.py`. Requirement mapping and significance are based on what the work accomplishes, not lines changed; empty `requirement_ids` means not tied to a requirement.
@@ -49,7 +49,7 @@ The `Sprint` model is built; the other sprint changes below are agreed but not b
   - `artifact_ids` use the format `owner/repo:type:id`, such as `acme/app:pr:12`, so they stay unique across a team's repos.
   - `Artifact.artifact_id` is unique per `Repo`, not globally: a later project reusing a GitHub repo has its own `Repo` row and copies. Always look IDs up within the team: `Artifact.objects.filter(repo__team=team, artifact_id=...)`.
   - `requirement_ids` hold `Requirement.number`, not the database ID. Once sprints land, a number only has meaning within its summary's sprint.
-- **Reporting dates:** today, a report covers a Monday-Sunday week, inclusive, in `America/New_York`. T-19 (#119) replaces this: a report covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
+- **Reporting dates:** the weekly report covers a Monday-Sunday week, inclusive, in `America/New_York`, until T-21 (#125) removes it. A sprint report (T-19) covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. `student_week_artifacts` and `unattributed_commits` take an optional `last_day`, and the validator's `validate_sprint_claims` takes the covered range. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
   - Commit: author date
   - PR: merged date, or created date if unmerged
   - Review: submitted date
@@ -60,7 +60,7 @@ The `Sprint` model is built; the other sprint changes below are agreed but not b
 - **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field. `Artifact.review_state` holds GitHub's state for a review, such as `APPROVED`, and is empty for other types.
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
-  - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`, replaced by `generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary` in T-19 (#119) and removed in T-21 (#125)
+  - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`, and `summaries.services.generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary` (T-19), which replaces it when T-21 (#125) removes it. A sprint summary has `Summary.sprint` set and `week_start` empty
   - `dashboard.flags.compute_flags(team: Team) -> list[Flag]`
 
 ## Data model
