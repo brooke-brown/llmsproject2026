@@ -8,6 +8,7 @@ from fractions import Fraction
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Case, Count, Exists, Max, OuterRef, Prefetch, Q, Value, When
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.formats import date_format
@@ -134,25 +135,85 @@ def decide_dispute(dispute, decision, note, decided_by):
 
 
 DISPUTE_EXPLANATION_LIMIT = 2000
+DISPUTE_DECIDED = "Your instructor has decided on this dispute, so it can't be changed."
 
 
-def get_flag_for_student(user, flag_id):
-    """A flag about this user, for disputing. 404 if it doesn't exist, and 403 unless it's
-    about them, on a team they're on, in a course they're a student in."""
-    flag = get_object_or_404(Flag.objects.select_related("team__project__course"), pk=flag_id)
-    get_team_for_student(user, flag.team_id)
-    if flag.user_id != user.id or not is_course_student(user, flag.team.project.course):
+@dataclass
+class DisputePage:
+    """What a student's dispute page is about. `flag` is the live flag about them, or None
+    once it's no longer raised; `dispute` is their dispute of it, or None."""
+
+    team: Team
+    rule: str
+    week_start: date
+    flag: Flag | None
+    dispute: FlagDispute | None
+
+    @property
+    def severity(self):
+        """The flag as the student disputed it, or as it's raised now if not disputed yet."""
+        return self.dispute.severity if self.dispute else self.flag.severity
+
+    @property
+    def severity_label(self):
+        return Flag.Severity(self.severity).label
+
+    @property
+    def reason(self):
+        return self.dispute.flag_reason if self.dispute else self.flag.reason
+
+    @property
+    def is_withdrawn(self):
+        return bool(self.dispute) and self.dispute.status == FlagDispute.Status.FLAG_WITHDRAWN
+
+    @property
+    def can_edit(self):
+        return self.flag is not None and (
+            self.dispute is None or self.dispute.status == FlagDispute.Status.OPEN
+        )
+
+
+def get_dispute_page(user, team_id, rule, week):
+    """The user's flag and dispute for this team, rule and week (an ISO date). These survive
+    compute_flags, unlike Flag.pk, so the page keeps working while flags are regenerated.
+
+    403 unless the user is on the team, in a course they're a student in, and the flag is
+    about them. 404 if there's no such flag, or it's no longer raised and its dispute is still
+    open (#108 hides those). A decided dispute stays readable after its flag is gone.
+    """
+    try:
+        week_start = date.fromisoformat(week)
+    except ValueError:
+        raise Http404
+    team = get_team_for_student(user, team_id)
+    if not is_course_student(user, team.project.course):
         raise PermissionDenied
-    return flag
+    flag = (
+        flags_in_display_order()
+        .filter(team=team, user=user, rule=rule, week_start=week_start)
+        .first()
+    )
+    dispute = FlagDispute.objects.filter(
+        team=team, student=user, rule=rule, week_start=week_start
+    ).select_related("resolved_by").first()
+    if flag is None and (dispute is None or dispute.status == FlagDispute.Status.OPEN):
+        if Flag.objects.filter(team=team, rule=rule, week_start=week_start).exists():
+            raise PermissionDenied  # A teammate's flag, or one about the whole team.
+        raise Http404
+    return DisputePage(team, rule, week_start, flag, dispute)
 
 
 def submit_dispute(flag, explanation):
-    """File the student's dispute of this flag, or edit it while it's open. Raise
-    DisputeError, saying why, for a blank or too-long explanation or a decided dispute.
+    """File the student's dispute of this flag, or edit it while it's open, and return
+    (dispute, created). Raise DisputeError, saying why, for a blank or too-long explanation,
+    a decided dispute, or a flag that's no longer raised (None).
 
     The explanation is stored exactly as typed. A new dispute keeps the flag's reason and
-    severity as they are now; an edit leaves them as they were when it was filed.
+    severity as they are now; an edit leaves them as they were when it was filed. Sending the
+    same text again changes nothing, so it doesn't count as an edit.
     """
+    if flag is None:
+        raise DisputeError("This flag is no longer raised, so its dispute can't be changed.")
     if not explanation.strip():
         raise DisputeError("Write your explanation before sending it.")
     # Browsers send each line break as two characters but count it as one.
@@ -166,7 +227,7 @@ def submit_dispute(flag, explanation):
     if dispute is None:
         try:
             with transaction.atomic():
-                return FlagDispute.objects.create(
+                dispute = FlagDispute.objects.create(
                     team_id=flag.team_id,
                     student_id=flag.user_id,
                     rule=flag.rule,
@@ -175,14 +236,26 @@ def submit_dispute(flag, explanation):
                     severity=flag.severity,
                     explanation=explanation,
                 )
+                return dispute, True
         except IntegrityError:
-            # Sent twice at once: the other request filed it, so this one edits it.
+            # Usually sent twice at once: the other request filed it, so this one edits it.
             dispute = dispute_for(flag)
+            if dispute is None:
+                raise DisputeError("Your dispute couldn't be saved. Please try again.")
     if dispute.status != FlagDispute.Status.OPEN:
-        raise DisputeError("Your instructor has decided on this dispute, so it can't be changed.")
-    dispute.explanation = explanation
-    dispute.save(update_fields=["explanation", "updated_at"])
-    return dispute
+        raise DisputeError(DISPUTE_DECIDED)
+    if dispute.explanation == explanation:
+        return dispute, False
+    # Saved only while still open, in one statement, so an edit can't land after a decision
+    # made between the lookup above and this save.
+    now = timezone.now()
+    edited = FlagDispute.objects.filter(pk=dispute.pk, status=FlagDispute.Status.OPEN).update(
+        explanation=explanation, updated_at=now
+    )
+    if not edited:
+        raise DisputeError(DISPUTE_DECIDED)
+    dispute.explanation, dispute.updated_at = explanation, now
+    return dispute, False
 
 
 def staff_courses(user):

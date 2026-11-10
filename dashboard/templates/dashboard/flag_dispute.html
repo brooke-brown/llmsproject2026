@@ -8,42 +8,50 @@
 
 {% block content %}
 <div class="narrow">
-  <h1 style="margin-bottom:6px">{% if dispute %}Your dispute{% else %}Dispute this {{ flag.get_severity_display|lower }}{% endif %}</h1>
-  <p class="keynote">{{ flag.team.project.name }} · {{ flag.team.name }}</p>
+  <h1 style="margin-bottom:6px">{% if dispute %}Your dispute{% else %}Dispute this {{ page.severity_label|lower }}{% endif %}</h1>
+  <p class="keynote">{{ page.team.project.name }} · {{ page.team.name }}</p>
 
-  <p class="finding {{ flag.severity }}">
-    <mark>{{ flag.get_severity_display }}</mark>
-    <small>Week of {{ flag.week_start|date:"M j, Y" }}</small>
-    {{ flag.reason }}
+  {# Once disputed, the flag as the student disputed it, which is what the instructor decided on. #}
+  <p class="finding {% if page.is_withdrawn %}withdrawn{% elif not page.flag %}gone{% else %}{{ page.severity }}{% endif %}">
+    <mark>{% if page.is_withdrawn %}Withdrawn after dispute{% elif not page.flag %}Flag no longer raised{% else %}{{ page.severity_label }}{% endif %}</mark>
+    <small>{% if page.is_withdrawn or not page.flag %}{{ page.severity_label }} for the week{% else %}Week{% endif %} of {{ page.week_start|date:"M j, Y" }}</small>
+    {{ page.reason }}
   </p>
+
+  {% if error and not page.can_edit %}<ul class="errorlist"><li>{{ error }}</li></ul>{% endif %}
 
   {% if dispute %}
   <div class="dispute-panel">
     <div class="row">
-      <span class="tag dispute">{% if dispute.status == "open" %}Disputed, waiting for your instructor{% else %}Disputed · {{ dispute.get_status_display }}{% endif %}</span>
+      <span class="tag dispute">{% include "dashboard/_dispute_status.html" with for_student=True %}</span>
       <small>{% if dispute.was_edited %}Last edited {{ dispute.updated_at|date:"M j, Y" }}{% else %}Submitted {{ dispute.created_at|date:"M j, Y" }}{% endif %}</small>
     </div>
     {% if dispute.status != "open" %}
     <blockquote>{{ dispute.explanation|linebreaksbr }}</blockquote>
-    <p class="decided">{{ dispute.get_status_display }}{% if dispute.resolved_by %} by {{ dispute.resolved_by.display_name }}{% endif %}{% if dispute.resolved_at %} on {{ dispute.resolved_at|date:"M j, Y" }}{% endif %}.</p>
-    {% if dispute.resolution_note %}<p class="note">Note from your instructor: {{ dispute.resolution_note }}</p>{% endif %}
+    <p class="decided">{% include "dashboard/_dispute_decided.html" %}</p>
     {% endif %}
   </div>
+  {% include "dashboard/_dispute_note.html" %}
   {% endif %}
 
-  {% if not dispute or dispute.status == "open" %}
-  <form action="{% url 'dashboard:flag_dispute' flag.id %}" method="post" class="setup-panel">
+  {% if page.can_edit %}
+  <form action="{% url 'dashboard:flag_dispute' page.team.id page.rule page.week_start|date:'Y-m-d' %}" method="post" class="setup-panel">
     {% csrf_token %}
-    <p class="keynote">Your instructor and TAs will read this. The {{ flag.get_severity_display|lower }} stays visible to them until they decide.</p>
+    <p class="keynote">Your instructor and TAs will read this. The {{ page.severity_label|lower }} stays visible to them until they decide.</p>
     {% if error %}<ul class="errorlist"><li>{{ error }}</li></ul>{% endif %}
+    {# The newline after <textarea> is dropped by browsers, so a leading one in the text survives. #}
     <label>Your explanation <small>(up to {{ limit|floatformat:"0g" }} characters)</small>
-      <textarea name="explanation" rows="6" maxlength="{{ limit }}" required>{{ explanation }}</textarea>
+      <textarea name="explanation" rows="6" maxlength="{{ limit }}" required>
+{{ explanation }}</textarea>
     </label>
     <div class="form-actions">
       <button type="submit" class="primary">{% if dispute %}Save changes{% else %}Send dispute{% endif %}</button>
       <a href="{% url 'dashboard:student_home' %}">Cancel</a>
     </div>
   </form>
+  {% elif error and explanation != dispute.explanation %}
+  <p class="keynote">What you typed wasn't saved:</p>
+  <blockquote>{{ explanation|linebreaksbr }}</blockquote>
   {% endif %}
 </div>
 {% endblock %}

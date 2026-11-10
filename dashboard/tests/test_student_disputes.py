@@ -346,7 +346,8 @@ class DisputeAccessTests(DisputeFixture):
         self.assertFalse(FlagDispute.objects.exists())
 
     def test_a_flag_about_the_whole_team_gets_403(self):
-        team_flag = make_flag(self.team, None, WEEK, "About the whole team.")
+        # Another week, so the URL doesn't also name the flag about me.
+        team_flag = make_flag(self.team, None, WEEK - timedelta(days=7), "About the whole team.")
         self.assertEqual(self.client.get(dispute_url(team_flag)).status_code, 403)
 
     def test_a_flag_on_a_team_im_no_longer_on_gets_403(self):
