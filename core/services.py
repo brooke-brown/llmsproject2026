@@ -1,4 +1,7 @@
+import csv
+import io
 import re
+from dataclasses import dataclass, field
 
 import requests
 from django.contrib.auth.password_validation import validate_password
@@ -521,3 +524,315 @@ def _all_in_source(requirements: list[str], text: str) -> bool:
 
 def _normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
+
+
+# --- Importing teams and students from a CSV (US-43, #126) ---
+
+TEAM_CSV_COLUMNS = ("team", "name", "github_login", "email", "repo_url")
+REQUIRED_TEAM_CSV_COLUMNS = ("team", "name", "github_login")
+MAX_TEAM_CSV_BYTES = 1024 * 1024
+TEAM_CSV_TEMPLATE = (
+    ",".join(TEAM_CSV_COLUMNS)
+    + "\nTeam Example,Ada Example,ada-example,ada@example.com,https://github.com/example-org/example-repo"
+    + "\nTeam Example,Bo Example,bo-example,,\n"
+)
+
+
+class TeamImportError(Exception):
+    """The file can't be read as a team CSV at all. The message says why."""
+
+
+@dataclass
+class RowError:
+    row: int  # The spreadsheet row, so the header is row 1.
+    message: str
+
+
+@dataclass
+class PlannedStudent:
+    row: int
+    name: str
+    github_login: str
+    email: str = ""
+    # "new" (a new account), "existing" (an account that joins the team), "on_team" (already
+    # there, nothing to do) or "error".
+    status: str = "new"
+    note: str = ""
+
+
+@dataclass
+class PlannedTeam:
+    name: str
+    is_new: bool
+    repo: str = ""  # owner/repo, or "" for none.
+    repo_url: str = ""
+    repo_is_new: bool = False
+    students: list[PlannedStudent] = field(default_factory=list)
+
+
+@dataclass
+class TeamImportPlan:
+    """What importing a file would do, and every problem with it. Nothing is saved."""
+
+    teams: list[PlannedTeam]
+    errors: list[RowError]
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+    @property
+    def nothing_to_add(self) -> bool:
+        return not any(
+            team.is_new
+            or team.repo_is_new
+            or any(student.status in ("new", "existing") for student in team.students)
+            for team in self.teams
+        )
+
+
+@dataclass
+class ImportResult:
+    teams: int
+    students: int
+    repos: int
+
+
+def read_team_csv(data: bytes) -> str:
+    """Decode an uploaded file as text, or raise TeamImportError saying why it can't be read.
+
+    Excel's byte order mark is dropped, and a file that isn't UTF-8 is read as Windows-1252,
+    which is what Excel's plain "CSV" export uses.
+    """
+    if len(data) > MAX_TEAM_CSV_BYTES:
+        raise TeamImportError("This file is over 1 MB, so it can't be imported. Split it up.")
+    if b"\x00" in data:
+        raise TeamImportError("This doesn't look like a CSV file. Upload a .csv file.")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("cp1252")
+        except UnicodeDecodeError:
+            raise TeamImportError("This doesn't look like a CSV file. Upload a .csv file.") from None
+
+
+def plan_team_import(project: Project, text: str) -> TeamImportPlan:
+    """Check a CSV against the project and say what importing it would do, saving nothing.
+
+    Raises TeamImportError for a file that can't be read at all. Problems with particular rows
+    are in the plan's `errors`, each naming its row. Each distinct new repo is checked on
+    GitHub once, however many rows name it.
+    """
+    records = _read_records(text)
+    teams: dict[str, PlannedTeam] = {}  # Keyed by the team name's casefold.
+    existing_teams = {team.name.casefold(): team for team in project.teams.prefetch_related("repos")}
+    errors: list[RowError] = []
+    seen_logins: dict[str, int] = {}
+    repo_rows: dict[str, tuple[str, int]] = {}  # casefolded full name -> (full name, first row).
+
+    for row, cells in records:
+        problems: list[str] = []
+
+        def attempt(check, *args):
+            try:
+                return check(*args)
+            except (ProjectSetupError, ValidationError) as error:
+                problems.append(
+                    " ".join(error.messages) if isinstance(error, ValidationError) else str(error)
+                )
+
+        team_name = attempt(_clean_team_cell, cells["team"])
+        full_name = attempt(_split_full_name, cells["name"])
+        login = attempt(_clean_github_login, cells["github_login"])
+        email = attempt(_clean_email, cells["email"])
+        repo = None
+        if cells["repo_url"].strip():
+            repo = attempt(_clean_repo_cell, cells["repo_url"])
+
+        team = None
+        if team_name is not None:
+            key = team_name.casefold()
+            if key not in teams:
+                existing = existing_teams.get(key)
+                teams[key] = PlannedTeam(existing.name if existing else team_name, existing is None)
+            team = teams[key]
+            if repo is not None:
+                problem = _repo_problem(team, existing_teams.get(key), repo, cells["repo_url"], row)
+                if problem:
+                    problems.append(problem)
+                elif repo.casefold() not in repo_rows and team.repo_is_new:
+                    repo_rows[repo.casefold()] = (repo, row)
+
+        student = PlannedStudent(row, "", login or "", email or "")
+        if full_name is not None:
+            student.name = " ".join(cells["name"].split())
+        if login is not None and team_name is not None:
+            problem = _student_problem(project, student, team, seen_logins)
+            if problem:
+                problems.append(problem)
+        if problems:
+            student.status = "error"
+            student.note = " ".join(problems)
+            errors.extend(RowError(row, problem) for problem in problems)
+        if team is not None:
+            team.students.append(student)
+
+    errors.extend(_unreadable_repos(repo_rows))
+    errors.sort(key=lambda error: error.row)
+    return TeamImportPlan(list(teams.values()), errors)
+
+
+def import_teams(project: Project, text: str) -> ImportResult:
+    """Plan the import and carry it out, or raise TeamImportError saying why it can't be."""
+    return run_team_import(project, plan_team_import(project, text))
+
+
+def run_team_import(project: Project, plan: TeamImportPlan) -> ImportResult:
+    """Carry out a plan that has no errors. Either everything is imported or nothing is."""
+    if not plan.ok:
+        count = len(plan.errors)
+        raise TeamImportError(
+            f"The file has {count} problem{'s' if count != 1 else ''}, so nothing was imported."
+        )
+    teams = students = repos = 0
+    try:
+        with transaction.atomic():
+            for planned in plan.teams:
+                team = project.teams.filter(name__iexact=planned.name).first()
+                if team is None or team.name.casefold() != planned.name.casefold():
+                    team = create_team(project, planned.name)
+                    teams += 1
+                if planned.repo_is_new:
+                    # Already checked on GitHub while planning, so it isn't checked again.
+                    _save_repo_form(_valid_repo_form(team, planned.repo_url))
+                    repos += 1
+                for student in planned.students:
+                    if student.status in ("new", "existing"):
+                        add_student(team, student.name, student.github_login, student.email)
+                        students += 1
+    except ProjectSetupError as error:
+        raise TeamImportError(str(error)) from None
+    return ImportResult(teams, students, repos)
+
+
+def _read_records(text: str) -> list[tuple[int, dict[str, str]]]:
+    """The file's non-blank rows as (spreadsheet row, cells by column name)."""
+    if len(text.encode("utf-8")) > MAX_TEAM_CSV_BYTES:
+        raise TeamImportError("This file is over 1 MB, so it can't be imported. Split it up.")
+    if "\x00" in text:
+        raise TeamImportError("This doesn't look like a CSV file. Upload a .csv file.")
+    try:
+        rows = list(csv.reader(io.StringIO(text)))
+    except csv.Error:
+        raise TeamImportError("This doesn't look like a CSV file. Upload a .csv file.") from None
+    rows = [(number, row) for number, row in enumerate(rows, start=1)]
+    header_at = next((i for i, (_, row) in enumerate(rows) if any(c.strip() for c in row)), None)
+    if header_at is None:
+        raise TeamImportError("The file is empty. Use the template's columns.")
+    header = [cell.strip().lower() for cell in rows[header_at][1]]
+    missing = [column for column in REQUIRED_TEAM_CSV_COLUMNS if column not in header]
+    if missing:
+        raise TeamImportError(
+            f"The file is missing the column{'s' if len(missing) > 1 else ''}: "
+            f"{', '.join(missing)}. The columns are {', '.join(TEAM_CSV_COLUMNS)}."
+        )
+    positions = {column: header.index(column) for column in TEAM_CSV_COLUMNS if column in header}
+    records = []
+    for number, row in rows[header_at + 1 :]:
+        if not any(cell.strip() for cell in row):
+            continue
+        records.append(
+            (
+                number,
+                {
+                    column: row[positions[column]] if column in positions and positions[column] < len(row) else ""
+                    for column in TEAM_CSV_COLUMNS
+                },
+            )
+        )
+    if not records:
+        raise TeamImportError("The file has no rows below its header.")
+    return records
+
+
+def _clean_team_cell(name: str) -> str:
+    name = " ".join(name.split())
+    if not name:
+        raise ProjectSetupError("Enter a team name.")
+    limit = Team._meta.get_field("name").max_length
+    if len(name) > limit:
+        raise ProjectSetupError(f"A team name must be {limit} characters or fewer.")
+    return name
+
+
+def _clean_repo_cell(url: str) -> str:
+    """The repo's owner/repo, or raise ProjectSetupError."""
+    url = url.strip()
+    try:
+        if len(url) > Repo._meta.get_field("url").max_length:
+            raise ValidationError(INVALID_REPO_URL)
+        return github_repo_full_name(url)
+    except ValidationError as error:
+        raise ProjectSetupError(" ".join(error.messages)) from None
+
+
+def _repo_problem(team: PlannedTeam, existing, full_name: str, url: str, row: int) -> str:
+    """Record the row's repo on the team, or return what's wrong with it."""
+    stored = [repo.full_name for repo in existing.repos.all()] if existing else []
+    if stored:
+        if full_name.casefold() in (name.casefold() for name in stored):
+            return ""
+        return f"{team.name} already has the repo {stored[0]}, not {full_name}."
+    if team.repo:
+        if team.repo.casefold() == full_name.casefold():
+            return ""
+        return (
+            f"The rows for {team.name} disagree about its repo: {team.repo} and {full_name}."
+        )
+    team.repo, team.repo_url, team.repo_is_new = full_name, url.strip(), True
+    return ""
+
+
+def _student_problem(project, student: PlannedStudent, team: PlannedTeam, seen_logins) -> str:
+    """Set the student's status from what already exists, or return what's wrong."""
+    login = student.github_login
+    if login.casefold() in seen_logins:
+        return f"{login} is listed twice (first on row {seen_logins[login.casefold()]})."
+    seen_logins[login.casefold()] = student.row
+
+    user = User.objects.filter(github_login__iexact=login).first()
+    if user is None:
+        if User.objects.filter(username__iexact=login).exists():
+            return (
+                f"The username {login} is already taken by a different account. Change that "
+                "account's username or GitHub username in the admin."
+            )
+        student.status = "new"
+        return ""
+
+    enrollment = Enrollment.objects.filter(user=user, course=project.course).first()
+    if enrollment and enrollment.role != Enrollment.Role.STUDENT:
+        role = "an instructor" if enrollment.role == Enrollment.Role.INSTRUCTOR else "a TA"
+        return f"{login} is {role} in this course, so they can't be added to a team."
+    membership = TeamMembership.objects.filter(user=user, team__project=project).select_related("team").first()
+    if membership and membership.team.name.casefold() != team.name.casefold():
+        return f"{login} is already on {membership.team.name} in this project."
+    student.status = "on_team" if membership else "existing"
+    if user.get_full_name() != student.name:
+        student.note = (
+            f'Uses the existing account, named "{user.get_full_name()}" '
+            f'(the file says "{student.name}").'
+        )
+    return ""
+
+
+def _unreadable_repos(repo_rows) -> list[RowError]:
+    """One GitHub check per distinct new repo, as a RowError on the first row that names it."""
+    errors = []
+    for full_name, row in repo_rows.values():
+        try:
+            _check_repo_is_readable(Repo(full_name=full_name))
+        except ProjectSetupError as error:
+            errors.append(RowError(row, str(error)))
+    return errors

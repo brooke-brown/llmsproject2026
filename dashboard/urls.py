@@ -52,6 +52,17 @@ urlpatterns = [
         name="requirement_delete",
     ),
     path("projects/<int:project_id>/teams/new/", views.team_create, name="team_create"),
+    path("projects/<int:project_id>/teams/import/", views.team_import, name="team_import"),
+    path(
+        "projects/<int:project_id>/teams/import/template.csv",
+        views.team_import_template,
+        name="team_import_template",
+    ),
+    path(
+        "projects/<int:project_id>/teams/import/confirm/",
+        views.team_import_confirm,
+        name="team_import_confirm",
+    ),
     path("teams/<int:team_id>/rename/", views.team_rename, name="team_rename"),
     path("teams/<int:team_id>/delete/", views.team_delete, name="team_delete"),
     path("teams/<int:team_id>/students/add/", views.student_add, name="student_add"),

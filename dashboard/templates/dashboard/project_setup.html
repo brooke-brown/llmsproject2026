@@ -41,7 +41,7 @@
   <p class="keynote">No teams yet.</p>
   {% endfor %}
   {% include "dashboard/_add_team.html" with next=setup_url %}
-  <p class="keynote">Open a team to add its students and repo.</p>
+  <p class="keynote">Open a team to add its students and repo, or <a href="{% url 'dashboard:team_import' project.id %}">Import from CSV</a>.</p>
 </section>
 
 <section class="setup-panel">

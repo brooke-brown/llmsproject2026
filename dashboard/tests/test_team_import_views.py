@@ -83,12 +83,12 @@ class PreviewPageTests(TeamSetupFixture):
     def test_confirm_is_available_when_every_row_is_fine(self):
         page = self.preview()
         self.assertContains(page, "Confirm import")
-        self.assertNotContains(page, "disabled")
+        self.assertNotRegex(page.content.decode(), r"<button[^>]*\bdisabled")
 
     def test_while_any_row_has_an_error_confirming_is_disabled_and_the_row_is_named(self):
         page = self.preview(f"{HEADER}\nTeam Gamma,Ada Lovelace,-bad-,,\nTeam Gamma,Bo Byte,bo-dev,,\n")
         self.assertContains(page, "Row 2")
-        self.assertContains(page, "disabled")
+        self.assertRegex(page.content.decode(), r"<button[^>]*\bdisabled")
 
     def test_the_csv_travels_in_the_confirm_form_and_is_not_saved_to_disk(self):
         import tempfile

@@ -126,7 +126,7 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 - A covered range is split into 7-day chunks, with a leftover of 3 days or fewer joining the previous chunk, so up to 10 days is one chunk. Every student on a team is chunked the same way. Several chunks go through an LLM merge pass and the validator again, and users only ever see the one report.
 - Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings.
 
-**Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
+**Setup at scale:** CSV import of teams and students (#126, built: instructors upload on the project's edit page, preview, then confirm), and generating temporary passwords in bulk (#127).
 
 **Student side:** student logins (#102, #106), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
