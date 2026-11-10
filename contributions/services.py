@@ -1,6 +1,6 @@
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Exists, OuterRef
 from django.shortcuts import get_object_or_404
 
 from core.models import Project, Team
@@ -43,12 +43,46 @@ def get_own_contribution(user, contribution_id) -> Contribution:
     return contribution
 
 
+def get_teammates_contribution(user, contribution_id) -> Contribution:
+    """A contribution the user can confirm. 404 if it doesn't exist, 403 unless they're a
+    student in the course, on its team and not the one who recorded it."""
+    contribution = get_object_or_404(
+        Contribution.objects.select_related("team__project__course"), pk=contribution_id
+    )
+    on_team = contribution.team.memberships.filter(user=user).exists()
+    is_author = contribution.student_id == user.id
+    if (
+        not on_team
+        or is_author
+        or not is_course_student(user, contribution.team.project.course)
+    ):
+        raise PermissionDenied
+    return contribution
+
+
 def contributions_for_list(team: Team, student):
     """What `student` recorded on `team`, newest work first, each with `confirmation_count`."""
     return (
         Contribution.objects.filter(team=team, student=student)
         .select_related("team")
         .annotate(confirmation_count=Count("corroborations"))
+        .order_by("-date", "-created_at", "-pk")
+    )
+
+
+def teammates_contributions_for_list(team: Team, student):
+    """What `student`'s teammates recorded on `team`, newest work first, each with
+    `confirmation_count` and `confirmed_by_student`. Never who else confirmed it."""
+    return (
+        Contribution.objects.filter(team=team)
+        .exclude(student=student)
+        .select_related("student")
+        .annotate(
+            confirmation_count=Count("corroborations"),
+            confirmed_by_student=Exists(
+                Corroboration.objects.filter(contribution=OuterRef("pk"), teammate=student)
+            ),
+        )
         .order_by("-date", "-created_at", "-pk")
     )
 
@@ -62,8 +96,7 @@ def _refuse_if_locked(contribution_id) -> None:
     """Call inside a transaction, so a confirmation can't land before the change commits.
 
     Takes the row lock, which SQLite ignores because its transactions take the write lock
-    up front. Confirming a contribution (US-34) has to run in a transaction that locks the
-    same row.
+    up front. `confirm_contribution` locks the same row.
     """
     get_object_or_404(Contribution.objects.select_for_update(), pk=contribution_id)
     if Corroboration.objects.filter(contribution_id=contribution_id).exists():
@@ -83,3 +116,19 @@ def delete_contribution(contribution: Contribution) -> None:
     with transaction.atomic():
         _refuse_if_locked(contribution.pk)
         contribution.delete()
+
+
+def confirm_contribution(contribution: Contribution, teammate) -> None:
+    """Record a teammate's confirmation, once however many times they submit it.
+
+    Locks the row so this waits for an edit or delete already under way (see
+    `_refuse_if_locked`). 404 if that delete has removed the contribution.
+    """
+    with transaction.atomic():
+        get_object_or_404(Contribution.objects.select_for_update(), pk=contribution.pk)
+        Corroboration.objects.get_or_create(contribution=contribution, teammate=teammate)
+
+
+def undo_confirmation(contribution: Contribution, teammate) -> None:
+    """Remove this teammate's confirmation, if they made one, leaving anyone else's."""
+    Corroboration.objects.filter(contribution=contribution, teammate=teammate).delete()

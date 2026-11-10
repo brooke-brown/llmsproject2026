@@ -1,6 +1,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_POST
 
 from . import services
 from .forms import ContributionForm
@@ -82,3 +83,32 @@ def contribution_delete(request, contribution_id):
         "contributions/confirm_delete.html",
         {"project": contribution.team.project, "contribution": contribution},
     )
+
+
+@login_required
+def team_contribution_list(request, project_id):
+    team = services.get_team_for_project_student(request.user, project_id)
+    return render(
+        request,
+        "contributions/team_list.html",
+        {
+            "project": team.project,
+            "contributions": services.teammates_contributions_for_list(team, request.user),
+        },
+    )
+
+
+@login_required
+@require_POST
+def contribution_confirm(request, contribution_id):
+    contribution = services.get_teammates_contribution(request.user, contribution_id)
+    services.confirm_contribution(contribution, request.user)
+    return redirect("contributions:team_list", project_id=contribution.team.project_id)
+
+
+@login_required
+@require_POST
+def contribution_unconfirm(request, contribution_id):
+    contribution = services.get_teammates_contribution(request.user, contribution_id)
+    services.undo_confirmation(contribution, request.user)
+    return redirect("contributions:team_list", project_id=contribution.team.project_id)
