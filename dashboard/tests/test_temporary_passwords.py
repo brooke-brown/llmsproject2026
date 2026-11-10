@@ -240,6 +240,7 @@ class AddFormPasswordTests(TemporaryPasswordFixture):
 
     def test_a_blank_field_keeps_an_existing_accounts_password(self):
         existing = make_user("sample-ada", "Ada", "Example")
+        enroll(existing, self.course, Role.STUDENT)
 
         self.add(temporary_password="")
 
@@ -248,6 +249,7 @@ class AddFormPasswordTests(TemporaryPasswordFixture):
 
     def test_an_existing_account_gets_the_typed_password(self):
         existing = make_user("sample-ada", "Ada", "Example")
+        enroll(existing, self.course, Role.STUDENT)
 
         self.add(temporary_password=TEMPORARY_PASSWORD)
 
@@ -267,7 +269,9 @@ class AddFormPasswordTests(TemporaryPasswordFixture):
                 self.assertEqual(self.team.memberships.count(), 1)
 
     def test_a_rejected_password_doesnt_add_an_existing_account(self):
+        enroll(self.instructor, self.other_course, Role.INSTRUCTOR)
         existing = make_user("sample-ada", "Ada", "Example")
+        enroll(existing, self.other_course, Role.STUDENT)
 
         response = self.add(temporary_password=REJECTED_PASSWORD)
 
@@ -330,7 +334,33 @@ class PasswordNeverShownTests(TemporaryPasswordFixture):
         self.assert_status(self.edit_form(membership), HAS_NOT_SET_OWN, HAS_SET_OWN)
 
     def test_edit_form_says_when_the_student_has_set_their_own(self):
+        Client().force_login(self.grace)
+
         self.assert_status(self.edit_form(), HAS_SET_OWN, HAS_NOT_SET_OWN)
+
+    def test_a_password_nobody_has_logged_in_with_doesnt_count_as_their_own(self):
+        """A usable password alone says nothing about who chose it."""
+        self.assert_status(self.edit_form(), HAS_NOT_SET_OWN, HAS_SET_OWN)
+
+    def test_a_password_set_in_the_admin_doesnt_count_as_their_own(self):
+        """Even for a student who has logged in before, since the admin knows this one."""
+        Client().force_login(self.grace)
+        admin = Client()
+        admin.force_login(
+            User.objects.create_superuser(username="sample-root", github_login="sample-root")
+        )
+
+        response = admin.post(
+            reverse("admin:auth_user_password_change", args=[self.grace.pk]),
+            {
+                "usable_password": "true",
+                "password1": TEMPORARY_PASSWORD,
+                "password2": TEMPORARY_PASSWORD,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assert_status(self.edit_form(), HAS_NOT_SET_OWN, HAS_SET_OWN)
 
 
 class RefusedAccountTests(TemporaryPasswordFixture):
@@ -470,6 +500,174 @@ class StudentInAnotherCourseTests(TemporaryPasswordFixture):
             )
 
         self.assert_password_untouched(ada)
+
+
+class UnenrolledAccountTests(TemporaryPasswordFixture):
+    """An account with a password and no enrollments may belong to anyone. Adding it to a team
+    would make it look like the instructor's own student, so an admin has to vouch for it."""
+
+    def unenrolled(self):
+        return make_user("sample-ada", "Ada", "Example")
+
+    def assert_add_refused(self, ada, response):
+        self.assertIn("admin", page_messages(response))
+        self.assert_password_untouched(ada)
+        self.assertFalse(self.team.memberships.filter(user=ada).exists())
+        self.assertFalse(ada.enrollments.exists())
+
+    def test_add_form_refuses_a_typed_password(self):
+        ada = self.unenrolled()
+
+        self.assert_add_refused(ada, self.add(temporary_password=TEMPORARY_PASSWORD))
+
+    def test_adding_them_with_a_blank_field_first_doesnt_get_around_it(self):
+        """Otherwise the edit form would set the password once they're enrolled here."""
+        ada = self.unenrolled()
+
+        self.assert_add_refused(ada, self.add(temporary_password=""))
+
+    def test_a_deleted_enrollment_leaves_the_account_protected(self):
+        ada = self.unenrolled()
+        enroll(ada, self.other_course, Role.STUDENT).delete()
+
+        self.assert_add_refused(ada, self.add(temporary_password=TEMPORARY_PASSWORD))
+
+    def test_once_an_admin_enrolls_them_the_instructor_can_set_it(self):
+        ada = self.unenrolled()
+        enroll(ada, self.course, Role.STUDENT)
+
+        self.add(temporary_password=TEMPORARY_PASSWORD)
+
+        self.assert_has_temporary_password(ada)
+
+    def test_an_unenrolled_account_with_no_password_can_be_given_one(self):
+        """Nobody can log in to it, so there's nothing to take over."""
+        ada = self.unenrolled()
+        ada.set_unusable_password()
+        ada.save()
+
+        self.add(temporary_password=TEMPORARY_PASSWORD)
+
+        self.assertTrue(self.team.memberships.filter(user=ada).exists())
+        self.assert_has_temporary_password(ada)
+
+    def test_the_services_refuse_it_too(self):
+        ada = self.unenrolled()
+
+        with self.assertRaises(setup.ProjectSetupError):
+            setup.add_student(self.team, "Ada Example", "sample-ada", instructor=self.instructor)
+
+        self.assertFalse(ada.enrollments.exists())
+
+
+class LoginUsernameTests(TemporaryPasswordFixture):
+    """Logging in uses `username`, which an older account can have different from GitHub's."""
+
+    def jdoe(self):
+        account = User.objects.create_user(
+            username="jdoe", password=CURRENT_PASSWORD, github_login="sample-ada"
+        )
+        enroll(account, self.course, Role.STUDENT)
+        return account
+
+    def joined(self, account):
+        return self.team.memberships.create(user=account)
+
+    def test_adding_with_a_password_names_the_username_to_share(self):
+        self.jdoe()
+
+        response = self.add(temporary_password=TEMPORARY_PASSWORD)
+
+        self.assertIn("jdoe", page_messages(response))
+
+    def test_editing_with_a_password_names_the_username_to_share(self):
+        membership = self.joined(self.jdoe())
+
+        response = self.edit(membership, temporary_password=TEMPORARY_PASSWORD)
+
+        self.assertIn("jdoe", page_messages(response))
+
+    def test_the_named_username_is_the_one_that_logs_in(self):
+        self.jdoe()
+        self.add(temporary_password=TEMPORARY_PASSWORD)
+        student = Client()
+
+        response = student.post(
+            reverse("login"), {"username": "jdoe", "password": TEMPORARY_PASSWORD}, follow=True
+        )
+
+        self.assertTrue(response.context["user"].is_authenticated)
+
+    def test_nothing_is_added_when_no_password_was_set(self):
+        membership = self.joined(self.jdoe())
+
+        response = self.edit(membership, temporary_password="")
+
+        self.assertNotIn("jdoe", page_messages(response))
+
+    def test_nothing_is_added_when_the_two_match(self):
+        response = self.edit(temporary_password=TEMPORARY_PASSWORD)
+
+        self.assertNotIn("sample-grace", page_messages(response))
+
+    def test_the_edit_form_shows_a_username_that_differs(self):
+        membership = self.joined(self.jdoe())
+
+        self.assertIn("<code>jdoe</code>", self.edit_form(membership))
+
+    def test_the_edit_form_shows_no_second_name_when_the_two_match(self):
+        self.assertEqual(self.edit_form().count("<code>sample-grace</code>"), 1)
+
+
+class WhitespaceInPasswordTests(TemporaryPasswordFixture):
+    BLANKS = ["            ", "\t\t\t\t\t\t\t\t", " \n \n \n \n"]
+    ONLY_SPACES = "only spaces"
+
+    def login_works(self, username, password):
+        client = Client()
+        return client.login(username=username, password=password)
+
+    def test_edit_form_refuses_a_password_of_only_whitespace(self):
+        for blank in self.BLANKS:
+            with self.subTest(blank=blank):
+                response = self.edit(full_name="Grace Hopper", temporary_password=blank)
+
+                self.assertIn(self.ONLY_SPACES, page_messages(response))
+                self.assertNotIn("Updated", page_messages(response))
+                self.assertEqual(self.stored().get_full_name(), "Grace Example")
+                self.assert_password_untouched()
+
+    def test_add_form_refuses_a_password_of_only_whitespace(self):
+        for blank in self.BLANKS:
+            with self.subTest(blank=blank):
+                response = self.add(temporary_password=blank)
+
+                self.assertIn(self.ONLY_SPACES, page_messages(response))
+                self.assertNotIn("Added", page_messages(response))
+                self.assertFalse(User.objects.filter(github_login="sample-ada").exists())
+
+    def test_edit_form_strips_whitespace_around_a_pasted_password(self):
+        self.edit(temporary_password=f"  {TEMPORARY_PASSWORD} \n")
+
+        self.assert_has_temporary_password()
+        self.assertTrue(self.login_works("sample-grace", TEMPORARY_PASSWORD))
+
+    def test_add_form_strips_whitespace_around_a_pasted_password(self):
+        self.add(temporary_password=f"\t{TEMPORARY_PASSWORD}\r\n")
+
+        self.assert_has_temporary_password(User.objects.get(github_login="sample-ada"))
+        self.assertTrue(self.login_works("sample-ada", TEMPORARY_PASSWORD))
+
+    def test_spaces_inside_a_password_are_kept(self):
+        self.edit(temporary_password="river Lantern 9317")
+
+        self.assertTrue(self.stored().check_password("river Lantern 9317"))
+
+    def test_the_rules_judge_the_password_without_the_whitespace(self):
+        response = self.edit(temporary_password=f"     {REJECTED_PASSWORD}     ")
+
+        self.assertIn("too short", page_messages(response))
+        self.assert_password_untouched()
 
 
 class StudentLoginTests(TemporaryPasswordFixture):
