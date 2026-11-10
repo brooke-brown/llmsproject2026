@@ -8,10 +8,12 @@ from fractions import Fraction
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Case, Count, Exists, F, Max, OuterRef, Prefetch, Q, Value, When
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.formats import date_format
 
+from contributions.models import Contribution, Corroboration
 from core.models import (
     Course,
     Enrollment,
@@ -134,6 +136,130 @@ def decide_dispute(dispute, decision, note, decided_by):
     return dispute
 
 
+DISPUTE_EXPLANATION_LIMIT = 2000
+DISPUTE_DECIDED = "Your instructor has decided on this dispute, so it can't be changed."
+
+
+@dataclass
+class DisputePage:
+    """What a student's dispute page is about. `flag` is the live flag about them, or None
+    once it's no longer raised; `dispute` is their dispute of it, or None."""
+
+    team: Team
+    rule: str
+    week_start: date
+    flag: Flag | None
+    dispute: FlagDispute | None
+
+    @property
+    def severity(self):
+        """The flag as the student disputed it, or as it's raised now if not disputed yet."""
+        return self.dispute.severity if self.dispute else self.flag.severity
+
+    @property
+    def severity_label(self):
+        return Flag.Severity(self.severity).label
+
+    @property
+    def reason(self):
+        return self.dispute.flag_reason if self.dispute else self.flag.reason
+
+    @property
+    def is_withdrawn(self):
+        return bool(self.dispute) and self.dispute.status == FlagDispute.Status.FLAG_WITHDRAWN
+
+    @property
+    def can_edit(self):
+        return self.flag is not None and (
+            self.dispute is None or self.dispute.status == FlagDispute.Status.OPEN
+        )
+
+
+def get_dispute_page(user, team_id, rule, week):
+    """The user's flag and dispute for this team, rule and week (an ISO date). These survive
+    compute_flags, unlike Flag.pk, so the page keeps working while flags are regenerated.
+
+    403 unless the user is on the team, in a course they're a student in, and the flag is
+    about them. 404 if there's no such flag, or it's no longer raised and its dispute is still
+    open (#108 hides those). A decided dispute stays readable after its flag is gone.
+    """
+    try:
+        week_start = date.fromisoformat(week)
+    except ValueError:
+        raise Http404
+    team = get_team_for_student(user, team_id)
+    if not is_course_student(user, team.project.course):
+        raise PermissionDenied
+    flag = (
+        flags_in_display_order()
+        .filter(team=team, user=user, rule=rule, week_start=week_start)
+        .first()
+    )
+    dispute = FlagDispute.objects.filter(
+        team=team, student=user, rule=rule, week_start=week_start
+    ).select_related("resolved_by").first()
+    if flag is None and (dispute is None or dispute.status == FlagDispute.Status.OPEN):
+        if Flag.objects.filter(team=team, rule=rule, week_start=week_start).exists():
+            raise PermissionDenied  # A teammate's flag, or one about the whole team.
+        raise Http404
+    return DisputePage(team, rule, week_start, flag, dispute)
+
+
+def submit_dispute(flag, explanation):
+    """File the student's dispute of this flag, or edit it while it's open, and return
+    (dispute, created). Raise DisputeError, saying why, for a blank or too-long explanation,
+    a decided dispute, or a flag that's no longer raised (None).
+
+    The explanation is stored exactly as typed. A new dispute keeps the flag's reason and
+    severity as they are now; an edit leaves them as they were when it was filed. Sending the
+    same text again changes nothing, so it doesn't count as an edit.
+    """
+    if flag is None:
+        raise DisputeError("This flag is no longer raised, so its dispute can't be changed.")
+    if not explanation.strip():
+        raise DisputeError("Write your explanation before sending it.")
+    # Browsers send each line break as two characters but count it as one.
+    length = len(explanation.replace("\r\n", "\n"))
+    if length > DISPUTE_EXPLANATION_LIMIT:
+        raise DisputeError(
+            f"Your explanation can be up to {DISPUTE_EXPLANATION_LIMIT:,} characters, and this "
+            f"one has {length:,}. Nothing was sent."
+        )
+    dispute = dispute_for(flag)
+    if dispute is None:
+        try:
+            with transaction.atomic():
+                dispute = FlagDispute.objects.create(
+                    team_id=flag.team_id,
+                    student_id=flag.user_id,
+                    rule=flag.rule,
+                    week_start=flag.week_start,
+                    flag_reason=flag.reason,
+                    severity=flag.severity,
+                    explanation=explanation,
+                )
+                return dispute, True
+        except IntegrityError:
+            # Usually sent twice at once: the other request filed it, so this one edits it.
+            dispute = dispute_for(flag)
+            if dispute is None:
+                raise DisputeError("Your dispute couldn't be saved. Please try again.")
+    if dispute.status != FlagDispute.Status.OPEN:
+        raise DisputeError(DISPUTE_DECIDED)
+    if dispute.explanation == explanation:
+        return dispute, False
+    # Saved only while still open, in one statement, so an edit can't land after a decision
+    # made between the lookup above and this save.
+    now = timezone.now()
+    edited = FlagDispute.objects.filter(pk=dispute.pk, status=FlagDispute.Status.OPEN).update(
+        explanation=explanation, updated_at=now
+    )
+    if not edited:
+        raise DisputeError(DISPUTE_DECIDED)
+    dispute.explanation, dispute.updated_at = explanation, now
+    return dispute, False
+
+
 def staff_courses(user):
     """Courses where the user is an instructor or TA."""
     return Course.objects.filter(
@@ -184,6 +310,69 @@ def get_team_for_student(user, team_id):
     if not team.memberships.filter(user=user).exists():
         raise PermissionDenied
     return team
+
+
+def check_any_course_student(user):
+    """Raise PermissionDenied unless the user is a student in at least one course."""
+    if not Enrollment.objects.filter(user=user, role=Enrollment.Role.STUDENT).exists():
+        raise PermissionDenied
+
+
+def student_home_courses(user):
+    """What the student home shows: the courses the user is a student in that have a team
+    they're on, by name. Each course has `memberships`, the user's own, by project name.
+
+    Each membership has `teammates`, the rest of its team by name, and `my_flags`: the flags
+    and warnings about this user on that team, newest first, each with `is_withdrawn` and its
+    `dispute` (or None). Flags about teammates or the whole team are never included. It also
+    has `unraised_disputes`: the user's disputes on that team whose flag is no longer raised,
+    newest first, so a student can still read a dispute and its decision.
+    """
+    student_course_ids = Enrollment.objects.filter(
+        user=user, role=Enrollment.Role.STUDENT
+    ).values("course_id")
+    memberships = (
+        TeamMembership.objects.filter(user=user, team__project__course__in=student_course_ids)
+        .select_related("team__project__course")
+        .prefetch_related(
+            Prefetch(
+                "team__memberships",
+                queryset=TeamMembership.objects.select_related("user").order_by(
+                    "user__first_name", "user__last_name", "user__github_login"
+                ),
+                to_attr="all_memberships",
+            ),
+        )
+        .order_by("team__project__course__name", "team__project__name", "team__name")
+    )
+    my_flags = flags_in_display_order().filter(user=user).order_by("-week_start", "severity", "id")
+    flags_by_team = {}
+    for flag in my_flags:
+        flags_by_team.setdefault(flag.team_id, []).append(flag)
+    disputes = {
+        (d.team_id, d.rule, d.week_start): d
+        for d in FlagDispute.objects.filter(student=user).order_by("-week_start", "id")
+    }
+
+    courses = {}
+    for membership in memberships:
+        membership.teammates = [
+            other.user for other in membership.team.all_memberships if other.user_id != user.id
+        ]
+        membership.my_flags = flags_by_team.get(membership.team_id, [])
+        for flag in membership.my_flags:
+            flag.dispute = disputes.pop((flag.team_id, flag.rule, flag.week_start), None)
+        # Whatever is left for this team matched no current flag. Dicts keep insertion order.
+        membership.unraised_disputes = [
+            dispute for (team_id, _, _), dispute in disputes.items()
+            if team_id == membership.team_id
+        ]
+        course = membership.team.project.course
+        if course.id not in courses:
+            course.memberships = []
+            courses[course.id] = course
+        courses[course.id].memberships.append(membership)
+    return list(courses.values())
 
 
 def check_course_staff(user, course):
@@ -410,7 +599,9 @@ def team_wide_flags(team):
 
 def team_memberships_with_summaries(team):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
-    `team_flags` about them and their `team_disputes`."""
+    `team_flags` about them, their `team_disputes`, `team_contributions` and the
+    `team_corroborations` they gave. Each membership has `confirmations_of_their_work`, how
+    many times teammates confirmed the student's contributions on this team."""
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
@@ -420,6 +611,12 @@ def team_memberships_with_summaries(team):
     )
     return (
         team.memberships.select_related("user")
+        .annotate(
+            confirmations_of_their_work=Count(
+                "user__contributions__corroborations",
+                filter=Q(user__contributions__team=team),
+            )
+        )
         .order_by("user__last_name", "user__first_name", "user__github_login")
         .prefetch_related(
             Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"),
@@ -434,6 +631,16 @@ def team_memberships_with_summaries(team):
                 .select_related("resolved_by")
                 .order_by("week_start", "id"),
                 to_attr="team_disputes",
+            ),
+            Prefetch(
+                "user__contributions",
+                queryset=Contribution.objects.filter(team=team),
+                to_attr="team_contributions",
+            ),
+            Prefetch(
+                "user__corroborations",
+                queryset=Corroboration.objects.filter(contribution__team=team),
+                to_attr="team_corroborations",
             ),
         )
     )

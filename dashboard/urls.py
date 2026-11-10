@@ -7,6 +7,12 @@ app_name = "dashboard"
 urlpatterns = [
     path("", views.home, name="home"),
     path("student/", views.student_home, name="student_home"),
+    # Keyed on what a recomputed flag keeps, not Flag.pk, which changes on every run.
+    path(
+        "teams/<int:team_id>/flags/<slug:rule>/<str:week>/dispute/",
+        views.flag_dispute,
+        name="flag_dispute",
+    ),
     path("courses/<int:course_id>/", views.course_overview, name="course_overview"),
     path(
         "courses/<int:course_id>/generating/",

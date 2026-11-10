@@ -94,6 +94,15 @@ class ChunkedGenerationTests(ChunkedSummaryTestCase):
         self.assertIn("2026-10-23", prompt)
         self.assertIn("2026-11-05", prompt)
 
+    def test_chunk_and_merge_prompts_introduce_the_requirements_as_the_sprints(self):
+        self.answers = {"first": [make_claim(self.early)], "second": [make_claim(self.late)]}
+        self.merge_answer = [make_claim(self.early, self.late)]
+        self.generate()
+        self.assertEqual(self.kinds(), ["chunk", "chunk", "merge"])
+        for _, prompt in self.calls:
+            self.assertIn("Sprint 1's requirements:", prompt)
+            self.assertNotIn("project", prompt.lower())
+
     def test_one_chunk_has_no_merge_pass(self):
         self.sprint.end_date = date(2026, 10, 29)
         self.sprint.save()

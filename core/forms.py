@@ -1,5 +1,9 @@
 from django import forms
-from django.contrib.auth.forms import PasswordChangeForm
+from django.contrib.auth.forms import (
+    AdminPasswordChangeForm,
+    AdminUserCreationForm,
+    PasswordChangeForm,
+)
 from django.core.exceptions import ValidationError
 
 from core.models import Repo, Sprint
@@ -29,6 +33,23 @@ class ChangePasswordForm(PasswordChangeForm):
         # Set before the form saves this user, so both changes land in the same write.
         self.user.must_change_password = False
         return super().save(commit=commit)
+
+
+class ForcesPasswordChangeMixin:
+    """Whoever sets a password in the admin knows it, so the account must replace it. A
+    disabled password needs no change, since nobody can log in to make one."""
+
+    def set_password_and_save(self, user, commit=True, **kwargs):
+        user.must_change_password = self.cleaned_data["set_usable_password"]
+        return super().set_password_and_save(user, commit=commit, **kwargs)
+
+
+class AdminSetPasswordForm(ForcesPasswordChangeMixin, AdminPasswordChangeForm):
+    pass
+
+
+class AdminAddUserForm(ForcesPasswordChangeMixin, AdminUserCreationForm):
+    pass
 
 
 class RepoForm(forms.ModelForm):

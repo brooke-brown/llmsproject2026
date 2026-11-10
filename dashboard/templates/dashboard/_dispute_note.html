@@ -1,0 +1,4 @@
+{# The instructor's note on a decided dispute, for the student it's about. #}
+{% if dispute.status != "open" and dispute.resolution_note %}
+<p class="dispute-panel">Note from your instructor: {{ dispute.resolution_note|linebreaksbr }}</p>
+{% endif %}
