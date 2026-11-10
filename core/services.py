@@ -254,6 +254,9 @@ def add_student(
     A GitHub username that already has an account keeps its name and email. Without a
     temporary password, an existing account keeps its password and a new one can't log in.
     Either all of it happens or, with ProjectSetupError saying why, none of it does.
+
+    An account with a password and no enrollments is refused, password typed or not: once
+    enrolled here, it would look like this instructor's student on the edit form too.
     """
     github_login = _clean_github_login(github_login)
     first_name, last_name = _split_full_name(full_name)
@@ -263,6 +266,8 @@ def add_student(
             student = User.objects.filter(github_login__iexact=github_login).first()
             if student is None:
                 student = _create_student(github_login, first_name, last_name, email)
+            else:
+                _refuse_unclaimed_account(student)
             _enroll_as_student(student, team.project.course)
             membership = TeamMembership(user=student, team=team)
             try:
@@ -298,8 +303,16 @@ def edit_student(
 
 def set_temporary_password(student: User, password: str) -> None:
     """Give a student a password they must change at their next login, or raise
-    ProjectSetupError saying why it can't be, naming every password rule that failed."""
+    ProjectSetupError saying why it can't be, naming every password rule that failed.
+
+    Whitespace around it is dropped, since a pasted space or newline would stop the student
+    logging in with the password they were told."""
     _refuse_unless_student_only(student)
+    password = password.strip()
+    if not password:
+        raise ProjectSetupError(
+            "A temporary password can't be only spaces. Type one, or leave the field empty."
+        )
     try:
         validate_password(password, user=student)
     except ValidationError as error:
@@ -320,6 +333,18 @@ def _set_password_as(instructor: User | None, student: User, password: str) -> N
             "password can only be changed in the admin."
         )
     set_temporary_password(student, password)
+
+
+def _refuse_unclaimed_account(student: User) -> None:
+    """Raise ProjectSetupError for an account with a password that no course vouches for.
+    Staff accounts pass, since the dashboard never sets their passwords."""
+    if student.is_staff or student.is_superuser:
+        return
+    if student.has_usable_password() and not student.enrollments.exists():
+        raise ProjectSetupError(
+            f"{student.github_login} already has an account with a password and isn't enrolled "
+            "in any course, so they weren't added. Enroll them in this course in the admin first."
+        )
 
 
 def _refuse_unless_student_only(student: User) -> None:

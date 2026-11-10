@@ -98,7 +98,7 @@ FlagDispute      → Team + student + rule + Sprint, replacing week_start
 - Reusing teams in a later project is a UI feature ("Copy teams from a previous project"), not a schema change.
 - **Roles live on `Enrollment`, never on `User`.** One person can be a TA in one course and a student in another.
 - **Every user has `User.github_login`.** It's how commits, PRs and reviews are matched to students.
-- **`User.must_change_password`** is set by a temporary password and cleared when the user changes it. Until then, middleware keeps them on the password change page.
+- **`User.must_change_password`** is set by a temporary password or a password set in the admin, and cleared when the user changes it. Until then, middleware keeps them on the password change page.
 - **A team has one repo**, enforced on the dashboard. `Repo` stays its own table and the admin isn't restricted, so code that reads a team's repos must still handle several.
 - Use the word **"Team"** everywhere (code, UI, issues), never "group."
 - Later, optional: `joined_at`/`left_at` on `TeamMembership` for students who switch or drop mid-project.

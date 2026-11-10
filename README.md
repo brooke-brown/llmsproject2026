@@ -165,16 +165,19 @@ Good to know:
 An instructor gives each student a temporary password, and shares it with them directly, such as in class. STRIVE sends no email.
 
 1. **Set it (dashboard):** on the team page, fill in **Temporary password** when adding a student, or click **edit** beside a student. Leaving the field blank keeps their current password. Only the course's instructors can do this.
-2. **Log in:** the student logs in with their GitHub username and the temporary password.
+2. **Log in:** the student logs in with their GitHub username and the temporary password. An older account can have a different username. If so, the message after saving and the edit form name the one to share.
 3. **Choose a new one:** until they do, every page except logout sends them back to the password change page. They then land on the student home.
 
 Good to know:
 
 - **A password that breaks a password rule is refused,** with a message naming the rule, and nothing else on the form is saved.
+- **Spaces and line breaks around a password are dropped,** so a pasted one still works. A password of only spaces is refused.
 - **The password is never shown again.** The edit form says only whether the student has logged in and set their own password.
 - **Setting a new one replaces the student's own password,** and they must change it again at their next login. This is how to help a student who is locked out, since there's no password reset by email.
 - **Staff accounts and anyone who's an instructor or TA in any course** can only be given a password in the admin. Typing a password for one on the add form refuses the whole add.
 - **A student also enrolled in a course you don't teach** can only be given a password in the admin, so one course's instructor can't take over an account another course relies on. This applies on both forms, and adding them with the field blank still works.
+- **An existing account with a password and no enrollments** can't be added from the team page, with or without a temporary password, since it could be anyone's. Enroll it in the course in the admin first.
+- **A password set in the admin** must be changed at the next login too, because whoever set it knows it.
 
 ### Generating summaries
 
