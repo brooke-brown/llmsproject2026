@@ -1,0 +1,1 @@
+{# Who decided a dispute and when, for instructors and the student alike. #}{{ dispute.get_status_display }}{% if dispute.resolved_by %} by {{ dispute.resolved_by.display_name }}{% endif %}{% if dispute.resolved_at %} on {{ dispute.resolved_at|date:"M j, Y" }}{% endif %}.

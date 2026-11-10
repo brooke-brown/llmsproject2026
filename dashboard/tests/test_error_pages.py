@@ -163,15 +163,15 @@ class EmptyStateTests(ErrorFixture):
 
     def test_a_student_on_no_team_is_told_to_ask_their_instructor(self):
         text = self.page(self.student, reverse("dashboard:student_home"))
-        self.assertIn("You aren't on a team in any project yet.", text)
-        self.assertIn("Ask your instructor to add you to one.", text)
+        self.assertIn("You aren't on a team yet.", text)
+        self.assertIn("Your instructor adds you to one", text)
 
     def test_a_student_on_a_team_keeps_the_usual_text(self):
         project = Project.objects.create(course=self.course, name="Project One")
         team = Team.objects.create(project=project, name="Team Alpha")
         TeamMembership.objects.create(user=self.student, team=team)
         text = self.page(self.student, reverse("dashboard:student_home"))
-        self.assertNotIn("You aren't on a team in any project yet.", text)
+        self.assertNotIn("You aren't on a team yet.", text)
 
     def test_someone_with_no_courses_is_told_what_to_do(self):
         nobody = make_user("sample-nobody")
