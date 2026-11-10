@@ -165,6 +165,14 @@ class FlagsAboutMeTests(StudentHomeFixture):
         self.assertContains(response, "Flag for the week of Nov 2, 2026")
         self.assertNotContains(response, "Withdrawn reason.")
 
+    def test_a_withdrawn_flag_still_links_to_its_dispute(self):
+        week = date(2026, 11, 2)
+        flag = make_flag(self.team, self.student, week, "Withdrawn reason.")
+        make_dispute(self.team, self.student, week, status=FlagDispute.Status.FLAG_WITHDRAWN)
+        self.assertContains(
+            self.get_home(), reverse("dashboard:flag_dispute", args=[flag.id])
+        )
+
     def test_shows_the_instructors_note_on_a_decided_dispute(self):
         week = date(2026, 11, 2)
         make_flag(self.team, self.student, week, "Kept reason.")

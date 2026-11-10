@@ -25,7 +25,9 @@
         {# Worded as instructors see them on the team page. #}
         {% for flag in membership.my_flags %}
         {% if flag.is_withdrawn %}
-        <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j, Y" }}</p>
+        <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j, Y" }}
+          {% if flag.dispute %}<a class="tag dispute" href="{% url 'dashboard:flag_dispute' flag.id %}">Disputed · {{ flag.dispute.get_status_display }}</a>{% endif %}
+        </p>
         {% else %}
         <p class="finding {{ flag.severity }}">
           <mark>{{ flag.get_severity_display }}</mark>

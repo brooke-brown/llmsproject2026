@@ -220,12 +220,14 @@ class AfterRegeneratingTests(DisputeFixture):
         self.assertContains(response, "My side.")
         self.assertContains(self.client.get(student_home_url()), "Disputed, waiting")
 
-    def test_a_flag_no_longer_raised_leaves_my_list_with_its_dispute(self):
+    def test_a_flag_no_longer_raised_keeps_its_dispute_on_my_list(self):
         self.make_dispute(explanation="My side.")
         compute_flags(self.team)  # No summaries, so no flags are raised.
         response = self.client.get(student_home_url())
-        self.assertNotContains(response, escape(REASON))
-        self.assertNotContains(response, "Disputed, waiting")
+        self.assertContains(response, "Flag no longer raised")
+        self.assertContains(response, "Disputed · Open")
+        # The flag is gone, so there is no dispute page to open or edit.
+        self.assertNotContains(response, dispute_url(self.flag))
         self.assertEqual(self.client.get(dispute_url(self.flag)).status_code, 404)
 
 
