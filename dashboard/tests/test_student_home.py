@@ -170,7 +170,8 @@ class FlagsAboutMeTests(StudentHomeFixture):
         flag = make_flag(self.team, self.student, week, "Withdrawn reason.")
         make_dispute(self.team, self.student, week, status=FlagDispute.Status.FLAG_WITHDRAWN)
         self.assertContains(
-            self.get_home(), reverse("dashboard:flag_dispute", args=[flag.id])
+            self.get_home(),
+            reverse("dashboard:flag_dispute", args=[flag.team_id, flag.rule, "2026-11-02"]),
         )
 
     def test_shows_the_instructors_note_on_a_decided_dispute(self):

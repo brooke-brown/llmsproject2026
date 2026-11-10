@@ -29,8 +29,16 @@ WEEK = date(2026, 11, 2)
 REASON = "Casey Sample did 10% of the team's requirement-tied work in the week of Nov 2."
 
 
-def dispute_url(flag):
-    return reverse("dashboard:flag_dispute", args=[flag.id])
+def dispute_url(flag_or_dispute):
+    """The dispute page for a flag or dispute: keyed on what survives a recompute, not Flag.pk."""
+    return reverse(
+        "dashboard:flag_dispute",
+        args=[
+            flag_or_dispute.team_id,
+            flag_or_dispute.rule,
+            flag_or_dispute.week_start.isoformat(),
+        ],
+    )
 
 
 class DisputeFixture(StudentHomeFixture):
@@ -200,7 +208,42 @@ class ChangingADisputeTests(DisputeFixture):
                 response = self.submit("Trying to change it.")
                 self.assertEqual(FlagDispute.objects.get().explanation, "I paired on most of it.")
                 self.assertEqual(FlagDispute.objects.get().status, status)
-                self.assertRedirects(response, dispute_url(self.flag))
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "has decided on this dispute")
+
+    def test_a_form_sent_after_the_decision_keeps_what_i_typed(self):
+        # Todd's #9: the page was open when the instructor decided, so the student still had
+        # the form. What they typed is shown back rather than lost.
+        self.make_dispute(status=FlagDispute.Status.FLAG_KEPT)
+        response = self.submit("Typed before I saw the decision.")
+        self.assertContains(response, "Typed before I saw the decision.")
+        self.assertContains(response, "wasn't saved")
+        self.assertNotContains(response, 'name="explanation"')
+
+    def test_saving_without_changes_doesnt_count_as_an_edit(self):
+        # Todd's #6.
+        dispute = self.make_dispute()
+        FlagDispute.objects.filter(pk=dispute.pk).update(
+            created_at=timezone.now() - timedelta(days=1),
+            updated_at=timezone.now() - timedelta(days=1),
+        )
+        dispute.refresh_from_db()
+        response = self.submit("I paired on most of it.")
+        self.assertRedirects(response, student_home_url())
+        after = FlagDispute.objects.get()
+        self.assertEqual(after.updated_at, dispute.updated_at)
+        self.assertFalse(after.was_edited)
+
+    def test_a_leading_line_break_survives_the_text_box(self):
+        # Todd's #7: browsers drop one newline straight after <textarea>.
+        self.make_dispute(explanation="\nStarts on line two.")
+        response = self.client.get(dispute_url(self.flag))
+        self.assertContains(response, ">\n\nStarts on line two.</textarea>")
+
+    def test_a_too_long_entry_keeps_its_leading_line_break(self):
+        text = "\n" + "z" * 2001
+        response = self.submit(text)
+        self.assertContains(response, ">\n" + text + "</textarea>")
 
     def test_the_student_home_shows_a_resolved_disputes_decision(self):
         self.make_dispute(status=FlagDispute.Status.FLAG_WITHDRAWN)
@@ -219,6 +262,66 @@ class AfterRegeneratingTests(DisputeFixture):
         response = self.client.get(dispute_url(again))
         self.assertContains(response, "My side.")
         self.assertContains(self.client.get(student_home_url()), "Disputed, waiting")
+
+    def test_the_url_still_works_after_flags_are_recomputed(self):
+        # Todd's #2: compute_flags deletes and recreates flags, so Flag.pk changes.
+        url = dispute_url(self.flag)
+        self.flag.delete()
+        again = make_flag(self.team, self.student, WEEK, REASON)
+        self.assertNotEqual(again.pk, self.flag.pk)
+        self.assertEqual(self.client.get(url).status_code, 200)
+        response = self.client.post(url, {"explanation": "Typed while it was regenerating."})
+        self.assertRedirects(response, student_home_url())
+        self.assertEqual(
+            FlagDispute.objects.get().explanation, "Typed while it was regenerating."
+        )
+
+    def test_the_page_shows_the_flag_as_i_disputed_it_not_as_recomputed(self):
+        # Todd's #4.
+        self.make_dispute(status=FlagDispute.Status.FLAG_KEPT, resolution_note="About the 10%.")
+        self.flag.delete()
+        make_flag(self.team, self.student, WEEK, "Did 30% this time.", Flag.Severity.WARNING)
+        response = self.client.get(dispute_url(self.flag))
+        self.assertContains(response, escape(REASON))
+        self.assertNotContains(response, "Did 30% this time.")
+        self.assertContains(response, 'class="finding flag"')
+        self.assertNotContains(response, 'class="finding warning"')
+
+    def test_a_withdrawn_flag_looks_withdrawn_on_its_dispute_page(self):
+        # Todd's #5.
+        self.make_dispute(status=FlagDispute.Status.FLAG_WITHDRAWN)
+        response = self.client.get(dispute_url(self.flag))
+        self.assertContains(response, 'class="finding withdrawn"')
+        self.assertContains(response, "Withdrawn after dispute")
+        self.assertNotContains(response, 'class="finding flag"')
+
+    def test_a_decided_dispute_stays_readable_after_its_flag_rolls_off(self):
+        # Todd's #1: the student can still read their explanation, the decision and the note.
+        instructor = make_user("sample-prof", "Pat", "Sample")
+        dispute = self.make_dispute(
+            explanation="My side.",
+            status=FlagDispute.Status.FLAG_KEPT,
+            resolution_note="PR 12 was mostly Riley's.",
+            resolved_by=instructor,
+            resolved_at=timezone.now(),
+        )
+        compute_flags(self.team)  # No summaries, so no flags are raised.
+        home = self.client.get(student_home_url())
+        self.assertContains(home, f'href="{dispute_url(dispute)}"')
+        response = self.client.get(dispute_url(dispute))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Flag no longer raised")
+        self.assertContains(response, "My side.")
+        self.assertContains(response, "Flag kept by Pat Sample")
+        self.assertContains(response, escape("PR 12 was mostly Riley's."))
+        self.assertNotContains(response, 'name="explanation"')
+
+    def test_a_decided_dispute_whose_flag_rolled_off_cant_be_changed(self):
+        dispute = self.make_dispute(status=FlagDispute.Status.FLAG_KEPT)
+        self.flag.delete()
+        response = self.client.post(dispute_url(dispute), {"explanation": "Changed."})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(FlagDispute.objects.get().explanation, "I paired on most of it.")
 
     def test_a_flag_no_longer_raised_keeps_its_dispute_on_my_list(self):
         self.make_dispute(explanation="My side.")
@@ -255,8 +358,20 @@ class DisputeAccessTests(DisputeFixture):
         self.assertEqual(self.client.get(dispute_url(self.flag)).status_code, 403)
 
     def test_a_flag_that_doesnt_exist_gets_404(self):
-        url = reverse("dashboard:flag_dispute", args=[self.flag.id + 1000])
-        self.assertEqual(self.client.get(url).status_code, 404)
+        for args in (
+            [self.team.id, self.flag.rule, "2026-10-26"],  # No flag that week.
+            [self.team.id, "no-such-rule", WEEK.isoformat()],
+            [self.team.id + 1000, self.flag.rule, WEEK.isoformat()],
+            [self.team.id, self.flag.rule, "2026-13-40"],  # Not a date.
+        ):
+            with self.subTest(args=args):
+                url = reverse("dashboard:flag_dispute", args=args)
+                self.assertEqual(self.client.get(url).status_code, 404)
+
+    def test_another_teams_flag_gets_403_even_with_my_team_in_the_url(self):
+        # The team in the URL decides access, so swapping it never reaches another team's flag.
+        self.client.force_login(self.stranger)
+        self.assertEqual(self.client.get(dispute_url(self.flag)).status_code, 403)
 
     def test_posting_without_a_csrf_token_is_refused(self):
         client = Client(enforce_csrf_checks=True)
@@ -293,9 +408,37 @@ class SubmitDisputeServiceTests(DisputeFixture):
         # The other request files the dispute between this one's lookup and its insert.
         existing = self.make_dispute(explanation="From the other request.")
         with mock.patch.object(services, "dispute_for", side_effect=[None, existing]):
-            services.submit_dispute(self.flag, "From this request.")
+            dispute, created = services.submit_dispute(self.flag, "From this request.")
+        self.assertFalse(created)
         self.assertEqual(FlagDispute.objects.count(), 1)
         self.assertEqual(FlagDispute.objects.get().explanation, "From this request.")
+
+    def test_a_new_dispute_says_it_was_created(self):
+        dispute, created = services.submit_dispute(self.flag, "Mine.")
+        self.assertTrue(created)
+        self.assertEqual(dispute, FlagDispute.objects.get())
+
+    def test_an_edit_that_lands_after_the_decision_is_refused(self):
+        # Todd's #3: the instructor decides between this request's lookup and its save.
+        stale = self.make_dispute()
+        FlagDispute.objects.filter(pk=stale.pk).update(status=FlagDispute.Status.FLAG_KEPT)
+        with mock.patch.object(services, "dispute_for", return_value=stale):
+            with self.assertRaises(services.DisputeError):
+                services.submit_dispute(self.flag, "Changed after the decision.")
+        self.assertEqual(FlagDispute.objects.get().explanation, "I paired on most of it.")
+
+    def test_an_integrity_error_with_no_dispute_to_edit_is_refused_not_a_crash(self):
+        # Todd's #8: the insert failed for another reason, so there's nothing to edit.
+        with mock.patch.object(services, "dispute_for", return_value=None), mock.patch.object(
+            FlagDispute.objects, "create", side_effect=services.IntegrityError
+        ):
+            with self.assertRaises(services.DisputeError):
+                services.submit_dispute(self.flag, "Mine.")
+
+    def test_a_flag_no_longer_raised_cant_get_a_new_dispute(self):
+        with self.assertRaises(services.DisputeError):
+            services.submit_dispute(None, "Mine.")
+        self.assertFalse(FlagDispute.objects.exists())
 
     def test_a_browser_line_break_counts_as_one_character(self):
         text = "x" * 1998 + "\r\n" + "x"
