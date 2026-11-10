@@ -185,6 +185,62 @@ def get_team_for_student(user, team_id):
     return team
 
 
+def check_any_course_student(user):
+    """Raise PermissionDenied unless the user is a student in at least one course."""
+    if not Enrollment.objects.filter(user=user, role=Enrollment.Role.STUDENT).exists():
+        raise PermissionDenied
+
+
+def student_home_courses(user):
+    """What the student home shows: the courses the user is a student in that have a team
+    they're on, by name. Each course has `memberships`, the user's own, by project name.
+
+    Each membership has `teammates`, the rest of its team by name, and `my_flags`: the flags
+    and warnings about this user on that team, newest first, each with `is_withdrawn` and its
+    `dispute` (or None). Flags about teammates or the whole team are never included.
+    """
+    student_course_ids = Enrollment.objects.filter(
+        user=user, role=Enrollment.Role.STUDENT
+    ).values("course_id")
+    memberships = (
+        TeamMembership.objects.filter(user=user, team__project__course__in=student_course_ids)
+        .select_related("team__project__course")
+        .prefetch_related(
+            Prefetch(
+                "team__memberships",
+                queryset=TeamMembership.objects.select_related("user").order_by(
+                    "user__first_name", "user__last_name", "user__github_login"
+                ),
+                to_attr="all_memberships",
+            ),
+        )
+        .order_by("team__project__course__name", "team__project__name", "team__name")
+    )
+    my_flags = flags_in_display_order().filter(user=user).order_by("-week_start", "severity", "id")
+    flags_by_team = {}
+    for flag in my_flags:
+        flags_by_team.setdefault(flag.team_id, []).append(flag)
+    disputes = {
+        (d.team_id, d.rule, d.week_start): d
+        for d in FlagDispute.objects.filter(student=user)
+    }
+
+    courses = {}
+    for membership in memberships:
+        membership.teammates = [
+            other.user for other in membership.team.all_memberships if other.user_id != user.id
+        ]
+        membership.my_flags = flags_by_team.get(membership.team_id, [])
+        for flag in membership.my_flags:
+            flag.dispute = disputes.get((flag.team_id, flag.rule, flag.week_start))
+        course = membership.team.project.course
+        if course.id not in courses:
+            course.memberships = []
+            courses[course.id] = course
+        courses[course.id].memberships.append(membership)
+    return list(courses.values())
+
+
 def check_course_staff(user, course):
     """Raise PermissionDenied unless the user is an instructor or TA in this course."""
     is_staff = Enrollment.objects.filter(

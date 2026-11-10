@@ -309,7 +309,7 @@
   {% block topbar %}
   <header class="top">
     <div class="bar container">
-      <a class="brand" href="{% url 'dashboard:home' %}"><i></i>STRIVE</a>
+      <a class="brand" href="{% block brand_url %}{% url 'dashboard:home' %}{% endblock %}"><i></i>STRIVE</a>
       {% block crumb %}{% endblock %}
       {% if user.is_authenticated %}
       <span class="who">
