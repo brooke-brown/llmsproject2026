@@ -4,5 +4,5 @@
 
 {% block content %}
 <h1 style="margin-bottom:18px">Your projects</h1>
-<p>Your projects and any flags about you will appear here.</p>
+{% if has_team %}<p>Your projects and any flags about you will appear here.</p>{% else %}<p>You aren't on a team in any project yet. Ask your instructor to add you to one.</p>{% endif %}
 {% endblock %}

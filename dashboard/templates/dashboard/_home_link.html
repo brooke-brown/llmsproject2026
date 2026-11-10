@@ -1,0 +1,6 @@
+{% if nav_restricted %}
+{% elif user.is_authenticated %}
+{% if nav_staff %}<a role="button" href="{% url 'dashboard:home' %}">Back to your courses</a>{% elif nav_student %}<a role="button" href="{% url 'dashboard:student_home' %}">Back to your projects</a>{% else %}<a role="button" href="{% url 'dashboard:home' %}">Go to the home page</a>{% endif %}
+{% else %}
+<a role="button" href="{% url 'login' %}">Log in</a>
+{% endif %}

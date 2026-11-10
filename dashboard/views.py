@@ -9,6 +9,7 @@ from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from core import services as setup
+from core.models import TeamMembership
 from core.forms import ChangePasswordForm, RequirementImportForm
 from summaries.models import Summary
 
@@ -32,7 +33,8 @@ def home(request):
 
 @login_required
 def student_home(request):
-    return render(request, "dashboard/student_home.html")
+    has_team = TeamMembership.objects.filter(user=request.user).exists()
+    return render(request, "dashboard/student_home.html", {"has_team": has_team})
 
 
 class ChangePasswordView(PasswordChangeView):
