@@ -20,14 +20,16 @@
 </div>
 
 <section class="setup-panel">
-  <h2>Requirements</h2>
-  {% if requirement_count %}
-  <p class="keynote">{{ requirement_count }} requirement{{ requirement_count|pluralize }}.</p>
-  <a href="{% url 'dashboard:project_requirements' project.id %}">Edit requirements</a>
-  {% else %}
-  <p class="keynote">No requirements yet.</p>
-  <a href="{% url 'dashboard:project_requirements' project.id %}">Add requirements</a>
-  {% endif %}
+  <h2>Sprints</h2>
+  {% for sprint in sprints %}
+  <div class="setup-row">
+    <a href="{% url 'dashboard:sprint' sprint.id %}"><strong>{{ sprint.name }}</strong></a>
+    <span>{{ sprint.start_date|date:"M j" }} – {{ sprint.end_date|date:"M j, Y" }} · {% if sprint.requirement_count %}{{ sprint.requirement_count }} requirement{{ sprint.requirement_count|pluralize }}{% else %}<span class="missing">No requirements yet</span>{% endif %}</span>
+  </div>
+  {% empty %}
+  <p class="keynote">No sprints yet.</p>
+  {% endfor %}
+  <p class="form-actions"><a role="button" href="{% url 'dashboard:sprint_create' project.id %}">New sprint</a></p>
 </section>
 
 <section class="setup-panel">

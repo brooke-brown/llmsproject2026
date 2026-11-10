@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 
 import requests
 from django.contrib.auth.password_validation import validate_password
@@ -6,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Max
+from django.utils import timezone
 from github import GithubException, RateLimitExceededException
 from pydantic import BaseModel
 from pypdf import PdfReader
@@ -195,7 +197,7 @@ def add_requirement(project: Project, text: str) -> Requirement:
     try:
         with transaction.atomic():
             return Requirement.objects.create(
-                project=project, number=_next_requirement_number(project), text=text
+                project=project, number=_next_requirement_number(project.requirements), text=text
             )
     except IntegrityError:
         raise ProjectSetupError(
@@ -212,10 +214,13 @@ def edit_requirement(requirement: Requirement, text: str) -> Requirement:
 
 def delete_requirement(requirement: Requirement) -> None:
     """Delete a requirement, unless a claim cites it. Other requirements keep their numbers."""
-    # Claims that were dropped count too: admin users can still read them.
-    cited = Claim.objects.filter(summary__team__project=requirement.project_id).values_list(
-        "requirement_ids", flat=True
-    )
+    # Claims that were dropped count too: admin users can still read them. A sprint's numbers
+    # mean something only within that sprint, so only its own summaries' claims count.
+    if requirement.sprint_id is not None:
+        claims = Claim.objects.filter(summary__sprint=requirement.sprint_id)
+    else:
+        claims = Claim.objects.filter(summary__team__project=requirement.project_id)
+    cited = claims.values_list("requirement_ids", flat=True)
     if any(requirement.number in numbers for numbers in cited):
         raise ProjectSetupError(
             f"A claim cites this requirement, so number {requirement.number} can't be deleted. "
@@ -532,8 +537,8 @@ def _clean_email(email: str) -> str:
     return email
 
 
-def _next_requirement_number(project: Project) -> int:
-    highest = project.requirements.aggregate(Max("number"))["number__max"]
+def _next_requirement_number(requirements) -> int:
+    highest = requirements.aggregate(Max("number"))["number__max"]
     return (highest or 0) + 1
 
 
@@ -575,3 +580,62 @@ def _all_in_source(requirements: list[str], text: str) -> bool:
 
 def _normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
+
+
+# --- Sprints (US-39, #121) ---
+
+
+def default_sprint_dates(project: Project) -> tuple:
+    """The start and end a new sprint's form begins with: seven days from today in New York for
+    a first sprint, or from the latest sprint's last day, so it picks up where that one ends."""
+    latest = project.sprints.order_by("-end_date", "-start_date").first()
+    start = latest.end_date if latest else timezone.localdate()
+    return start, start + timedelta(days=6)
+
+
+def delete_sprint(sprint: Sprint) -> None:
+    """Delete a sprint with its requirements and summaries, and so the claims and flags on them."""
+    sprint.delete()
+
+
+def add_sprint_requirement(sprint: Sprint, text: str) -> Requirement:
+    """Add a requirement numbered after the sprint's highest, leaving any gaps unfilled."""
+    text = _clean_requirement_text(text)
+    try:
+        with transaction.atomic():
+            return Requirement.objects.create(
+                project_id=sprint.project_id,
+                sprint=sprint,
+                number=_next_requirement_number(sprint.requirements),
+                text=text,
+            )
+    except IntegrityError:
+        raise ProjectSetupError(
+            "Another requirement was added at the same moment, so please try again."
+        ) from None
+
+
+def copy_sprint_requirements(source: Sprint, target: Sprint) -> list[Requirement]:
+    """Copy one sprint's requirements, with their numbers, into a sprint that has none."""
+    if source.project_id != target.project_id:
+        raise ProjectSetupError("Choose a sprint from this project.")
+    if source.pk == target.pk:
+        raise ProjectSetupError("Choose a different sprint to copy from.")
+    if target.requirements.exists():
+        raise ProjectSetupError(
+            f"{target.name} already has requirements, so nothing was copied. Existing claims "
+            "point to them by number."
+        )
+    copies = [
+        Requirement(project_id=target.project_id, sprint=target, number=r.number, text=r.text)
+        for r in source.requirements.order_by("number")
+    ]
+    if not copies:
+        raise ProjectSetupError(f"{source.name} has no requirements to copy.")
+    try:
+        with transaction.atomic():
+            return Requirement.objects.bulk_create(copies)
+    except IntegrityError:
+        raise ProjectSetupError(
+            f"{target.name} gained requirements at the same moment, so nothing was copied."
+        ) from None
