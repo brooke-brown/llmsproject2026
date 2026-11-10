@@ -1,0 +1,116 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}{{ sprint.name }} · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' project.course_id %}">{{ project.course.name }}</a> / <a href="{% url 'dashboard:project_setup' project.id %}">{{ project.name }}</a> / {{ sprint.name }}</span>{% endblock %}
+
+{% block content %}
+<div class="headrow">
+  <div class="titled">
+    <h1>{{ sprint.name }}</h1>
+    {% if not editing %}<a class="edit-link" href="?edit=1">edit</a>{% endif %}
+  </div>
+  <a role="button" href="{% url 'dashboard:project_setup' project.id %}">Done</a>
+</div>
+<p class="keynote">{{ sprint.start_date|date:"M j, Y" }} – {{ sprint.end_date|date:"M j, Y" }}</p>
+
+{% if editing %}
+<section class="setup-panel">
+  <h2>Edit sprint</h2>
+  <form class="narrow" action="{% url 'dashboard:sprint_edit' sprint.id %}" method="post">
+    {% csrf_token %}
+    {% with form=edit_form %}{% include "dashboard/_sprint_fields.html" %}{% endwith %}
+    <p class="form-actions">
+      <button type="submit" class="primary">Save</button>
+      <a href="{% url 'dashboard:sprint' sprint.id %}">Cancel</a>
+    </p>
+  </form>
+</section>
+{% endif %}
+
+<h2>Requirements</h2>
+{% if requirements %}
+<p class="keynote">Claims cite requirements by number, so a number never changes, and a requirement a claim in this sprint cites can't be deleted.</p>
+<div class="requirements">
+  {% for requirement in requirements %}
+  <div class="requirement">
+    <strong>{{ requirement.number }}</strong>
+    {% if requirement.id == editing_requirement_id %}
+    <form action="{% url 'dashboard:requirement_edit' requirement.id %}" method="post">
+      {% csrf_token %}
+      <textarea name="text" rows="2" aria-label="Text of requirement {{ requirement.number }}" required autofocus>{{ requirement.text }}</textarea>
+      <p class="form-actions">
+        <button type="submit" class="primary">Save</button>
+        <a href="{% url 'dashboard:sprint' sprint.id %}">Cancel</a>
+      </p>
+    </form>
+    {% else %}
+    <p class="requirement-text">{{ requirement.text }}</p>
+    <span class="row-actions">
+      <a class="edit-link" href="?edit_requirement={{ requirement.id }}">edit</a>
+      <form action="{% url 'dashboard:requirement_delete' requirement.id %}" method="post" onsubmit="return confirm('Delete requirement {{ requirement.number }}? The other requirements keep their numbers.')">
+        {% csrf_token %}
+        <button type="submit" class="text-button">delete</button>
+      </form>
+    </span>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+<section class="setup-panel">
+  <h2>Add a requirement</h2>
+  <form action="{% url 'dashboard:sprint_requirement_add' sprint.id %}" method="post">
+    {% csrf_token %}
+    <textarea name="text" rows="2" aria-label="New requirement" required></textarea>
+    <p class="form-actions"><button type="submit" class="primary">Add requirement</button></p>
+  </form>
+</section>
+{% else %}
+<p class="keynote">No requirements yet.</p>
+{% if copy_sources %}
+<section class="setup-panel">
+  <h2>Copy requirements from an earlier sprint</h2>
+  <p class="keynote">Copies the requirements with their numbers, so a requirement keeps its number across sprints.</p>
+  <form class="compact wide" action="{% url 'dashboard:sprint_requirements_copy' sprint.id %}" method="post">
+    {% csrf_token %}
+    <select name="source" aria-label="Sprint to copy from" required>
+      {% for source in copy_sources %}<option value="{{ source.id }}">{{ source.name }} ({{ source.requirement_count }} requirement{{ source.requirement_count|pluralize }})</option>{% endfor %}
+    </select>
+    <button type="submit" class="primary">Copy requirements</button>
+  </form>
+</section>
+{% endif %}
+<section class="setup-panel">
+  <h2>Import requirements</h2>
+  <p class="keynote">Upload a PDF or paste text, and the LLM splits it into numbered requirements. You can only import while the sprint has no requirements, because claims cite them by number.</p>
+  <form action="{% url 'dashboard:sprint_requirements_import' sprint.id %}" method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ import_form.non_field_errors }}
+    {{ import_form.pdf.errors }}
+    <label for="{{ import_form.pdf.id_for_label }}">{{ import_form.pdf.label }}</label>
+    {{ import_form.pdf }}
+    {{ import_form.text.errors }}
+    <label for="{{ import_form.text.id_for_label }}">{{ import_form.text.label }}</label>
+    {{ import_form.text }}
+    <p class="form-actions"><button type="submit" class="primary">Import requirements</button></p>
+  </form>
+</section>
+<section class="setup-panel">
+  <h2>Add a requirement</h2>
+  <form action="{% url 'dashboard:sprint_requirement_add' sprint.id %}" method="post">
+    {% csrf_token %}
+    <textarea name="text" rows="2" aria-label="New requirement" required></textarea>
+    <p class="form-actions"><button type="submit" class="primary">Add requirement</button></p>
+  </form>
+</section>
+{% endif %}
+
+<section class="setup-panel">
+  <h2>Delete sprint</h2>
+  <p class="keynote">Deleting a sprint permanently deletes its requirements, summaries and flags.</p>
+  <form action="{% url 'dashboard:sprint_delete' sprint.id %}" method="post" onsubmit="return confirm('Delete {{ sprint.name|escapejs }}? This permanently deletes its requirements, its summaries and flags, and anything built on them.')">
+    {% csrf_token %}
+    <button type="submit" class="outline">Delete sprint</button>
+  </form>
+</section>
+{% endblock %}

@@ -95,22 +95,6 @@ class PickingTheWeekTests(InProgressFixture):
             generate_url(self.team.id), {"week_start": week.isoformat()}, follow=True
         )
 
-    def test_the_picker_allows_the_current_week_and_defaults_to_the_completed_one(self):
-        response = self.client.get(overview_url(self.course.id))
-
-        self.assertContains(response, f'value="{COMPLETED.isoformat()}"')
-        self.assertContains(response, f'max="{CURRENT.isoformat()}"')
-
-    def test_the_picker_only_allows_mondays(self):
-        """A step of 7 days from a Monday is what makes browsers treat other days as invalid."""
-        content = self.client.get(overview_url(self.course.id)).content.decode()
-
-        picker = re.search(r'<input type="date" name="week_start"[^>]*>', content).group(0)
-        self.assertIn('step="7"', picker)
-        anchor = date.fromisoformat(re.search(r'min="([\d-]+)"', picker).group(1))
-        self.assertEqual(anchor.weekday(), 0)
-        self.assertLess(anchor, COMPLETED)
-
     def test_a_submitted_non_monday_is_still_rejected(self):
         message = page_messages(self.post(date(2026, 11, 3)))
 

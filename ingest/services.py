@@ -324,14 +324,17 @@ def _diff_fields(files) -> dict:
     return {"diff": diff[:MAX_DIFF_CHARS], "diff_truncated": len(diff) > MAX_DIFF_CHARS}
 
 
-def student_week_artifacts(user: User, team: Team, week_start: date) -> list[Artifact]:
+def student_week_artifacts(
+    user: User, team: Team, week_start: date, last_day: date | None = None
+) -> list[Artifact]:
     """The artifacts in a team's repos that credit a student during a reporting week.
 
     A student is credited as an artifact's author, co-author or reviewer (a review's
-    author_login is its reviewer). Logins are compared ignoring case. The week runs for
-    seven days from week_start, in the reporting time zone.
+    author_login is its reviewer). Logins are compared ignoring case. The range runs from
+    week_start through last_day, inclusive, in the reporting time zone. Without last_day it
+    is the seven days of a reporting week.
     """
-    start, end = _week_bounds(week_start)
+    start, end = _week_bounds(week_start, last_day)
     artifacts = Artifact.objects.filter(
         repo__team=team, timestamp__gte=start, timestamp__lt=end
     ).order_by("timestamp", "pk")
@@ -347,12 +350,15 @@ def student_week_artifacts(user: User, team: Team, week_start: date) -> list[Art
     ]
 
 
-def unattributed_commits(repo: Repo, week_start: date) -> list[Artifact]:
+def unattributed_commits(
+    repo: Repo, week_start: date, last_day: date | None = None
+) -> list[Artifact]:
     """A repo's commits in a reporting week whose author matches no one on its team.
 
-    The week runs for seven days from week_start, in the reporting time zone.
+    The range runs from week_start through last_day, inclusive, in the reporting time zone;
+    without last_day it is seven days.
     """
-    start, end = _week_bounds(week_start)
+    start, end = _week_bounds(week_start, last_day)
     artifacts = Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end)
     return list(only_unattributed_commits(artifacts).order_by("timestamp", "pk"))
 
@@ -369,9 +375,10 @@ def only_unattributed_commits(artifacts: QuerySet[Artifact]) -> QuerySet[Artifac
     return artifacts.filter(~Exists(on_team), type=Artifact.Type.COMMIT)
 
 
-def _week_bounds(week_start: date) -> tuple[datetime, datetime]:
-    """The start and end, exclusive, of the seven days from week_start."""
+def _week_bounds(first_day: date, last_day: date | None = None) -> tuple[datetime, datetime]:
+    """The start and end, exclusive, of first_day through last_day (default: seven days)."""
     # Built from dates, because a week with a clock change isn't exactly 168 hours long.
-    start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
-    end = datetime.combine(week_start + timedelta(days=7), time.min, tzinfo=REPORTING_TIME_ZONE)
+    day_after = first_day + timedelta(days=7) if last_day is None else last_day + timedelta(days=1)
+    start = datetime.combine(first_day, time.min, tzinfo=REPORTING_TIME_ZONE)
+    end = datetime.combine(day_after, time.min, tzinfo=REPORTING_TIME_ZONE)
     return start, end

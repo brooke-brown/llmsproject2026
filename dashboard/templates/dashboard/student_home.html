@@ -4,5 +4,68 @@
 
 {% block content %}
 <h1 style="margin-bottom:18px">Your projects</h1>
-<p>Your projects and any flags about you will appear here.</p>
+{% for course in courses %}
+<section class="project">
+  <h2>{{ course.name }}</h2>
+  <div class="cards">
+    {% for membership in course.memberships %}
+    <article class="card">
+      <header>
+        <strong>{{ membership.team.project.name }}</strong>
+        <code>{{ membership.team.name }}</code>
+      </header>
+      <ul class="people">
+        {% for teammate in membership.teammates %}
+        <li>{{ teammate.display_name }}</li>
+        {% empty %}
+        <li>No teammates yet.</li>
+        {% endfor %}
+      </ul>
+      <div>
+        {# Worded as instructors see them on the team page. #}
+        {% for flag in membership.my_flags %}
+        {% if flag.is_withdrawn %}
+        <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j, Y" }}
+          {% if flag.dispute %}<a class="tag dispute" href="{% url 'dashboard:flag_dispute' flag.team_id flag.rule flag.week_start|date:'Y-m-d' %}">{% include "dashboard/_dispute_status.html" with dispute=flag.dispute for_student=True %}</a>{% endif %}
+        </p>
+        {% else %}
+        <p class="finding {{ flag.severity }}">
+          <mark>{{ flag.get_severity_display }}</mark>
+          <small>Week of {{ flag.week_start|date:"M j, Y" }}</small>
+          {{ flag.reason }}
+          {% url 'dashboard:flag_dispute' flag.team_id flag.rule flag.week_start|date:'Y-m-d' as dispute_url %}
+          {% if flag.dispute %}
+          <a class="tag dispute" href="{{ dispute_url }}">{% include "dashboard/_dispute_status.html" with dispute=flag.dispute for_student=True %}</a>
+          {% else %}
+          <a href="{{ dispute_url }}">Dispute</a>
+          {% endif %}
+        </p>
+        {% endif %}
+        {% if flag.dispute %}{% include "dashboard/_dispute_note.html" with dispute=flag.dispute %}{% endif %}
+        {% endfor %}
+        {% for dispute in membership.unraised_disputes %}
+        <p class="finding gone">
+          <mark>Flag no longer raised</mark>
+          <small>Week of {{ dispute.week_start|date:"M j, Y" }}</small>
+          {% if dispute.status != "flag_withdrawn" %}{{ dispute.flag_reason }}{% endif %}
+          {# A decided dispute stays readable; an open one's page is hidden once its flag is gone (#108). #}
+          {% if dispute.status == "open" %}
+          <span class="tag dispute">Disputed · {{ dispute.get_status_display }}</span>
+          {% else %}
+          <a class="tag dispute" href="{% url 'dashboard:flag_dispute' dispute.team_id dispute.rule dispute.week_start|date:'Y-m-d' %}">Disputed · {{ dispute.get_status_display }}</a>
+          {% endif %}
+        </p>
+        {% include "dashboard/_dispute_note.html" %}
+        {% endfor %}
+        {% if not membership.my_flags and not membership.unraised_disputes %}
+        <p class="tags"><span class="tag ok">No flags about you</span></p>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% empty %}
+<p>You aren't on a team yet. Your instructor adds you to one, and it will appear here.</p>
+{% endfor %}
 {% endblock %}

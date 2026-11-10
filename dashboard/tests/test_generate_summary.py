@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from django.test import TestCase
 from django.urls import NoReverseMatch, reverse
 
-from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
+from core.models import Course, Enrollment, Project, Repo, Requirement, Sprint, Team, TeamMembership
 from dashboard import services
 from dashboard.models import Flag
 from ingest import services as ingest_services
@@ -80,6 +80,10 @@ class TeamGenerationFixture(TestCase):
             TeamMembership.objects.create(user=student, team=cls.team)
 
         cls.empty_team = Team.objects.create(project=cls.project, name="Team Beta")
+        # The overview only offers the Generate summaries control once a sprint has started.
+        cls.sprint = Sprint.objects.create(
+            project=cls.project, name="Sprint 1", start_date=date(2026, 10, 19), end_date=date(2026, 11, 15)
+        )
 
     def setUp(self):
         clock = mock.patch("django.utils.timezone.now", return_value=NOW)
@@ -161,12 +165,6 @@ class GenerateButtonTests(TeamGenerationFixture):
         self.assertIn('method="post"', article)
         self.assertIn("csrfmiddlewaretoken", article)
         self.assertEqual(article.count(GENERATE_LABEL), 1)
-
-    def test_week_picker_defaults_to_the_most_recent_completed_week(self):
-        article = team_article(self.get_overview(), "Team Alpha")
-
-        self.assertEqual(article.count('name="week_start"'), 1)
-        self.assertIn(f'value="{LAST_WEEK.isoformat()}"', article)
 
     def test_the_team_page_has_no_generate_button(self):
         self.client.force_login(self.instructor)

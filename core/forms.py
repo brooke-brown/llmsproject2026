@@ -1,8 +1,12 @@
 from django import forms
-from django.contrib.auth.forms import PasswordChangeForm
+from django.contrib.auth.forms import (
+    AdminPasswordChangeForm,
+    AdminUserCreationForm,
+    PasswordChangeForm,
+)
 from django.core.exceptions import ValidationError
 
-from core.models import Repo
+from core.models import Repo, Sprint
 from core.services import (
     DUPLICATE_REPO_MESSAGE,
     RequirementImportError,
@@ -29,6 +33,23 @@ class ChangePasswordForm(PasswordChangeForm):
         # Set before the form saves this user, so both changes land in the same write.
         self.user.must_change_password = False
         return super().save(commit=commit)
+
+
+class ForcesPasswordChangeMixin:
+    """Whoever sets a password in the admin knows it, so the account must replace it. A
+    disabled password needs no change, since nobody can log in to make one."""
+
+    def set_password_and_save(self, user, commit=True, **kwargs):
+        user.must_change_password = self.cleaned_data["set_usable_password"]
+        return super().set_password_and_save(user, commit=commit, **kwargs)
+
+
+class AdminSetPasswordForm(ForcesPasswordChangeMixin, AdminPasswordChangeForm):
+    pass
+
+
+class AdminAddUserForm(ForcesPasswordChangeMixin, AdminUserCreationForm):
+    pass
 
 
 class RepoForm(forms.ModelForm):
@@ -136,3 +157,27 @@ class RequirementImportForm(forms.Form):
         elif not has_text:
             self.add_error("text", "Upload a PDF or paste the project's requirements.")
         return cleaned_data
+
+
+class SprintForm(forms.ModelForm):
+    """A sprint's name and dates. The model's own rules (unique name, no overlap, end after
+    start) run as form errors, so a page can show them and keep what was typed."""
+
+    class Meta:
+        model = Sprint
+        fields = ["name", "start_date", "end_date"]
+        widgets = {
+            "start_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+            "end_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+        }
+        error_messages = {"name": {"required": "Enter a sprint name."}}
+
+    def __init__(self, *args, project, dates_locked=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Set before validation, because the overlap rule compares with the project's sprints.
+        self.instance.project = project
+        self.dates_locked = dates_locked
+        if dates_locked:
+            # A disabled field ignores what was posted and keeps the sprint's own dates.
+            for field in ("start_date", "end_date"):
+                self.fields[field].disabled = True

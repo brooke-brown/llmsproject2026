@@ -19,8 +19,10 @@ DIFF_CAP = 4000
 PROMPT_BUDGET = 200_000
 MIN_DIFF_CAP = 200
 
-SYSTEM_PROMPT = """\
-You write one student's weekly contribution summary for an instructor, as a list of claims.
+# One template for the weekly and sprint prompts, so the rules can't drift apart and a
+# rewording can't silently give sprint runs the weekly text.
+_SYSTEM_TEMPLATE = """\
+You write one student's {summary} for an instructor, as a list of claims.
 
 Rules:
 - Describe observable activity only: what the student did, as shown in the artifacts. \
@@ -32,20 +34,73 @@ exactly as listed. Never cite an ID that isn't in the list.
 not by how many lines changed. A small fix that unblocks the team can be major, and a \
 large reformatting is minor.
 - Set requirement_ids to the numbers of the requirements this work advances, using only the \
-numbers in the project's requirement list. Use an empty list if it advances none.
+numbers in {owner} requirement list. Use an empty list if it advances none.
 - Write each claim as one plain sentence. Group related artifacts into one claim and cite \
 all of them.
 """
 
+SYSTEM_PROMPT = _SYSTEM_TEMPLATE.format(summary="weekly contribution summary", owner="the project's")
 
-def build_prompt(artifacts, requirements=()) -> str:
-    """The project's requirements, then the student's artifacts for the week, oldest first.
+SPRINT_SYSTEM_PROMPT = _SYSTEM_TEMPLATE.format(
+    summary="contribution summary for one sprint", owner="the sprint's"
+)
+
+
+MERGE_SYSTEM_PROMPT = """\
+You merge one student's validated claims for one sprint into a single report. The claims \
+were written for separate parts of the sprint, so some describe the same work.
+
+Rules:
+- Combine claims about the same work into one claim, and keep the rest as they are.
+- Cite only artifact IDs that appear in the claims you are given, copied exactly. Never \
+add, invent or change an ID.
+- Keep every claim's category, significance and requirement_ids sensible for the work it \
+describes, using only the requirement numbers in the sprint's list.
+- Describe observable activity only, with no judgments of character, effort or ability.
+- Write each claim as one plain sentence.
+"""
+
+
+def build_merge_prompt(claims, requirements=(), period="the sprint", sprint_name=None) -> str:
+    """The sprint's requirements, then the validated claims to merge, numbered.
+
+    Only claims go in, never raw artifacts, so the merge has nothing else to cite.
+    `sprint_name` introduces the requirements as that sprint's, as in build_prompt.
+    """
+    blocks = []
+    for number, claim in enumerate(claims, start=1):
+        blocks.append(
+            "\n".join(
+                [
+                    f"Claim {number}:",
+                    f"text: {claim.text}",
+                    f"category: {claim.category}",
+                    f"significance: {claim.significance}",
+                    f"requirement IDs: {', '.join(map(str, claim.requirement_ids)) or 'none'}",
+                    f"artifact IDs: {', '.join(claim.artifact_ids)}",
+                ]
+            )
+        )
+    return (
+        _requirements_section(requirements, sprint_name)
+        + f"This student's validated claims for {period}, to merge into one report:\n\n"
+        + "\n\n".join(blocks)
+    )
+
+
+def build_prompt(artifacts, requirements=(), period="the week", sprint_name=None) -> str:
+    """The requirements, then the student's artifacts for the period, oldest first.
 
     `requirements` are Requirement rows in number order. They come first so the LLM knows
-    what it can tie claims to.
+    what it can tie claims to. `period` names the dates the artifacts cover, such as
+    "Sprint 1 (2026-10-23 to 2026-10-29)"; the default is the weekly wording. With
+    `sprint_name`, the requirements are introduced as that sprint's, not the project's.
     """
     artifacts = list(artifacts)
-    intro = _requirements_section(requirements) + "This student's artifacts for the week:\n\n"
+    intro = (
+        _requirements_section(requirements, sprint_name)
+        + f"This student's artifacts for {period}:\n\n"
+    )
     heads = [_head(artifact) for artifact in artifacts]
     diff_cap = _diff_cap(
         room=PROMPT_BUDGET - len(intro) - sum(len(head) + 2 for head in heads),
@@ -55,7 +110,9 @@ def build_prompt(artifacts, requirements=()) -> str:
     return intro + "\n\n".join(blocks)
 
 
-def build_retry_prompt(artifacts, failing, requirements=()) -> str:
+def build_retry_prompt(
+    artifacts, failing, requirements=(), period="the week", sprint_name=None
+) -> str:
     """Ask for corrected versions of the claims that failed validation.
 
     `failing` is a list of (claim, errors) pairs. The artifact list goes back too, so the
@@ -63,7 +120,7 @@ def build_retry_prompt(artifacts, failing, requirements=()) -> str:
     """
     blocks = [_failing_claim_block(number, claim, errors) for number, (claim, errors) in enumerate(failing, start=1)]
     return (
-        build_prompt(artifacts, requirements)
+        build_prompt(artifacts, requirements, period, sprint_name)
         + "\n\nThese claims from your earlier answer failed validation:\n\n"
         + "\n\n".join(blocks)
         + "\n\nReturn exactly one corrected claim for each claim above, in the same order. "
@@ -85,11 +142,16 @@ def _failing_claim_block(number, claim, errors) -> str:
     return "\n".join(lines)
 
 
-def _requirements_section(requirements) -> str:
+def _requirements_section(requirements, sprint_name=None) -> str:
+    """The numbered requirements, introduced as the sprint's when `sprint_name` is given, so a
+    sprint with none isn't described as a project with none."""
     requirements = list(requirements)
+    owner, possessive = (
+        (sprint_name, f"{sprint_name}'s") if sprint_name else ("This project", "The project's")
+    )
     if not requirements:
-        return "This project has no requirements, so leave requirement_ids empty.\n\n"
-    lines = ["The project's requirements:"]
+        return f"{owner} has no requirements, so leave requirement_ids empty.\n\n"
+    lines = [f"{possessive} requirements:"]
     for requirement in requirements:
         capped = _capped(f"{requirement.number}.", requirement.text, REQUIREMENT_CAP, label="requirement")
         lines.extend(capped)

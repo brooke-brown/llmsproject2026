@@ -20,14 +20,16 @@
 </div>
 
 <section class="setup-panel">
-  <h2>Requirements</h2>
-  {% if requirement_count %}
-  <p class="keynote">{{ requirement_count }} requirement{{ requirement_count|pluralize }}.</p>
-  <a href="{% url 'dashboard:project_requirements' project.id %}">Edit requirements</a>
-  {% else %}
-  <p class="keynote">No requirements yet.</p>
-  <a href="{% url 'dashboard:project_requirements' project.id %}">Add requirements</a>
-  {% endif %}
+  <h2>Sprints</h2>
+  {% for sprint in sprints %}
+  <div class="setup-row">
+    <a href="{% url 'dashboard:sprint' sprint.id %}"><strong>{{ sprint.name }}</strong></a>
+    <span>{{ sprint.start_date|date:"M j" }} – {{ sprint.end_date|date:"M j, Y" }} · {% if sprint.requirement_count %}{{ sprint.requirement_count }} requirement{{ sprint.requirement_count|pluralize }}{% else %}<span class="missing">No requirements yet</span>{% endif %}</span>
+  </div>
+  {% empty %}
+  <p class="keynote">No sprints yet.</p>
+  {% endfor %}
+  <p class="form-actions"><a role="button" href="{% url 'dashboard:sprint_create' project.id %}">New sprint</a></p>
 </section>
 
 <section class="setup-panel">
@@ -46,8 +48,8 @@
 
 <section class="setup-panel">
   <h2>Delete project</h2>
-  <p class="keynote">Deleting a project permanently deletes its requirements, teams, summaries and any activity pulled for them. Students keep their accounts.</p>
-  <form action="{% url 'dashboard:project_delete' project.id %}" method="post" onsubmit="return confirm('Delete {{ project.name|escapejs }}? This permanently deletes its requirements, {{ teams|length }} team{{ teams|length|pluralize }}{% if summary_count %}, {{ summary_count }} summar{{ summary_count|pluralize:"y,ies" }}{% endif %}{% if dispute_count %}, {{ dispute_count }} dispute{{ dispute_count|pluralize }}{% endif %} and any activity pulled for them. Students keep their accounts.')">
+  <p class="keynote">Deleting a project permanently deletes its requirements, teams, summaries, offline contributions and any activity pulled for them. Students keep their accounts.</p>
+  <form action="{% url 'dashboard:project_delete' project.id %}" method="post" onsubmit="return confirm('Delete {{ project.name|escapejs }}? This permanently deletes its requirements, {{ teams|length }} team{{ teams|length|pluralize }}{% if summary_count %}, {{ summary_count }} summar{{ summary_count|pluralize:"y,ies" }}{% endif %}{% if dispute_count %}, {{ dispute_count }} dispute{{ dispute_count|pluralize }}{% endif %}{% if contribution_count %}, {{ contribution_count }} offline contribution{{ contribution_count|pluralize }}{% endif %} and any activity pulled for them. Students keep their accounts.')">
     {% csrf_token %}
     <button type="submit" class="outline">Delete project</button>
   </form>
