@@ -46,8 +46,8 @@
 
 <section class="setup-panel">
   <h2>Delete project</h2>
-  <p class="keynote">Deleting a project permanently deletes its requirements, teams, summaries and any activity pulled for them. Students keep their accounts.</p>
-  <form action="{% url 'dashboard:project_delete' project.id %}" method="post" onsubmit="return confirm('Delete {{ project.name|escapejs }}? This permanently deletes its requirements, {{ teams|length }} team{{ teams|length|pluralize }}{% if summary_count %}, {{ summary_count }} summar{{ summary_count|pluralize:"y,ies" }}{% endif %}{% if dispute_count %}, {{ dispute_count }} dispute{{ dispute_count|pluralize }}{% endif %} and any activity pulled for them. Students keep their accounts.')">
+  <p class="keynote">Deleting a project permanently deletes its requirements, teams, summaries, offline contributions and any activity pulled for them. Students keep their accounts.</p>
+  <form action="{% url 'dashboard:project_delete' project.id %}" method="post" onsubmit="return confirm('Delete {{ project.name|escapejs }}? This permanently deletes its requirements, {{ teams|length }} team{{ teams|length|pluralize }}{% if summary_count %}, {{ summary_count }} summar{{ summary_count|pluralize:"y,ies" }}{% endif %}{% if dispute_count %}, {{ dispute_count }} dispute{{ dispute_count|pluralize }}{% endif %}{% if contribution_count %}, {{ contribution_count }} offline contribution{{ contribution_count|pluralize }}{% endif %} and any activity pulled for them. Students keep their accounts.')">
     {% csrf_token %}
     <button type="submit" class="outline">Delete project</button>
   </form>

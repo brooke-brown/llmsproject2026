@@ -29,6 +29,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 | `ingest/` | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
+| `contributions/` | `Contribution` and `Corroboration` models: offline work students report and teammates confirm. Never evidence for a claim, passed to the LLM or counted toward flags |
 
 ## Shared contracts: do not change without team agreement
 
@@ -74,8 +75,10 @@ Course                     e.g. "CS 3240, Fall 2026"
       │    └── Requirement numbered per sprint; also keeps `project` until T-21
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
-           └── Repo             the team's GitHub repo
-                └── Artifact    a commit, PR, review or issue pulled from the repo
+           ├── Repo             the team's GitHub repo
+           │    └── Artifact    a commit, PR, review or issue pulled from the repo
+           └── Contribution     offline work a student reports; in any sprint whose dates include its date
+                └── Corroboration   a teammate's confirmation, one per teammate
 
 Summary          → Team + User + reporting week
   └── Claim      → claim schema above + status (verified / couldn't verify)
@@ -98,7 +101,7 @@ FlagDispute      → Team + student + rule + Sprint, replacing week_start
 - Reusing teams in a later project is a UI feature ("Copy teams from a previous project"), not a schema change.
 - **Roles live on `Enrollment`, never on `User`.** One person can be a TA in one course and a student in another.
 - **Every user has `User.github_login`.** It's how commits, PRs and reviews are matched to students.
-- **`User.must_change_password`** is set by a temporary password and cleared when the user changes it. Until then, middleware keeps them on the password change page.
+- **`User.must_change_password`** is set by a temporary password or a password set in the admin, and cleared when the user changes it. Until then, middleware keeps them on the password change page.
 - **A team has one repo**, enforced on the dashboard. `Repo` stays its own table and the admin isn't restricted, so code that reads a team's repos must still handle several.
 - Use the word **"Team"** everywhere (code, UI, issues), never "group."
 - Later, optional: `joined_at`/`left_at` on `TeamMembership` for students who switch or drop mid-project.
@@ -128,7 +131,7 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 
 **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
 
-**Student side:** student logins (#102, #106), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
+**Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
 
 **Later, with no issues yet:** polished per-requirement progress view, numeric diff checks, GitHub OAuth login, consent, background jobs, "paired with" detection.

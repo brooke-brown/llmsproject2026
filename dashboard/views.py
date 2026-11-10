@@ -1,13 +1,13 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.views import PasswordChangeView
+from django.contrib.auth.views import PasswordChangeView, RedirectURLMixin
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
-from django.urls import reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from contributions.models import Contribution
 from core import services as setup
 from core.forms import ChangePasswordForm, RequirementImportForm
 from summaries.models import Summary
@@ -72,11 +72,12 @@ def flag_dispute(request, team_id, rule, week):
     )
 
 
-class ChangePasswordView(PasswordChangeView):
+class ChangePasswordView(RedirectURLMixin, PasswordChangeView):
     # Not Django's default name: the admin ships a template with that name, and it comes first.
     template_name = "dashboard/password_change.html"
     form_class = ChangePasswordForm
-    success_url = reverse_lazy("dashboard:home")
+    # Where to go with no `next`, or one on another site.
+    next_page = "dashboard:home"
 
     def form_valid(self, form):
         response = super().form_valid(form)
@@ -250,6 +251,7 @@ def project_setup(request, project_id):
             "requirement_count": project.requirements.count(),
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
+            "contribution_count": Contribution.objects.filter(team__project=project).count(),
             "editing": request.GET.get("edit") == "1",
         },
     )
@@ -375,14 +377,23 @@ def team_create(request, project_id):
 
 
 def _change_team(request, team_id, success, change, *args):
-    """Run a change, say how it went, and return to the team page."""
+    """Run a change, say how it went, and return to the team page. `success` is a message, or
+    a function making one from what the change returned."""
     try:
-        change(*args)
+        result = change(*args)
     except setup.ProjectSetupError as error:
         messages.error(request, str(error))
     else:
-        messages.success(request, success)
+        messages.success(request, success(result) if callable(success) else success)
     return redirect("dashboard:team", team_id=team_id)
+
+
+def _login_note(student, password):
+    """Which username to share with a password, when it isn't the GitHub one pages tell
+    students to use. Only an older account can differ."""
+    if password and student.username != student.github_login:
+        return f" They log in with the username {student.username}, not their GitHub username."
+    return ""
 
 
 @login_required
@@ -408,15 +419,22 @@ def team_delete(request, team_id):
 def student_add(request, team_id):
     team = services.get_team_for_instructor(request.user, team_id)
     github_login = request.POST.get("github_login", "")
+    password = request.POST.get("temporary_password", "")
     return _change_team(
         request,
         team.id,
-        f"Added {github_login.strip()} to {team.name}.",
+        lambda student: (
+            f"Added {github_login.strip()} to {team.name}"
+            f"{' with a temporary password' if password else ''}."
+            f"{_login_note(student, password)}"
+        ),
         setup.add_student,
         team,
         request.POST.get("full_name", ""),
         github_login,
         request.POST.get("email", ""),
+        password,
+        request.user,
     )
 
 
@@ -424,13 +442,19 @@ def student_add(request, team_id):
 @require_POST
 def membership_edit(request, membership_id):
     membership = services.get_membership_for_instructor(request.user, membership_id)
+    password = request.POST.get("temporary_password", "")
     return _change_team(
         request,
         membership.team_id,
-        "Updated the student's name.",
+        lambda student: (
+            f"Updated the student's name{' and temporary password' if password else ''}."
+            f"{_login_note(student, password)}"
+        ),
         setup.edit_student,
         membership.user,
         request.POST.get("full_name", ""),
+        password,
+        request.user,
     )
 
 

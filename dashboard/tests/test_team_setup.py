@@ -502,6 +502,7 @@ class AddStudentTests(TeamSetupFixture):
 
     def test_existing_account_is_used_regardless_of_case(self):
         ada = make_user("Ada-Lovelace", "Augusta", "King")
+        enroll(ada, self.other_course, Role.STUDENT)
         before = User.objects.count()
 
         self.add(login="ada-LOVELACE")
@@ -511,6 +512,7 @@ class AddStudentTests(TeamSetupFixture):
 
     def test_existing_accounts_name_and_email_arent_changed(self):
         ada = make_user("ada-lovelace", "Augusta", "King")
+        enroll(ada, self.other_course, Role.STUDENT)
         User.objects.filter(pk=ada.pk).update(email="augusta@example.edu")
 
         self.add(full_name="Ada Lovelace", email="ada@example.edu")
@@ -522,6 +524,7 @@ class AddStudentTests(TeamSetupFixture):
 
     def test_existing_accounts_blank_email_isnt_filled_in(self):
         ada = make_user("ada-lovelace")
+        enroll(ada, self.other_course, Role.STUDENT)
 
         self.add(email="ada@example.edu")
 
@@ -530,6 +533,7 @@ class AddStudentTests(TeamSetupFixture):
 
     def test_existing_accounts_password_isnt_changed(self):
         ada = make_user("ada-lovelace")
+        enroll(ada, self.other_course, Role.STUDENT)
 
         self.add()
 
@@ -538,6 +542,7 @@ class AddStudentTests(TeamSetupFixture):
 
     def test_existing_account_not_in_the_course_is_enrolled_as_a_student(self):
         ada = make_user("ada-lovelace")
+        enroll(ada, self.other_course, Role.STUDENT)
 
         self.add()
 
