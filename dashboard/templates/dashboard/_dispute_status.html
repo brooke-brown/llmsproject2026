@@ -1,0 +1,1 @@
+{# A dispute's status, worded for whoever is reading. Pass for_student=True on student pages. #}{% if dispute.status == "open" %}{% if for_student %}Disputed, waiting for your instructor{% else %}Dispute open{% endif %}{% else %}Disputed · {{ dispute.get_status_display }}{% endif %}

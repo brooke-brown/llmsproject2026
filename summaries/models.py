@@ -40,6 +40,15 @@ class Summary(models.Model):
             models.UniqueConstraint(
                 fields=["team", "user", "sprint"], name="summaries_summary_unique_per_sprint"
             ),
+            # Exactly one of the two, so week_ended_at always has a date to work from and
+            # neither unique constraint is slipped by a row with both empty.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(week_start__isnull=False, sprint__isnull=True)
+                    | models.Q(week_start__isnull=True, sprint__isnull=False)
+                ),
+                name="summaries_summary_week_or_sprint",
+            ),
         ]
 
     @property

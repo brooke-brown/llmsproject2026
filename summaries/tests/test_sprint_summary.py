@@ -140,8 +140,8 @@ class GenerateSprintSummaryTests(SprintTestCase):
         self.assertNotIn("weekly", self.llm.call_args.kwargs["system"].lower())
 
 
-class SprintRequirementTests(SprintTestCase):
-    """The same requirement number can mean different things in two sprints."""
+class TwoSprintsTestCase(SprintTestCase):
+    """Two sprints whose requirement 1 differ, plus a leftover project-wide requirement."""
 
     def setUp(self):
         super().setUp()
@@ -159,6 +159,10 @@ class SprintRequirementTests(SprintTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.commit = self.add_commit("bb1", at(11, 2))
+
+
+class SprintRequirementTests(TwoSprintsTestCase):
+    """The same requirement number can mean different things in two sprints."""
 
     def test_the_prompt_lists_only_the_sprints_requirements(self):
         self.llm.return_value = []
@@ -181,7 +185,90 @@ class SprintRequirementTests(SprintTestCase):
         self.assertEqual(claim.validator_errors[-1]["check"], "unknown_requirement")
 
 
+class SprintWordingTests(TwoSprintsTestCase):
+    """Everything sent to the LLM describes the sprint and its own requirements, never the
+    project's, because a sprint's list is all it's offered (#139 review)."""
+
+    def test_the_requirement_list_is_labelled_as_the_sprints(self):
+        self.llm.return_value = []
+        generate_sprint_summary(self.student, self.team, self.next_sprint)
+        prompt = self.llm.call_args.args[0]
+        self.assertIn("Sprint 2's requirements:", prompt)
+        self.assertNotIn("project", prompt.lower())
+
+    def test_a_sprint_with_no_requirements_says_so_even_when_another_sprint_has_some(self):
+        empty = Sprint.objects.create(
+            project=self.project, name="Sprint 3", start_date=date(2026, 11, 5), end_date=date(2026, 11, 9)
+        )
+        self.add_commit("cc1", at(11, 6))
+        self.llm.return_value = []
+        generate_sprint_summary(self.student, self.team, empty)
+        prompt = self.llm.call_args.args[0]
+        self.assertIn("Sprint 3 has no requirements, so leave requirement_ids empty.", prompt)
+        self.assertNotIn("project", prompt.lower())
+
+    def test_the_system_prompt_points_at_the_sprints_requirement_list(self):
+        self.llm.return_value = []
+        generate_sprint_summary(self.student, self.team, self.next_sprint)
+        system = self.llm.call_args.kwargs["system"]
+        self.assertIn("the sprint's requirement list", system)
+        self.assertNotIn("project", system.lower())
+
+    def test_the_error_for_another_sprints_number_names_this_sprint(self):
+        self.llm.return_value = [make_claim(self.commit, requirement_ids=[2])]
+        summary = generate_sprint_summary(self.student, self.team, self.next_sprint)
+        message = summary.claims.get().validator_errors[-1]["message"]
+        self.assertEqual(message, "Requirement 2 isn't one of Sprint 2's requirements.")
+
+    def test_the_retry_prompt_keeps_the_sprint_wording(self):
+        self.llm.return_value = [make_claim(self.commit, requirement_ids=[2])]
+        generate_sprint_summary(self.student, self.team, self.next_sprint)
+        retry = self.llm.call_args_list[1]
+        self.assertIn("Sprint 2's requirements:", retry.args[0])
+        self.assertIn("isn't one of Sprint 2's requirements", retry.args[0])
+        self.assertNotIn("project", retry.args[0].lower())
+        self.assertNotIn("project", retry.kwargs["system"].lower())
+
+
+class WeeklyWordingTests(SprintTestCase):
+    """The weekly prompt and errors keep their wording until T-21 removes them."""
+
+    def test_the_weekly_system_prompt_is_unchanged(self):
+        from summaries.prompts import SYSTEM_PROMPT
+
+        self.assertIn("one student's weekly contribution summary", SYSTEM_PROMPT)
+        self.assertIn("the project's requirement list", SYSTEM_PROMPT)
+
+    def test_the_weekly_requirement_section_names_the_project(self):
+        from summaries.prompts import build_prompt
+
+        self.assertTrue(build_prompt([]).startswith("This project has no requirements"))
+        requirement = self.add_requirement(None, 1, "Users can log in")
+        self.assertTrue(build_prompt([], [requirement]).startswith("The project's requirements:"))
+
+    def test_the_weekly_errors_name_the_project_and_the_reporting_week(self):
+        from summaries.validator import validate_claims
+
+        commit = self.add_commit("aa1", at(10, 19))
+        (result,) = validate_claims(
+            [make_claim(commit, requirement_ids=[9])], self.student, self.team, date(2026, 10, 26)
+        )
+        messages = [error.message for error in result.errors]
+        self.assertIn("outside the reporting week 2026-10-26 to 2026-11-01", messages[0])
+        self.assertEqual(messages[1], "Requirement 9 doesn't exist in this project.")
+
+
 class SummarySprintModelTests(SprintTestCase):
+    def test_a_summary_needs_a_week_or_a_sprint(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Summary.objects.create(team=self.team, user=self.student)
+
+    def test_a_summary_cannot_have_both_a_week_and_a_sprint(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Summary.objects.create(
+                team=self.team, user=self.student, week_start=date(2026, 10, 26), sprint=self.sprint
+            )
+
     def test_one_summary_per_team_student_and_sprint(self):
         Summary.objects.create(team=self.team, user=self.student, sprint=self.sprint)
         with self.assertRaises(IntegrityError), transaction.atomic():
