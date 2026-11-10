@@ -1,0 +1,20 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Delete contribution · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:student_home' %}">Your projects</a> / <a href="{% url 'contributions:list' project.id %}">{{ project.name }}</a></span>{% endblock %}
+
+{% block content %}
+<div class="headrow"><h1>Delete this contribution?</h1></div>
+<article class="card contribution-form">
+  <strong>{{ contribution.get_category_display }} · {{ contribution.date|date:"M j, Y" }}</strong>
+  <p class="contribution-description">{{ contribution.description }}</p>
+</article>
+<form method="post">
+  {% csrf_token %}
+  <p class="form-actions">
+    <button type="submit" class="primary">Delete contribution</button>
+    <a href="{% url 'contributions:list' project.id %}">Cancel</a>
+  </p>
+</form>
+{% endblock %}
