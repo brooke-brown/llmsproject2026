@@ -8,16 +8,19 @@ from fractions import Fraction
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Case, Count, Exists, F, Max, OuterRef, Prefetch, Q, Value, When
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.formats import date_format
 
+from contributions.models import Contribution, Corroboration
 from core.models import (
     Course,
     Enrollment,
     Project,
     Repo,
     Requirement,
+    Sprint,
     Team,
     TeamMembership,
     User,
@@ -133,6 +136,130 @@ def decide_dispute(dispute, decision, note, decided_by):
     return dispute
 
 
+DISPUTE_EXPLANATION_LIMIT = 2000
+DISPUTE_DECIDED = "Your instructor has decided on this dispute, so it can't be changed."
+
+
+@dataclass
+class DisputePage:
+    """What a student's dispute page is about. `flag` is the live flag about them, or None
+    once it's no longer raised; `dispute` is their dispute of it, or None."""
+
+    team: Team
+    rule: str
+    week_start: date
+    flag: Flag | None
+    dispute: FlagDispute | None
+
+    @property
+    def severity(self):
+        """The flag as the student disputed it, or as it's raised now if not disputed yet."""
+        return self.dispute.severity if self.dispute else self.flag.severity
+
+    @property
+    def severity_label(self):
+        return Flag.Severity(self.severity).label
+
+    @property
+    def reason(self):
+        return self.dispute.flag_reason if self.dispute else self.flag.reason
+
+    @property
+    def is_withdrawn(self):
+        return bool(self.dispute) and self.dispute.status == FlagDispute.Status.FLAG_WITHDRAWN
+
+    @property
+    def can_edit(self):
+        return self.flag is not None and (
+            self.dispute is None or self.dispute.status == FlagDispute.Status.OPEN
+        )
+
+
+def get_dispute_page(user, team_id, rule, week):
+    """The user's flag and dispute for this team, rule and week (an ISO date). These survive
+    compute_flags, unlike Flag.pk, so the page keeps working while flags are regenerated.
+
+    403 unless the user is on the team, in a course they're a student in, and the flag is
+    about them. 404 if there's no such flag, or it's no longer raised and its dispute is still
+    open (#108 hides those). A decided dispute stays readable after its flag is gone.
+    """
+    try:
+        week_start = date.fromisoformat(week)
+    except ValueError:
+        raise Http404
+    team = get_team_for_student(user, team_id)
+    if not is_course_student(user, team.project.course):
+        raise PermissionDenied
+    flag = (
+        flags_in_display_order()
+        .filter(team=team, user=user, rule=rule, week_start=week_start)
+        .first()
+    )
+    dispute = FlagDispute.objects.filter(
+        team=team, student=user, rule=rule, week_start=week_start
+    ).select_related("resolved_by").first()
+    if flag is None and (dispute is None or dispute.status == FlagDispute.Status.OPEN):
+        if Flag.objects.filter(team=team, rule=rule, week_start=week_start).exists():
+            raise PermissionDenied  # A teammate's flag, or one about the whole team.
+        raise Http404
+    return DisputePage(team, rule, week_start, flag, dispute)
+
+
+def submit_dispute(flag, explanation):
+    """File the student's dispute of this flag, or edit it while it's open, and return
+    (dispute, created). Raise DisputeError, saying why, for a blank or too-long explanation,
+    a decided dispute, or a flag that's no longer raised (None).
+
+    The explanation is stored exactly as typed. A new dispute keeps the flag's reason and
+    severity as they are now; an edit leaves them as they were when it was filed. Sending the
+    same text again changes nothing, so it doesn't count as an edit.
+    """
+    if flag is None:
+        raise DisputeError("This flag is no longer raised, so its dispute can't be changed.")
+    if not explanation.strip():
+        raise DisputeError("Write your explanation before sending it.")
+    # Browsers send each line break as two characters but count it as one.
+    length = len(explanation.replace("\r\n", "\n"))
+    if length > DISPUTE_EXPLANATION_LIMIT:
+        raise DisputeError(
+            f"Your explanation can be up to {DISPUTE_EXPLANATION_LIMIT:,} characters, and this "
+            f"one has {length:,}. Nothing was sent."
+        )
+    dispute = dispute_for(flag)
+    if dispute is None:
+        try:
+            with transaction.atomic():
+                dispute = FlagDispute.objects.create(
+                    team_id=flag.team_id,
+                    student_id=flag.user_id,
+                    rule=flag.rule,
+                    week_start=flag.week_start,
+                    flag_reason=flag.reason,
+                    severity=flag.severity,
+                    explanation=explanation,
+                )
+                return dispute, True
+        except IntegrityError:
+            # Usually sent twice at once: the other request filed it, so this one edits it.
+            dispute = dispute_for(flag)
+            if dispute is None:
+                raise DisputeError("Your dispute couldn't be saved. Please try again.")
+    if dispute.status != FlagDispute.Status.OPEN:
+        raise DisputeError(DISPUTE_DECIDED)
+    if dispute.explanation == explanation:
+        return dispute, False
+    # Saved only while still open, in one statement, so an edit can't land after a decision
+    # made between the lookup above and this save.
+    now = timezone.now()
+    edited = FlagDispute.objects.filter(pk=dispute.pk, status=FlagDispute.Status.OPEN).update(
+        explanation=explanation, updated_at=now
+    )
+    if not edited:
+        raise DisputeError(DISPUTE_DECIDED)
+    dispute.explanation, dispute.updated_at = explanation, now
+    return dispute, False
+
+
 def staff_courses(user):
     """Courses where the user is an instructor or TA."""
     return Course.objects.filter(
@@ -185,6 +312,69 @@ def get_team_for_student(user, team_id):
     return team
 
 
+def check_any_course_student(user):
+    """Raise PermissionDenied unless the user is a student in at least one course."""
+    if not Enrollment.objects.filter(user=user, role=Enrollment.Role.STUDENT).exists():
+        raise PermissionDenied
+
+
+def student_home_courses(user):
+    """What the student home shows: the courses the user is a student in that have a team
+    they're on, by name. Each course has `memberships`, the user's own, by project name.
+
+    Each membership has `teammates`, the rest of its team by name, and `my_flags`: the flags
+    and warnings about this user on that team, newest first, each with `is_withdrawn` and its
+    `dispute` (or None). Flags about teammates or the whole team are never included. It also
+    has `unraised_disputes`: the user's disputes on that team whose flag is no longer raised,
+    newest first, so a student can still read a dispute and its decision.
+    """
+    student_course_ids = Enrollment.objects.filter(
+        user=user, role=Enrollment.Role.STUDENT
+    ).values("course_id")
+    memberships = (
+        TeamMembership.objects.filter(user=user, team__project__course__in=student_course_ids)
+        .select_related("team__project__course")
+        .prefetch_related(
+            Prefetch(
+                "team__memberships",
+                queryset=TeamMembership.objects.select_related("user").order_by(
+                    "user__first_name", "user__last_name", "user__github_login"
+                ),
+                to_attr="all_memberships",
+            ),
+        )
+        .order_by("team__project__course__name", "team__project__name", "team__name")
+    )
+    my_flags = flags_in_display_order().filter(user=user).order_by("-week_start", "severity", "id")
+    flags_by_team = {}
+    for flag in my_flags:
+        flags_by_team.setdefault(flag.team_id, []).append(flag)
+    disputes = {
+        (d.team_id, d.rule, d.week_start): d
+        for d in FlagDispute.objects.filter(student=user).order_by("-week_start", "id")
+    }
+
+    courses = {}
+    for membership in memberships:
+        membership.teammates = [
+            other.user for other in membership.team.all_memberships if other.user_id != user.id
+        ]
+        membership.my_flags = flags_by_team.get(membership.team_id, [])
+        for flag in membership.my_flags:
+            flag.dispute = disputes.pop((flag.team_id, flag.rule, flag.week_start), None)
+        # Whatever is left for this team matched no current flag. Dicts keep insertion order.
+        membership.unraised_disputes = [
+            dispute for (team_id, _, _), dispute in disputes.items()
+            if team_id == membership.team_id
+        ]
+        course = membership.team.project.course
+        if course.id not in courses:
+            course.memberships = []
+            courses[course.id] = course
+        courses[course.id].memberships.append(membership)
+    return list(courses.values())
+
+
 def check_course_staff(user, course):
     """Raise PermissionDenied unless the user is an instructor or TA in this course."""
     is_staff = Enrollment.objects.filter(
@@ -218,6 +408,12 @@ def get_project_for_instructor(user, project_id):
     project = get_object_or_404(Project.objects.select_related("course"), pk=project_id)
     check_course_instructor(user, project.course)
     return project
+
+
+def get_sprint_for_instructor(user, sprint_id):
+    sprint = get_object_or_404(Sprint.objects.select_related("project__course"), pk=sprint_id)
+    check_course_instructor(user, sprint.project.course)
+    return sprint
 
 
 def get_requirement_for_instructor(user, requirement_id):
@@ -288,6 +484,27 @@ def week_end(week_start):
     return week_start + timedelta(days=6)
 
 
+def summary_period(summary):
+    """The first and last day a summary's period spans: its sprint's, or its reporting week."""
+    if summary.sprint_id is not None:
+        return summary.sprint.start_date, summary.sprint.end_date
+    return summary.week_start, week_end(summary.week_start)
+
+
+# Sprint summaries first, newest sprint first, then any weekly ones from before sprints.
+SUMMARY_ORDER = (F("sprint__start_date").desc(nulls_last=True), F("week_start").desc(nulls_last=True))
+
+
+def short_date(day):
+    """"Oct 5", the way a sprint's dates are written."""
+    return f"{day:%b} {day.day}"
+
+
+def sprint_label(sprint):
+    """"Sprint 2 (Oct 30 – Nov 5)"."""
+    return f"{sprint.name} ({short_date(sprint.start_date)} – {short_date(sprint.end_date)})"
+
+
 def evidence_label(artifact):
     """The short text of an artifact's GitHub link, such as "PR 45"."""
     identifier = artifact.artifact_id.rsplit(":", 1)[-1]
@@ -310,7 +527,11 @@ def verified_claims(summary):
     requirement_id, sorted by number, with text None when the team's project has no
     requirement with that number.
     """
-    requirements = dict(summary.team.project.requirements.values_list("number", "text"))
+    # A requirement number means something only within its sprint.
+    if summary.sprint_id is not None:
+        requirements = dict(summary.sprint.requirements.values_list("number", "text"))
+    else:
+        requirements = dict(summary.team.project.requirements.values_list("number", "text"))
     claims = list(
         summary.claims.filter(status=Claim.Status.VERIFIED)
         .order_by("id")
@@ -331,7 +552,8 @@ def student_weeks(summary):
     """All of this student's summaries for the team, newest first, for the week switcher."""
     return (
         Summary.objects.filter(team=summary.team, user=summary.user)
-        .order_by("-week_start")
+        .select_related("sprint")
+        .order_by(*SUMMARY_ORDER)
         .prefetch_related("validation_runs")
     )
 
@@ -377,15 +599,24 @@ def team_wide_flags(team):
 
 def team_memberships_with_summaries(team):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
-    `team_flags` about them and their `team_disputes`."""
+    `team_flags` about them, their `team_disputes`, `team_contributions` and the
+    `team_corroborations` they gave. Each membership has `confirmations_of_their_work`, how
+    many times teammates confirmed the student's contributions on this team."""
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
-        .order_by("-week_start")
+        .select_related("sprint")
+        .order_by(*SUMMARY_ORDER)
         .prefetch_related("validation_runs")
     )
     return (
         team.memberships.select_related("user")
+        .annotate(
+            confirmations_of_their_work=Count(
+                "user__contributions__corroborations",
+                filter=Q(user__contributions__team=team),
+            )
+        )
         .order_by("user__last_name", "user__first_name", "user__github_login")
         .prefetch_related(
             Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"),
@@ -400,6 +631,16 @@ def team_memberships_with_summaries(team):
                 .select_related("resolved_by")
                 .order_by("week_start", "id"),
                 to_attr="team_disputes",
+            ),
+            Prefetch(
+                "user__contributions",
+                queryset=Contribution.objects.filter(team=team),
+                to_attr="team_contributions",
+            ),
+            Prefetch(
+                "user__corroborations",
+                queryset=Corroboration.objects.filter(contribution__team=team),
+                to_attr="team_corroborations",
             ),
         )
     )
@@ -564,6 +805,7 @@ def course_projects_with_teams(course):
             Prefetch("memberships", queryset=memberships),
             "repos",
             "summaries__validation_runs",
+            "summaries__sprint",
         )
     )
     projects = list(
@@ -574,6 +816,10 @@ def course_projects_with_teams(course):
     )
     runs = active_generation_runs(course=course)
     for project in projects:
+        project.started_sprints = started_sprints(project)
+        for sprint in project.started_sprints:
+            sprint.label = sprint_label(sprint)
+        project.default_sprint = default_sprint(project)
         for team in project.teams.all():
             _add_summary_status(team)
             team.active_run = runs.get(team.id)
@@ -589,6 +835,14 @@ def _add_summary_status(team):
     team.latest_week_note = ""
     if any(summary.is_partial for summary in latest):
         team.latest_week_note = "in progress" if latest[0].week_is_running else "partial"
+    team.latest_sprint, team.latest_sprint_note = None, ""
+    sprint_summaries = [summary for summary in summaries if summary.sprint_id is not None]
+    if sprint_summaries:
+        newest = max(sprint_summaries, key=lambda summary: summary.sprint.start_date)
+        team.latest_sprint = newest.sprint
+        partial = [s for s in sprint_summaries if s.sprint_id == newest.sprint_id and s.is_partial]
+        if partial:
+            team.latest_sprint_note = "in progress" if partial[0].week_is_running else "partial"
 
 
 class GenerationError(Exception):
@@ -627,6 +881,42 @@ def parse_week_start(value, now=None):
     return week_start
 
 
+def started_sprints(project, now=None):
+    """The project's sprints that have started, in date order. A sprint that starts today
+    has started."""
+    today = reporting_today(now)
+    return list(project.sprints.filter(start_date__lte=today).order_by("start_date", "end_date"))
+
+
+def default_sprint(project, now=None):
+    """The sprint to generate by default: the one covering today, or on a shared day the one
+    that just started, or else the most recently ended. None if no sprint has started."""
+    today = reporting_today(now)
+    started = started_sprints(project, now)
+    running = [sprint for sprint in started if sprint.end_date >= today]
+    if running:
+        return max(running, key=lambda sprint: (sprint.start_date, sprint.end_date))
+    return max(started, key=lambda sprint: (sprint.end_date, sprint.start_date), default=None)
+
+
+def parse_sprint(team, value, now=None):
+    """The started sprint of this team's project with this ID.
+
+    Raises GenerationError, with a message for the user, for anything else.
+    """
+    sprint_id = parse_id(value)
+    if sprint_id is None:
+        raise GenerationError("Pick a sprint to generate.")
+    sprint = Sprint.objects.filter(pk=sprint_id, project_id=team.project_id).first()
+    if sprint is None:
+        raise GenerationError("That sprint isn't in this team's project. Pick one from the list.")
+    if sprint.start_date > reporting_today(now):
+        raise GenerationError(
+            f"{sprint.name} hasn't started yet. Pick a sprint that has started."
+        )
+    return sprint
+
+
 def student_name(student):
     return student.display_name
 
@@ -642,9 +932,11 @@ class TeamGeneration:
     """How one run of writing a team's summaries went."""
 
     team: Team
-    week_start: date
+    week_start: date | None
     attempted: int
     failures: list[SummaryFailure]
+    sprint: Sprint | None = None
+    covered_through: date | None = None  # For a sprint: the last day its summaries cover.
 
     @property
     def succeeded(self):
@@ -652,6 +944,8 @@ class TeamGeneration:
 
     @property
     def message(self):
+        if self.sprint is not None:
+            return self._sprint_message()
         week = f"the week of {self.week_start:%b} {self.week_start.day}, {self.week_start.year}"
         if not self.attempted:
             return (
@@ -676,6 +970,32 @@ class TeamGeneration:
             f"Couldn't generate: {failed}. Flags weren't updated."
         )
 
+    def _sprint_message(self):
+        period = sprint_label(self.sprint)
+        if not self.attempted:
+            return (
+                f"Nobody left to retry on {self.team.name} for {period}: the students whose "
+                "summaries failed have left the team."
+            )
+        if self.succeeded:
+            students = "1 student" if self.attempted == 1 else f"{self.attempted} students"
+            message = f"Generated summaries for {students} on {self.team.name} for {period}."
+            if self.covered_through < self.sprint.end_date:
+                message += (
+                    f" This sprint is still in progress, so these summaries are partial: they cover "
+                    f"activity up to {short_date(self.covered_through)}. Generate the sprint again "
+                    "after it ends."
+                )
+            return message
+        done = self.attempted - len(self.failures)
+        failed = "; ".join(
+            f"{student_name(failure.student)} ({failure.reason})" for failure in self.failures
+        )
+        return (
+            f"Generated {done} of {self.attempted} summaries for {self.team.name} for {period}. "
+            f"Couldn't generate: {failed}."
+        )
+
 
 def _team_students(team, only_ids=None):
     """The team's students in display order, limited to `only_ids` if it's given."""
@@ -688,9 +1008,14 @@ def _team_students(team, only_ids=None):
 
 
 def _ingest_team_week(team, week_start):
-    """Ingest each of the team's repos for the week, or raise GenerationError naming the
-    repo. It's all-or-nothing, so a failure on one repo leaves the others as they were."""
-    end = week_end(week_start)
+    """Ingest each of the team's repos for the week. See _ingest_team_range."""
+    _ingest_team_range(team, week_start, week_end(week_start))
+
+
+def _ingest_team_range(team, first_day, last_day):
+    """Ingest each of the team's repos for first_day through last_day, or raise GenerationError
+    naming the repo. It's all-or-nothing, so a failure on one repo leaves the others as they were."""
+    week_start, end = first_day, last_day
     with transaction.atomic():
         for repo in team_repos(team):
             try:
@@ -758,6 +1083,24 @@ def active_generation_runs(team_ids=None, course=None):
     if team_ids is not None:
         runs = runs.filter(team_id__in=team_ids)
     return {run.team_id: run for run in runs}
+
+
+def _write_sprint_summaries(team, students, sprint):
+    """Write each student's summary of the sprint, carrying on past a failure.
+
+    Flags aren't recomputed: they are per sprint and only raised once it has ended (US-41).
+    """
+    failures = []
+    for student in students:
+        try:
+            summaries_services.generate_sprint_summary(student, team, sprint)
+        except LLMError as error:
+            failures.append(SummaryFailure(student, str(error)))
+        except Exception:
+            failures.append(SummaryFailure(student, "an unexpected error"))
+        _record_progress(team, student, failures[-1] if failures and failures[-1].student == student else None)
+    covered = sprint.covered_through(reporting_today())
+    return TeamGeneration(team, None, len(students), failures, sprint, covered)
 
 
 def generating_team_ids(course):
@@ -871,6 +1214,24 @@ def generate_team_summaries(team, week_start):
         return _write_summaries(team, students, week_start)
 
 
+def generate_team_sprint_summaries(team, sprint):
+    """Ingest the team's repos once for the sprint, from its first day through today (or its
+    last day, once it has ended), then write a summary for each student on the team.
+
+    Raises GenerationError, with nothing run, for a team with no students or no repo, and for
+    a failed ingest, with no LLM calls made. Otherwise returns a TeamGeneration listing any
+    students whose summaries failed. They keep any earlier summary for the sprint.
+    """
+    students = _team_students(team)
+    if not students:
+        raise GenerationError("This team has no students yet, so nothing was generated.")
+    if not team.repos.exists():
+        raise GenerationError("This team has no repo yet, so nothing was generated.")
+    with _team_run(team, len(students)):
+        _ingest_team_range(team, sprint.start_date, sprint.covered_through(reporting_today()))
+        return _write_sprint_summaries(team, students, sprint)
+
+
 def retry_failed_summaries(team, session):
     """Write summaries again for only the students whose summaries failed, or return None
     if the session has nothing to retry for this team.
@@ -882,6 +1243,12 @@ def retry_failed_summaries(team, session):
     if retry is None:
         return None
     students = _team_students(team, only_ids=retry["student_ids"])
+    if "sprint_id" in retry:
+        sprint = Sprint.objects.filter(pk=retry["sprint_id"], project_id=team.project_id).first()
+        if sprint is None:
+            raise GenerationError("That sprint no longer exists, so nothing was retried.")
+        with _team_run(team, len(students)):
+            return _write_sprint_summaries(team, students, sprint)
     with _team_run(team, len(students)):
         return _write_summaries(team, students, date.fromisoformat(retry["week_start"]))
 
@@ -892,10 +1259,13 @@ def remember_retry(session, generation):
     retries = session.get(RETRY_SESSION_KEY, {})
     key = str(generation.team.id)
     if generation.failures:
-        retries[key] = {
-            "week_start": generation.week_start.isoformat(),
-            "student_ids": [failure.student.id for failure in generation.failures],
-        }
+        # A sprint run is retried for the same sprint, and a weekly one for the same week.
+        when = (
+            {"sprint_id": generation.sprint.id}
+            if generation.sprint is not None
+            else {"week_start": generation.week_start.isoformat()}
+        )
+        retries[key] = {**when, "student_ids": [failure.student.id for failure in generation.failures]}
     else:
         retries.pop(key, None)
     session[RETRY_SESSION_KEY] = retries

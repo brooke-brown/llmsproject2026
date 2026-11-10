@@ -173,3 +173,26 @@ class AccessTests(GenerationRunFixture):
         student.force_login(self.ada)
         self.assertEqual(student.get(overview_url(self.course.id)).status_code, 403)
         self.assertEqual(student.get(team_url(self.team.id)).status_code, 403)
+
+
+class SprintRunProgressTests(GenerationRunFixture):
+    def test_a_sprint_run_counts_each_student_done_and_names_a_failure(self):
+        from unittest import mock
+
+        from summaries.llm import LLMError
+        from summaries.models import Summary
+
+        seen = []
+
+        def generate(user, team, sprint):
+            run = GenerationRun.objects.get(team=team)
+            seen.append((run.done_count, run.student_count, [f["name"] for f in run.failures]))
+            if user == self.grace:
+                raise LLMError("The LLM request timed out.")
+            return Summary.objects.get_or_create(team=team, user=user, sprint=sprint)[0]
+
+        with mock.patch("summaries.services.generate_sprint_summary", side_effect=generate):
+            self.client.post(generate_url(self.team.id), {"sprint": str(self.sprint.id)})
+        # Grace goes first (by last name) and fails; by Ada's turn she is done and named.
+        self.assertEqual(seen, [(0, 2, []), (1, 2, ["Grace Example"])])
+        self.assertFalse(GenerationRun.objects.filter(team=self.team).exists())

@@ -29,12 +29,13 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 | `ingest/` | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
+| `contributions/` | `Contribution` and `Corroboration` models: offline work students report and teammates confirm. Never evidence for a claim, passed to the LLM or counted toward flags |
 
 ## Shared contracts: do not change without team agreement
 
 These are the interfaces between apps. Changing them silently breaks other work. If a task seems to need a contract change, stop and say so instead of making it, unless its issue already calls for that change.
 
-The `Sprint` model is built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
+The `Sprint` model and `generate_sprint_summary` (T-19, with the T-20 chunking and merge) are built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
 
 - **Models in `core/` and `ingest/`** (field names and types)
 - **Claim schema** in `summaries/schemas.py`. Requirement mapping and significance are based on what the work accomplishes, not lines changed; empty `requirement_ids` means not tied to a requirement.
@@ -48,7 +49,7 @@ The `Sprint` model is built; the other sprint changes below are agreed but not b
   - `artifact_ids` use the format `owner/repo:type:id`, such as `acme/app:pr:12`, so they stay unique across a team's repos.
   - `Artifact.artifact_id` is unique per `Repo`, not globally: a later project reusing a GitHub repo has its own `Repo` row and copies. Always look IDs up within the team: `Artifact.objects.filter(repo__team=team, artifact_id=...)`.
   - `requirement_ids` hold `Requirement.number`, not the database ID. Once sprints land, a number only has meaning within its summary's sprint.
-- **Reporting dates:** today, a report covers a Monday-Sunday week, inclusive, in `America/New_York`. T-19 (#119) replaces this: a report covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
+- **Reporting dates:** the weekly report covers a Monday-Sunday week, inclusive, in `America/New_York`, until T-21 (#125) removes it. A sprint report (T-19) covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. `student_week_artifacts` and `unattributed_commits` take an optional `last_day`, and the validator's `validate_sprint_claims` takes the covered range. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
   - Commit: author date
   - PR: merged date, or created date if unmerged
   - Review: submitted date
@@ -59,7 +60,7 @@ The `Sprint` model is built; the other sprint changes below are agreed but not b
 - **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field. `Artifact.review_state` holds GitHub's state for a review, such as `APPROVED`, and is empty for other types.
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
-  - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`, replaced by `generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary` in T-19 (#119) and removed in T-21 (#125)
+  - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`, and `summaries.services.generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary` (T-19), which replaces it when T-21 (#125) removes it. A sprint summary has `Summary.sprint` set and `week_start` empty
   - `dashboard.flags.compute_flags(team: Team) -> list[Flag]`
 
 ## Data model
@@ -74,8 +75,10 @@ Course                     e.g. "CS 3240, Fall 2026"
       │    └── Requirement numbered per sprint; also keeps `project` until T-21
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
-           └── Repo             the team's GitHub repo
-                └── Artifact    a commit, PR, review or issue pulled from the repo
+           ├── Repo             the team's GitHub repo
+           │    └── Artifact    a commit, PR, review or issue pulled from the repo
+           └── Contribution     offline work a student reports; in any sprint whose dates include its date
+                └── Corroboration   a teammate's confirmation, one per teammate
 
 Summary          → Team + User + reporting week
   └── Claim      → claim schema above + status (verified / couldn't verify)
@@ -98,7 +101,7 @@ FlagDispute      → Team + student + rule + Sprint, replacing week_start
 - Reusing teams in a later project is a UI feature ("Copy teams from a previous project"), not a schema change.
 - **Roles live on `Enrollment`, never on `User`.** One person can be a TA in one course and a student in another.
 - **Every user has `User.github_login`.** It's how commits, PRs and reviews are matched to students.
-- **`User.must_change_password`** is set by a temporary password and cleared when the user changes it. Until then, middleware keeps them on the password change page.
+- **`User.must_change_password`** is set by a temporary password or a password set in the admin, and cleared when the user changes it. Until then, middleware keeps them on the password change page.
 - **A team has one repo**, enforced on the dashboard. `Repo` stays its own table and the admin isn't restricted, so code that reads a team's repos must still handle several.
 - Use the word **"Team"** everywhere (code, UI, issues), never "group."
 - Later, optional: `joined_at`/`left_at` on `TeamMembership` for students who switch or drop mid-project.
@@ -119,7 +122,7 @@ Built, and what `main` does today:
 Each item is a GitHub issue. Read the issue before starting; it has the acceptance criteria.
 
 **Sprints (#118–#125).** Agreed, not built yet. New code lands beside the weekly code so `main` keeps working, and T-21 (#125) then removes the weekly code and deletes the alpha summaries.
-- A project has zero or more sprints, each with its own dates and requirements. Requirements never belong to a project as a whole.
+- A project has zero or more sprints, each with its own dates and requirements. Requirements never belong to a project as a whole. Built (US-39, #121): the project's edit page has a Sprints panel, where instructors create, rename and delete sprints and manage each sprint's requirements, including copying them from an earlier sprint. Dates are locked once a sprint has summaries. The overview's Generate summaries control picks a started sprint (US-40, #122); a sprint run doesn't recompute flags until #123.
 - A new sprint's dates are editable and default to 7 days: from today for the first sprint, or from the latest sprint's last day otherwise.
 - Two sprints can overlap only by one sprint's last day being the next one's first day, and can never start on the same day.
 - Each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today and is labelled in progress.
@@ -128,8 +131,9 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 
 **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
 
-**Student side:** student logins (#102, #106), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
+**Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
+- Disputing a flag (US-31): students dispute a flag about them from the student home, and edit the dispute until it's decided. The page is at `teams/<id>/flags/<rule>/<week>/dispute/`, never `Flag.pk`, because `compute_flags` replaces flags on every run. A decided dispute stays readable after its flag is no longer raised; an open one is hidden.
 
 **Later, with no issues yet:** polished per-requirement progress view, numeric diff checks, GitHub OAuth login, consent, background jobs, "paired with" detection.
 
