@@ -197,7 +197,9 @@ def student_home_courses(user):
 
     Each membership has `teammates`, the rest of its team by name, and `my_flags`: the flags
     and warnings about this user on that team, newest first, each with `is_withdrawn` and its
-    `dispute` (or None). Flags about teammates or the whole team are never included.
+    `dispute` (or None). Flags about teammates or the whole team are never included. It also
+    has `unraised_disputes`: the user's disputes on that team whose flag is no longer raised,
+    newest first, so a student can still read a dispute and its decision.
     """
     student_course_ids = Enrollment.objects.filter(
         user=user, role=Enrollment.Role.STUDENT
@@ -222,7 +224,7 @@ def student_home_courses(user):
         flags_by_team.setdefault(flag.team_id, []).append(flag)
     disputes = {
         (d.team_id, d.rule, d.week_start): d
-        for d in FlagDispute.objects.filter(student=user)
+        for d in FlagDispute.objects.filter(student=user).order_by("-week_start", "id")
     }
 
     courses = {}
@@ -232,7 +234,12 @@ def student_home_courses(user):
         ]
         membership.my_flags = flags_by_team.get(membership.team_id, [])
         for flag in membership.my_flags:
-            flag.dispute = disputes.get((flag.team_id, flag.rule, flag.week_start))
+            flag.dispute = disputes.pop((flag.team_id, flag.rule, flag.week_start), None)
+        # Whatever is left for this team matched no current flag. Dicts keep insertion order.
+        membership.unraised_disputes = [
+            dispute for (team_id, _, _), dispute in disputes.items()
+            if team_id == membership.team_id
+        ]
         course = membership.team.project.course
         if course.id not in courses:
             course.memberships = []
