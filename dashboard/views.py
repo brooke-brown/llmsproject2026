@@ -1,13 +1,15 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import PasswordChangeView
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from core import services as setup
-from core.forms import RequirementImportForm
+from core.forms import ChangePasswordForm, RequirementImportForm
 from summaries.models import Summary
 
 from . import services
@@ -16,10 +18,33 @@ from .models import FlagDispute
 
 @login_required
 def home(request):
+    # Login lands here, so this is also what sends each person to the right place.
     courses = services.course_cards(request.user)
-    if len(courses) == 1:
+    student_courses = services.student_courses(request.user)
+    if student_courses and not courses:
+        return redirect("dashboard:student_home")
+    if len(courses) == 1 and not student_courses:
         return redirect("dashboard:course_overview", course_id=courses[0].id)
-    return render(request, "dashboard/home.html", {"courses": courses})
+    return render(
+        request, "dashboard/home.html", {"courses": courses, "student_courses": student_courses}
+    )
+
+
+@login_required
+def student_home(request):
+    return render(request, "dashboard/student_home.html")
+
+
+class ChangePasswordView(PasswordChangeView):
+    # Not Django's default name: the admin ships a template with that name, and it comes first.
+    template_name = "dashboard/password_change.html"
+    form_class = ChangePasswordForm
+    success_url = reverse_lazy("dashboard:home")
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        messages.success(self.request, "Your password was changed.")
+        return response
 
 
 @login_required

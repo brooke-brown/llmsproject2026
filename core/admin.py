@@ -31,7 +31,7 @@ class UserAdmin(BaseUserAdmin):
     list_display = ("username", "github_login", "email", "first_name", "last_name", "is_staff")
     search_fields = ("github_login", *BaseUserAdmin.search_fields)
     fieldsets = (
-        (None, {"fields": ("username", "github_login", "password")}),
+        (None, {"fields": ("username", "github_login", "password", "must_change_password")}),
         *BaseUserAdmin.fieldsets[1:],
     )
     add_fieldsets = (

@@ -1,4 +1,5 @@
 from django import forms
+from django.contrib.auth.forms import PasswordChangeForm
 from django.core.exceptions import ValidationError
 
 from core.models import Repo
@@ -8,6 +9,26 @@ from core.services import (
     extract_pdf_text,
     github_repo_full_name,
 )
+
+
+class ChangePasswordForm(PasswordChangeForm):
+    """Requires a password that really is new, since whoever set a temporary one knows it,
+    and ends any forced change on saving."""
+
+    def clean(self):
+        cleaned_data = super().clean()
+        # Only still here if the two new passwords matched and passed the validators.
+        new_password = cleaned_data.get("new_password2")
+        if new_password and self.user.check_password(new_password):
+            self.add_error(
+                "new_password2", "Your new password must be different from your current one."
+            )
+        return cleaned_data
+
+    def save(self, commit=True):
+        # Set before the form saves this user, so both changes land in the same write.
+        self.user.must_change_password = False
+        return super().save(commit=commit)
 
 
 class RepoForm(forms.ModelForm):

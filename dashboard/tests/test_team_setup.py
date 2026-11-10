@@ -704,7 +704,7 @@ class EditStudentTests(TeamSetupFixture):
 
                 response = self.edit()
 
-                self.assertIn("in another course", page_messages(response))
+                self.assertIn("instructor or TA in a course", page_messages(response))
                 self.assertEqual(self.stored().get_full_name(), "Grace Example")
                 enrollment.delete()
 

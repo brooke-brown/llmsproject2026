@@ -1,6 +1,7 @@
 import re
 
 import requests
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
@@ -273,18 +274,36 @@ def edit_student(student: User, full_name: str) -> User:
 
     An account can span courses, so one that runs another course stays with the admin.
     """
+    _refuse_unless_student_only(student)
+    student.first_name, student.last_name = _split_full_name(full_name)
+    student.save(update_fields=["first_name", "last_name"])
+    return student
+
+
+def set_temporary_password(student: User, password: str) -> None:
+    """Give a student a password they must change at their next login, or raise
+    ProjectSetupError saying why it can't be, naming every password rule that failed."""
+    _refuse_unless_student_only(student)
+    try:
+        validate_password(password, user=student)
+    except ValidationError as error:
+        raise ProjectSetupError(" ".join(error.messages)) from None
+    student.set_password(password)
+    student.must_change_password = True
+    student.save(update_fields=["password", "must_change_password"])
+
+
+def _refuse_unless_student_only(student: User) -> None:
+    """Raise ProjectSetupError for an account with powers beyond being a student."""
     if student.is_staff or student.is_superuser:
         raise ProjectSetupError(
             f"{student.github_login} is a staff account, so change it in the admin."
         )
     if student.enrollments.exclude(role=Enrollment.Role.STUDENT).exists():
         raise ProjectSetupError(
-            f"{student.github_login} is an instructor or TA in another course, so change this "
+            f"{student.github_login} is an instructor or TA in a course, so change this "
             "account in the admin."
         )
-    student.first_name, student.last_name = _split_full_name(full_name)
-    student.save(update_fields=["first_name", "last_name"])
-    return student
 
 
 def remove_student(membership: TeamMembership) -> None:

@@ -164,6 +164,27 @@ def course_cards(user):
     return courses
 
 
+def student_courses(user):
+    """Courses where the user is a student."""
+    return Course.objects.filter(
+        enrollments__user=user, enrollments__role=Enrollment.Role.STUDENT
+    ).order_by("name")
+
+
+def is_course_student(user, course):
+    return Enrollment.objects.filter(
+        user=user, course=course, role=Enrollment.Role.STUDENT
+    ).exists()
+
+
+def get_team_for_student(user, team_id):
+    """Fetch a team the user is on. 404 if it doesn't exist, 403 if they aren't on it."""
+    team = get_object_or_404(Team.objects.select_related("project__course"), pk=team_id)
+    if not team.memberships.filter(user=user).exists():
+        raise PermissionDenied
+    return team
+
+
 def check_course_staff(user, course):
     """Raise PermissionDenied unless the user is an instructor or TA in this course."""
     is_staff = Enrollment.objects.filter(
