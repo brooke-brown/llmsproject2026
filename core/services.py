@@ -1,6 +1,8 @@
 import csv
 import io
 import re
+import secrets
+import string
 from dataclasses import dataclass, field
 
 import requests
@@ -836,3 +838,140 @@ def _unreadable_repos(repo_rows) -> list[RowError]:
         except ProjectSetupError as error:
             errors.append(RowError(row, str(error)))
     return errors
+
+
+# --- Temporary passwords in bulk (US-44, #127) ---
+
+# No look-alike characters (0/O, 1/l/I), so a password read off a page is typed correctly. It
+# is letters and digits only, so it never starts with a character Excel reads as a formula.
+PASSWORD_ALPHABET = "".join(c for c in string.ascii_letters + string.digits if c not in "0O1lI")
+PASSWORD_LENGTH = 12
+PASSWORD_ATTEMPTS = 5
+BLOCKED_NOTE = "Not given a password here: this account can only be changed in the admin."
+PASSWORD_CSV_COLUMNS = ("team", "name", "github_login", "email", "temporary_password", "note")
+
+
+@dataclass
+class PasswordTarget:
+    user: User
+    team: str
+    has_temporary: bool = False  # Whether it has a temporary password that would be replaced.
+    note: str = ""
+
+
+@dataclass
+class PasswordPlan:
+    targets: list[PasswordTarget]  # Students who will get a password.
+    blocked: list[PasswordTarget]  # Accounts that can only be changed in the admin.
+    left_alone: int  # Students who chose their own password.
+
+    @property
+    def count(self) -> int:
+        return len(self.targets)
+
+    @property
+    def replaced(self) -> int:
+        return sum(target.has_temporary for target in self.targets)
+
+
+@dataclass
+class PasswordRow:
+    """One line of the downloaded file. The plain password exists only here, never saved."""
+
+    team: str
+    name: str
+    github_login: str
+    email: str
+    password: str  # Blank for an account that can't be given one here.
+    note: str = ""
+    user: User | None = None
+
+
+def plan_temporary_passwords(project: Project) -> PasswordPlan:
+    """Who would get a temporary password: students on the project's teams who can't log in
+    yet or still have an unchanged temporary one. Saves nothing."""
+    targets, blocked, left_alone = [], [], 0
+    memberships = (
+        TeamMembership.objects.filter(team__project=project)
+        .select_related("user", "team")
+        .order_by("team__name", "user__last_name", "user__first_name", "user__github_login")
+    )
+    for membership in memberships:
+        user = membership.user
+        waiting = user.must_change_password
+        if user.has_usable_password() and not waiting:
+            left_alone += 1
+            continue
+        target = PasswordTarget(user, membership.team.name, has_temporary=waiting and user.has_usable_password())
+        try:
+            _refuse_unless_student_only(user)
+        except ProjectSetupError:
+            target.note = BLOCKED_NOTE
+            blocked.append(target)
+        else:
+            targets.append(target)
+    return PasswordPlan(targets, blocked, left_alone)
+
+
+def generate_temporary_passwords(project: Project) -> list[PasswordRow]:
+    """Give every student in the plan a random temporary password, all or none, and return a
+    row for each, blocked accounts included with a blank password.
+
+    The plain passwords are returned and nothing else: they aren't stored or logged. Raises
+    ProjectSetupError if a password can't be made, and then nothing has changed.
+    """
+    plan = plan_temporary_passwords(project)
+    rows = []
+    with transaction.atomic():
+        for target in plan.targets:
+            password = _set_random_password(target.user)
+            rows.append(_row(target, password))
+    rows.extend(_row(target, "") for target in plan.blocked)
+    return rows
+
+
+def temporary_passwords_csv(rows) -> str:
+    """The file to download. Cells that Excel would read as a formula get a leading quote."""
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(PASSWORD_CSV_COLUMNS)
+    for row in rows:
+        cells = [row.team, row.name, row.github_login, row.email, row.password, row.note]
+        writer.writerow([_spreadsheet_safe(cell) for cell in cells])
+    return out.getvalue()
+
+
+def _row(target: PasswordTarget, password: str) -> PasswordRow:
+    user = target.user
+    return PasswordRow(
+        team=target.team,
+        name=user.get_full_name(),
+        github_login=user.github_login,
+        email=user.email,
+        password=password,
+        note=target.note,
+        user=user,
+    )
+
+
+def _random_password() -> str:
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(PASSWORD_LENGTH))
+
+
+def _set_random_password(user: User) -> str:
+    """Set a random password that passes the password rules, trying a few times."""
+    for _ in range(PASSWORD_ATTEMPTS):
+        password = _random_password()
+        try:
+            set_temporary_password(user, password)
+        except ProjectSetupError:
+            continue
+        return password
+    raise ProjectSetupError(
+        f"Couldn't make a password for {user.github_login} that passes the password rules, "
+        "so no passwords were changed."
+    )
+
+
+def _spreadsheet_safe(cell: str) -> str:
+    return "'" + cell if cell.startswith(("=", "+", "-", "@", "\t", "\r")) else cell

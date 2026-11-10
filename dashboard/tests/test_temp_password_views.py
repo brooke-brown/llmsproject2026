@@ -87,6 +87,8 @@ class GenerateDownloadTests(PasswordFixture):
     def test_a_blocked_account_appears_with_a_blank_password_and_a_note(self):
         ta = self.add_student("busy-student", self.team)
         enroll(ta, self.other_course, Enrollment.Role.TA)
+        ta.set_unusable_password()  # So it needs a password, but the admin must set it.
+        ta.save()
         body = {r["github_login"]: r for r in rows(self.client.post(generate_url(self.project.id)))}
         self.assertEqual(body["busy-student"]["temporary_password"], "")
         self.assertIn("admin", body["busy-student"]["note"])

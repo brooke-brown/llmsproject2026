@@ -78,7 +78,9 @@ class PlanTests(PasswordFixture):
 
     def test_an_account_that_cannot_be_given_a_password_is_listed_as_blocked(self):
         ta = self.add_student("busy-student", self.team)
-        enroll(ta, self.other_course, Role.TA)  # A TA in another course.
+        enroll(ta, self.other_course, Role.TA)
+        ta.set_unusable_password()  # So it needs a password, but the admin must set it.
+        ta.save()  # A TA in another course.
         result = plan(self.project)
         self.assertEqual([row.user for row in result.blocked], [ta])
         self.assertNotIn(ta, [row.user for row in result.targets])
@@ -119,11 +121,13 @@ class GenerateTests(PasswordFixture):
     def test_a_blocked_account_gets_a_blank_password_and_a_note_to_use_the_admin(self):
         ta = self.add_student("busy-student", self.team)
         enroll(ta, self.other_course, Role.TA)
+        ta.set_unusable_password()  # So it needs a password, but the admin must set it.
+        ta.save()
         row = next(row for row in generate(self.project) if row.github_login == "busy-student")
         self.assertEqual(row.password, "")
         self.assertIn("admin", row.note)
         ta.refresh_from_db()
-        self.assertTrue(ta.check_password("not-a-real-password"))
+        self.assertFalse(ta.has_usable_password())
 
     def test_all_the_passwords_are_saved_or_none(self):
         from core.services import ProjectSetupError
