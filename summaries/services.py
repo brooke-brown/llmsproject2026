@@ -49,9 +49,18 @@ def generate_validated_claims(user: User, team: Team, week_start: date, artifact
     )
 
 
-def _validated_claims(artifacts, requirements, validate, period, system) -> ValidatedClaims:
-    """The retry loop, for any way of validating and any wording of the period."""
-    claims = list(generate_claims(build_prompt(artifacts, requirements, period), system=system))
+def _validated_claims(
+    artifacts, requirements, validate, period, system, sprint_name=None
+) -> ValidatedClaims:
+    """The retry loop, for any way of validating and any wording of the period.
+
+    With no artifacts there's nothing to describe, so no LLM call is made and no claims come
+    back. `sprint_name` words the requirement list as that sprint's.
+    """
+    if not artifacts:
+        return ValidatedClaims([], [], 0, 0)
+    prompt = build_prompt(artifacts, requirements, period, sprint_name)
+    claims = list(generate_claims(prompt, system=system))
     results = validate(claims)
     first_pass = sum(result.ok for result in results)
 
@@ -67,6 +76,7 @@ def _validated_claims(artifacts, requirements, validate, period, system) -> Vali
             [(claims[index], results[index].errors) for index in failing],
             period,
             system,
+            sprint_name,
         )
         if fixes is None:
             continue
@@ -77,11 +87,12 @@ def _validated_claims(artifacts, requirements, validate, period, system) -> Vali
     return ValidatedClaims(claims, results, retries, first_pass)
 
 
-def _retry(artifacts, requirements, failing, period, system):
+def _retry(artifacts, requirements, failing, period, system, sprint_name=None):
     """One corrected claim per failing claim, or None if this attempt didn't work."""
     try:
         fixes = generate_claims(
-            build_retry_prompt(artifacts, failing, requirements, period), system=system
+            build_retry_prompt(artifacts, failing, requirements, period, sprint_name),
+            system=system,
         )
     except LLMError:
         return None
@@ -108,15 +119,16 @@ def generate_summary(user: User, team: Team, week_start: date) -> Summary:
         raise ValueError(f"{user.github_login} isn't on this team.")
 
     artifacts = student_week_artifacts(user, team, week_start)
-    claims, results, retries, first_pass = [], [], 0, 0
-    # With nothing to describe there's nothing to ask the LLM, so no call is made.
-    if artifacts:
-        outcome = generate_validated_claims(user, team, week_start, artifacts)
-        claims, results = outcome.claims, outcome.results
-        retries, first_pass = outcome.retries, outcome.first_pass
-
+    outcome = generate_validated_claims(user, team, week_start, artifacts)
     return _save_summary(
-        team, artifacts, claims, results, retries, first_pass, user=user, week_start=week_start
+        team,
+        artifacts,
+        outcome.claims,
+        outcome.results,
+        outcome.retries,
+        outcome.first_pass,
+        user=user,
+        week_start=week_start,
     )
 
 
@@ -181,18 +193,21 @@ def generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary:
 
     last_day = sprint.covered_through(today)
     artifacts = student_week_artifacts(user, team, sprint.start_date, last_day=last_day)
-    claims, results, retries, first_pass = [], [], 0, 0
-    if artifacts:
-        requirements = list(sprint.requirements.order_by("number"))
-        outcome = _validated_claims(
-            artifacts,
-            requirements,
-            lambda claims: validate_sprint_claims(claims, user, team, sprint, last_day),
-            period=f"{sprint.name} ({sprint.start_date.isoformat()} to {last_day.isoformat()})",
-            system=SPRINT_SYSTEM_PROMPT,
-        )
-        claims, results = outcome.claims, outcome.results
-        retries, first_pass = outcome.retries, outcome.first_pass
+    outcome = _validated_claims(
+        artifacts,
+        list(sprint.requirements.order_by("number")),
+        lambda claims: validate_sprint_claims(claims, user, team, sprint, last_day),
+        period=f"{sprint.name} ({sprint.start_date.isoformat()} to {last_day.isoformat()})",
+        system=SPRINT_SYSTEM_PROMPT,
+        sprint_name=sprint.name,
+    )
     return _save_summary(
-        team, artifacts, claims, results, retries, first_pass, user=user, sprint=sprint
+        team,
+        artifacts,
+        outcome.claims,
+        outcome.results,
+        outcome.retries,
+        outcome.first_pass,
+        user=user,
+        sprint=sprint,
     )

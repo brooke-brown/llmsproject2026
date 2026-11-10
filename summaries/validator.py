@@ -82,7 +82,7 @@ def validate_sprint_claims(claims, user, team, sprint, last_day: date) -> list[C
     `last_day` is the sprint's covered_through, so a running sprint stops at today. It needn't
     start on a Monday, and requirement numbers are looked up in the sprint alone.
     """
-    window = _Week(sprint.start_date, last_day)
+    window = _Week(sprint.start_date, last_day, sprint_name=sprint.name)
     return _validate_all(claims, user, team, window, Requirement.objects.filter(sprint=sprint))
 
 
@@ -98,11 +98,15 @@ def _validate_all(claims, user, team, week, requirements):
 
 class _Week:
     """The first day at 00:00 to the day after the last at 00:00 in New York, so the last
-    night is included. A reporting week is Monday-Sunday; a sprint's range is any days."""
+    night is included. A reporting week is Monday-Sunday; a sprint's range is any days.
 
-    def __init__(self, first_day: date, last_day: date | None = None):
+    `sprint_name` words the errors for a sprint, since they go back to the LLM: its dates and
+    requirements are the sprint's, not a reporting week's or the project's."""
+
+    def __init__(self, first_day: date, last_day: date | None = None, sprint_name: str | None = None):
         self.first_day = first_day
         self.last_day = last_day or first_day + timedelta(days=6)
+        self.sprint_name = sprint_name
         self.start = datetime.combine(first_day, time.min, tzinfo=REPORTING_TIME_ZONE)
         self.end = datetime.combine(
             self.last_day + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE
@@ -110,6 +114,17 @@ class _Week:
 
     def contains(self, moment: datetime) -> bool:
         return self.start <= moment < self.end
+
+    def describe(self) -> str:
+        dates = f"{self.first_day.isoformat()} to {self.last_day.isoformat()}"
+        if self.sprint_name:
+            return f"{self.sprint_name} ({dates})"
+        return f"the reporting week {dates}"
+
+    def unknown_requirement(self, number) -> str:
+        if self.sprint_name:
+            return f"Requirement {number} isn't one of {self.sprint_name}'s requirements."
+        return f"Requirement {number} doesn't exist in this project."
 
 
 def _validate_claim(index, claim, team, login, week, requirement_numbers):
@@ -124,7 +139,7 @@ def _validate_claim(index, claim, team, login, week, requirement_numbers):
                     index,
                     "",
                     UNKNOWN_REQUIREMENT,
-                    f"Requirement {number} doesn't exist in this project.",
+                    week.unknown_requirement(number),
                     requirement_id=number,
                 )
             )
@@ -149,8 +164,7 @@ def _validate_citation(index, artifact_id, team, login, week):
         errors.append(
             error(
                 OUTSIDE_WEEK,
-                f"{artifact_id} is dated {when.date().isoformat()}, outside the reporting "
-                f"week {week.first_day.isoformat()} to {week.last_day.isoformat()}.",
+                f"{artifact_id} is dated {when.date().isoformat()}, outside {week.describe()}.",
             )
         )
     credited = {artifact.author_login.lower(), *(c.lower() for c in artifact.co_author_logins)}
