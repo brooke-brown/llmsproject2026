@@ -1,8 +1,8 @@
 """Tests for US-30 (#107): a student's home lists their projects and any flags about them.
 
-Not covered yet, because what they need isn't built: links to offline contributions (US-33)
-and peer evaluations (US-37), the "Dispute" link (US-31), and flags labelled by sprint
-(US-41). Until US-41, a flag is labelled by its week.
+Not covered yet, because what they need isn't built: links to peer evaluations (US-37), the
+"Dispute" link (US-31), and flags labelled by sprint (US-41). Until US-41, a flag is labelled
+by its week. The link to offline contributions (US-33) is tested with that feature.
 
 URLs are reversed per test rather than at module level, so each criterion passes or fails
 on its own instead of the whole module failing on a single NoReverseMatch.
