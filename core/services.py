@@ -4,13 +4,18 @@ import re
 import secrets
 import string
 from dataclasses import dataclass, field
+from datetime import timedelta
+from itertools import batched
 
 import requests
 from django.contrib.auth.password_validation import validate_password
+from django.core import signing
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Max
+from django.db.models.functions import Lower
+from django.utils import timezone
 from github import GithubException, RateLimitExceededException
 from pydantic import BaseModel
 from pypdf import PdfReader
@@ -200,7 +205,7 @@ def add_requirement(project: Project, text: str) -> Requirement:
     try:
         with transaction.atomic():
             return Requirement.objects.create(
-                project=project, number=_next_requirement_number(project), text=text
+                project=project, number=_next_requirement_number(project.requirements), text=text
             )
     except IntegrityError:
         raise ProjectSetupError(
@@ -217,10 +222,13 @@ def edit_requirement(requirement: Requirement, text: str) -> Requirement:
 
 def delete_requirement(requirement: Requirement) -> None:
     """Delete a requirement, unless a claim cites it. Other requirements keep their numbers."""
-    # Claims that were dropped count too: admin users can still read them.
-    cited = Claim.objects.filter(summary__team__project=requirement.project_id).values_list(
-        "requirement_ids", flat=True
-    )
+    # Claims that were dropped count too: admin users can still read them. A sprint's numbers
+    # mean something only within that sprint, so only its own summaries' claims count.
+    if requirement.sprint_id is not None:
+        claims = Claim.objects.filter(summary__sprint=requirement.sprint_id)
+    else:
+        claims = Claim.objects.filter(summary__team__project=requirement.project_id)
+    cited = claims.values_list("requirement_ids", flat=True)
     if any(requirement.number in numbers for numbers in cited):
         raise ProjectSetupError(
             f"A claim cites this requirement, so number {requirement.number} can't be deleted. "
@@ -246,11 +254,22 @@ def delete_team(team: Team) -> None:
     team.delete()
 
 
-def add_student(team: Team, full_name: str, github_login: str, email: str = "") -> User:
+def add_student(
+    team: Team,
+    full_name: str,
+    github_login: str,
+    email: str = "",
+    temporary_password: str = "",
+    instructor: User | None = None,
+) -> User:
     """Put a student on the team, creating their account and enrollment if they need one.
 
-    A GitHub username that already has an account uses it as it is, and new accounts can't
-    log in. Either all of it happens or, with ProjectSetupError saying why, none of it does.
+    A GitHub username that already has an account keeps its name and email. Without a
+    temporary password, an existing account keeps its password and a new one can't log in.
+    Either all of it happens or, with ProjectSetupError saying why, none of it does.
+
+    An account with a password and no enrollments is refused, password typed or not: once
+    enrolled here, it would look like this instructor's student on the edit form too.
     """
     github_login = _clean_github_login(github_login)
     first_name, last_name = _split_full_name(full_name)
@@ -260,6 +279,8 @@ def add_student(team: Team, full_name: str, github_login: str, email: str = "") 
             student = User.objects.filter(github_login__iexact=github_login).first()
             if student is None:
                 student = _create_student(github_login, first_name, last_name, email)
+            else:
+                _refuse_unclaimed_account(student)
             _enroll_as_student(student, team.project.course)
             membership = TeamMembership(user=student, team=team)
             try:
@@ -267,6 +288,8 @@ def add_student(team: Team, full_name: str, github_login: str, email: str = "") 
             except ValidationError as error:
                 raise ProjectSetupError(" ".join(error.messages)) from None
             membership.save()
+            if temporary_password:
+                _set_password_as(instructor, student, temporary_password)
     except IntegrityError:
         raise ProjectSetupError(
             "This student was changed at the same moment, so please try again."
@@ -274,21 +297,35 @@ def add_student(team: Team, full_name: str, github_login: str, email: str = "") 
     return student
 
 
-def edit_student(student: User, full_name: str) -> User:
-    """Change a student's name, or raise ProjectSetupError saying why it can't be.
+def edit_student(
+    student: User, full_name: str, temporary_password: str = "", instructor: User | None = None
+) -> User:
+    """Change a student's name and, if one is given, their temporary password. Either both
+    happen or, with ProjectSetupError saying why, neither does.
 
     An account can span courses, so one that runs another course stays with the admin.
     """
     _refuse_unless_student_only(student)
     student.first_name, student.last_name = _split_full_name(full_name)
-    student.save(update_fields=["first_name", "last_name"])
+    with transaction.atomic():
+        student.save(update_fields=["first_name", "last_name"])
+        if temporary_password:
+            _set_password_as(instructor, student, temporary_password)
     return student
 
 
 def set_temporary_password(student: User, password: str) -> None:
     """Give a student a password they must change at their next login, or raise
-    ProjectSetupError saying why it can't be, naming every password rule that failed."""
+    ProjectSetupError saying why it can't be, naming every password rule that failed.
+
+    Whitespace around it is dropped, since a pasted space or newline would stop the student
+    logging in with the password they were told."""
     _refuse_unless_student_only(student)
+    password = password.strip()
+    if not password:
+        raise ProjectSetupError(
+            "A temporary password can't be only spaces. Type one, or leave the field empty."
+        )
     try:
         validate_password(password, user=student)
     except ValidationError as error:
@@ -296,6 +333,31 @@ def set_temporary_password(student: User, password: str) -> None:
     student.set_password(password)
     student.must_change_password = True
     student.save(update_fields=["password", "must_change_password"])
+
+
+def _set_password_as(instructor: User | None, student: User, password: str) -> None:
+    """Set a temporary password, unless the student is also in a course `instructor` doesn't
+    teach. Otherwise adding someone to a team would hand over their account in every course.
+    With no instructor given, no course counts as taught, so an enrolled student is refused."""
+    taught = Enrollment.objects.filter(user=instructor, role=Enrollment.Role.INSTRUCTOR)
+    if student.enrollments.exclude(course__in=taught.values("course")).exists():
+        raise ProjectSetupError(
+            f"{student.github_login} is also enrolled in a course you don't teach, so their "
+            "password can only be changed in the admin."
+        )
+    set_temporary_password(student, password)
+
+
+def _refuse_unclaimed_account(student: User) -> None:
+    """Raise ProjectSetupError for an account with a password that no course vouches for.
+    Staff accounts pass, since the dashboard never sets their passwords."""
+    if student.is_staff or student.is_superuser:
+        return
+    if student.has_usable_password() and not student.enrollments.exists():
+        raise ProjectSetupError(
+            f"{student.github_login} already has an account with a password and isn't enrolled "
+            "in any course, so they weren't added. Enroll them in this course in the admin first."
+        )
 
 
 def _refuse_unless_student_only(student: User) -> None:
@@ -483,8 +545,8 @@ def _clean_email(email: str) -> str:
     return email
 
 
-def _next_requirement_number(project: Project) -> int:
-    highest = project.requirements.aggregate(Max("number"))["number__max"]
+def _next_requirement_number(requirements) -> int:
+    highest = requirements.aggregate(Max("number"))["number__max"]
     return (highest or 0) + 1
 
 
@@ -528,6 +590,65 @@ def _normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+# --- Sprints (US-39, #121) ---
+
+
+def default_sprint_dates(project: Project) -> tuple:
+    """The start and end a new sprint's form begins with: seven days from today in New York for
+    a first sprint, or from the latest sprint's last day, so it picks up where that one ends."""
+    latest = project.sprints.order_by("-end_date", "-start_date").first()
+    start = latest.end_date if latest else timezone.localdate()
+    return start, start + timedelta(days=6)
+
+
+def delete_sprint(sprint: Sprint) -> None:
+    """Delete a sprint with its requirements and summaries, and so the claims and flags on them."""
+    sprint.delete()
+
+
+def add_sprint_requirement(sprint: Sprint, text: str) -> Requirement:
+    """Add a requirement numbered after the sprint's highest, leaving any gaps unfilled."""
+    text = _clean_requirement_text(text)
+    try:
+        with transaction.atomic():
+            return Requirement.objects.create(
+                project_id=sprint.project_id,
+                sprint=sprint,
+                number=_next_requirement_number(sprint.requirements),
+                text=text,
+            )
+    except IntegrityError:
+        raise ProjectSetupError(
+            "Another requirement was added at the same moment, so please try again."
+        ) from None
+
+
+def copy_sprint_requirements(source: Sprint, target: Sprint) -> list[Requirement]:
+    """Copy one sprint's requirements, with their numbers, into a sprint that has none."""
+    if source.project_id != target.project_id:
+        raise ProjectSetupError("Choose a sprint from this project.")
+    if source.pk == target.pk:
+        raise ProjectSetupError("Choose a different sprint to copy from.")
+    if target.requirements.exists():
+        raise ProjectSetupError(
+            f"{target.name} already has requirements, so nothing was copied. Existing claims "
+            "point to them by number."
+        )
+    copies = [
+        Requirement(project_id=target.project_id, sprint=target, number=r.number, text=r.text)
+        for r in source.requirements.order_by("number")
+    ]
+    if not copies:
+        raise ProjectSetupError(f"{source.name} has no requirements to copy.")
+    try:
+        with transaction.atomic():
+            return Requirement.objects.bulk_create(copies)
+    except IntegrityError:
+        raise ProjectSetupError(
+            f"{target.name} gained requirements at the same moment, so nothing was copied."
+        ) from None
+
+
 # --- Importing teams and students from a CSV (US-43, #126) ---
 
 TEAM_CSV_COLUMNS = ("team", "name", "github_login", "email", "repo_url")
@@ -538,6 +659,15 @@ TEAM_CSV_TEMPLATE = (
     + "\nTeam Example,Ada Example,ada-example,ada@example.com,https://github.com/example-org/example-repo"
     + "\nTeam Example,Bo Example,bo-example,,\n"
 )
+TOO_MANY_CELLS = (
+    "This row has more cells than the header, so its columns may be shifted. "
+    "Put quotes around any value that contains a comma."
+)
+CHECKED_REPOS_SALT = "core.services.team-import-checked-repos"
+# Long enough to read a preview. An older confirm just checks GitHub again.
+CHECKED_REPOS_MAX_AGE_SECONDS = 30 * 60
+# Keeps each lookup well under SQLite's limit on query parameters.
+ACCOUNT_LOOKUP_BATCH = 500
 
 
 class TeamImportError(Exception):
@@ -569,6 +699,7 @@ class PlannedTeam:
     repo: str = ""  # owner/repo, or "" for none.
     repo_url: str = ""
     repo_is_new: bool = False
+    repo_error_row: int | None = None  # The row reporting that STRIVE can't read the repo.
     students: list[PlannedStudent] = field(default_factory=list)
 
 
@@ -578,6 +709,7 @@ class TeamImportPlan:
 
     teams: list[PlannedTeam]
     errors: list[RowError]
+    checked_repos: set[str] = field(default_factory=set)  # Casefolded full names GitHub let us read.
 
     @property
     def ok(self) -> bool:
@@ -600,6 +732,16 @@ class ImportResult:
     repos: int
 
 
+@dataclass
+class _ExistingAccounts:
+    """What the database already knows about a file's students, keyed for lookup by row."""
+
+    users: dict[str, User]  # By lowercase GitHub login.
+    usernames: set[str]  # Lowercase usernames.
+    roles: dict[int, str]  # User ID -> role in this course.
+    teams: dict[int, str]  # User ID -> name of their team in this project.
+
+
 def read_team_csv(data: bytes) -> str:
     """Decode an uploaded file as text, or raise TeamImportError saying why it can't be read.
 
@@ -619,21 +761,36 @@ def read_team_csv(data: bytes) -> str:
             raise TeamImportError("This doesn't look like a CSV file. Upload a .csv file.") from None
 
 
-def plan_team_import(project: Project, text: str) -> TeamImportPlan:
+def sign_checked_repos(repos: set[str]) -> str:
+    """A tamper-proof record of the repos a preview checked, to carry in the confirm form."""
+    return signing.dumps(sorted(repos), salt=CHECKED_REPOS_SALT)
+
+
+def read_checked_repos(token: str) -> set[str]:
+    """The repos a recent preview checked. A bad or expired token means none, so they're rechecked."""
+    try:
+        return set(signing.loads(token, salt=CHECKED_REPOS_SALT, max_age=CHECKED_REPOS_MAX_AGE_SECONDS))
+    except signing.BadSignature:
+        return set()
+
+
+def plan_team_import(project: Project, text: str, checked_repos: frozenset | set = frozenset()) -> TeamImportPlan:
     """Check a CSV against the project and say what importing it would do, saving nothing.
 
     Raises TeamImportError for a file that can't be read at all. Problems with particular rows
     are in the plan's `errors`, each naming its row. Each distinct new repo is checked on
-    GitHub once, however many rows name it.
+    GitHub once, however many rows name it, and not at all if it's in `checked_repos`.
     """
     records = _read_records(text)
-    teams: dict[str, PlannedTeam] = {}  # Keyed by the team name's casefold.
-    existing_teams = {team.name.casefold(): team for team in project.teams.prefetch_related("repos")}
+    accounts = _existing_accounts(project, [cells["github_login"] for _, cells, _ in records])
+    teams: dict[str, PlannedTeam] = {}  # Keyed by _team_key.
+    existing_teams = {_team_key(team.name): team for team in project.teams.prefetch_related("repos")}
     errors: list[RowError] = []
+    students_by_row: dict[int, PlannedStudent] = {}
     seen_logins: dict[str, int] = {}
     repo_rows: dict[str, tuple[str, int]] = {}  # casefolded full name -> (full name, first row).
 
-    for row, cells in records:
+    for row, cells, has_extra_cells in records:
         problems: list[str] = []
 
         def attempt(check, *args):
@@ -645,16 +802,20 @@ def plan_team_import(project: Project, text: str) -> TeamImportPlan:
                 )
 
         team_name = attempt(_clean_team_cell, cells["team"])
-        full_name = attempt(_split_full_name, cells["name"])
-        login = attempt(_clean_github_login, cells["github_login"])
-        email = attempt(_clean_email, cells["email"])
-        repo = None
-        if cells["repo_url"].strip():
-            repo = attempt(_clean_repo_cell, cells["repo_url"])
+        full_name = login = email = repo = None
+        if has_extra_cells:
+            # The other cells may be shifted, so nothing in them can be trusted or checked.
+            problems.append(TOO_MANY_CELLS)
+        else:
+            full_name = attempt(_split_full_name, cells["name"])
+            login = attempt(_clean_github_login, cells["github_login"])
+            email = attempt(_clean_email, cells["email"])
+            if cells["repo_url"].strip():
+                repo = attempt(_clean_repo_cell, cells["repo_url"])
 
         team = None
         if team_name is not None:
-            key = team_name.casefold()
+            key = _team_key(team_name)
             if key not in teams:
                 existing = existing_teams.get(key)
                 teams[key] = PlannedTeam(existing.name if existing else team_name, existing is None)
@@ -667,10 +828,11 @@ def plan_team_import(project: Project, text: str) -> TeamImportPlan:
                     repo_rows[repo.casefold()] = (repo, row)
 
         student = PlannedStudent(row, "", login or "", email or "")
-        if full_name is not None:
+        students_by_row[row] = student
+        if full_name is not None or has_extra_cells:
             student.name = " ".join(cells["name"].split())
         if login is not None and team_name is not None:
-            problem = _student_problem(project, student, team, seen_logins)
+            problem = _student_problem(accounts, student, team, seen_logins)
             if problem:
                 problems.append(problem)
         if problems:
@@ -680,9 +842,11 @@ def plan_team_import(project: Project, text: str) -> TeamImportPlan:
         if team is not None:
             team.students.append(student)
 
-    errors.extend(_unreadable_repos(repo_rows))
+    unreadable = _unreadable_repos(repo_rows, checked_repos)
+    _mark_unreadable_repos(teams.values(), students_by_row, unreadable)
+    errors.extend(unreadable.values())
     errors.sort(key=lambda error: error.row)
-    return TeamImportPlan(list(teams.values()), errors)
+    return TeamImportPlan(list(teams.values()), errors, set(repo_rows) - set(unreadable))
 
 
 def import_teams(project: Project, text: str) -> ImportResult:
@@ -718,14 +882,17 @@ def run_team_import(project: Project, plan: TeamImportPlan) -> ImportResult:
     return ImportResult(teams, students, repos)
 
 
-def _read_records(text: str) -> list[tuple[int, dict[str, str]]]:
-    """The file's non-blank rows as (spreadsheet row, cells by column name)."""
-    if len(text.encode("utf-8")) > MAX_TEAM_CSV_BYTES:
+def _read_records(text: str) -> list[tuple[int, dict[str, str], bool]]:
+    """The file's non-blank rows as (spreadsheet row, cells by column name, has extra cells)."""
+    # Counts characters without the CRLFs a browser adds to the confirm form. A file within the
+    # limit in bytes is always within it here, whatever its encoding grows to in UTF-8.
+    if len(text.replace("\r\n", "\n")) > MAX_TEAM_CSV_BYTES:
         raise TeamImportError("This file is over 1 MB, so it can't be imported. Split it up.")
     if "\x00" in text:
         raise TeamImportError("This doesn't look like a CSV file. Upload a .csv file.")
     try:
-        rows = list(csv.reader(io.StringIO(text)))
+        # newline="" lets csv recognize every line ending, including a bare CR.
+        rows = list(csv.reader(io.StringIO(text, newline="")))
     except csv.Error:
         raise TeamImportError("This doesn't look like a CSV file. Upload a .csv file.") from None
     rows = [(number, row) for number, row in enumerate(rows, start=1)]
@@ -751,11 +918,17 @@ def _read_records(text: str) -> list[tuple[int, dict[str, str]]]:
                     column: row[positions[column]] if column in positions and positions[column] < len(row) else ""
                     for column in TEAM_CSV_COLUMNS
                 },
+                any(cell.strip() for cell in row[len(header) :]),
             )
         )
     if not records:
         raise TeamImportError("The file has no rows below its header.")
     return records
+
+
+def _team_key(name: str) -> str:
+    """Matches team names regardless of case or how much space separates their words."""
+    return " ".join(name.split()).casefold()
 
 
 def _clean_team_cell(name: str) -> str:
@@ -783,8 +956,10 @@ def _repo_problem(team: PlannedTeam, existing, full_name: str, url: str, row: in
     """Record the row's repo on the team, or return what's wrong with it."""
     stored = [repo.full_name for repo in existing.repos.all()] if existing else []
     if stored:
-        if full_name.casefold() in (name.casefold() for name in stored):
-            return ""
+        for name in stored:
+            if name.casefold() == full_name.casefold():
+                team.repo, team.repo_url = name, url.strip()
+                return ""
         return f"{team.name} already has the repo {stored[0]}, not {full_name}."
     if team.repo:
         if team.repo.casefold() == full_name.casefold():
@@ -796,16 +971,31 @@ def _repo_problem(team: PlannedTeam, existing, full_name: str, url: str, row: in
     return ""
 
 
-def _student_problem(project, student: PlannedStudent, team: PlannedTeam, seen_logins) -> str:
+def _existing_accounts(project: Project, logins: list[str]) -> _ExistingAccounts:
+    """Load what's needed about these GitHub logins in a few queries, however many there are."""
+    wanted = {login.strip().lower() for login in logins if GITHUB_LOGIN.fullmatch(login.strip())}
+    users: dict[str, User] = {}
+    usernames: set[str] = set()
+    for batch in batched(wanted, ACCOUNT_LOOKUP_BATCH):
+        matches = User.objects.annotate(login_key=Lower("github_login")).filter(login_key__in=batch)
+        users.update((user.login_key, user) for user in matches)
+        taken = User.objects.annotate(name_key=Lower("username")).filter(name_key__in=batch)
+        usernames.update(taken.values_list("name_key", flat=True))
+    roles = dict(Enrollment.objects.filter(course=project.course_id).values_list("user_id", "role"))
+    teams = dict(TeamMembership.objects.filter(team__project=project).values_list("user_id", "team__name"))
+    return _ExistingAccounts(users, usernames, roles, teams)
+
+
+def _student_problem(accounts: _ExistingAccounts, student: PlannedStudent, team: PlannedTeam, seen_logins) -> str:
     """Set the student's status from what already exists, or return what's wrong."""
     login = student.github_login
     if login.casefold() in seen_logins:
         return f"{login} is listed twice (first on row {seen_logins[login.casefold()]})."
     seen_logins[login.casefold()] = student.row
 
-    user = User.objects.filter(github_login__iexact=login).first()
+    user = accounts.users.get(login.lower())
     if user is None:
-        if User.objects.filter(username__iexact=login).exists():
+        if login.lower() in accounts.usernames:
             return (
                 f"The username {login} is already taken by a different account. Change that "
                 "account's username or GitHub username in the admin."
@@ -813,31 +1003,56 @@ def _student_problem(project, student: PlannedStudent, team: PlannedTeam, seen_l
         student.status = "new"
         return ""
 
-    enrollment = Enrollment.objects.filter(user=user, course=project.course).first()
-    if enrollment and enrollment.role != Enrollment.Role.STUDENT:
-        role = "an instructor" if enrollment.role == Enrollment.Role.INSTRUCTOR else "a TA"
-        return f"{login} is {role} in this course, so they can't be added to a team."
-    membership = TeamMembership.objects.filter(user=user, team__project=project).select_related("team").first()
-    if membership and membership.team.name.casefold() != team.name.casefold():
-        return f"{login} is already on {membership.team.name} in this project."
-    student.status = "on_team" if membership else "existing"
-    if user.get_full_name() != student.name:
-        student.note = (
-            f'Uses the existing account, named "{user.get_full_name()}" '
-            f'(the file says "{student.name}").'
-        )
+    role = accounts.roles.get(user.pk)
+    if role and role != Enrollment.Role.STUDENT:
+        role_name = "an instructor" if role == Enrollment.Role.INSTRUCTOR else "a TA"
+        return f"{login} is {role_name} in this course, so they can't be added to a team."
+    current_team = accounts.teams.get(user.pk)
+    if current_team and current_team.casefold() != team.name.casefold():
+        return f"{login} is already on {current_team} in this project."
+    student.status = "on_team" if current_team else "existing"
+    student.note = " ".join(_existing_account_notes(user, student))
     return ""
 
 
-def _unreadable_repos(repo_rows) -> list[RowError]:
-    """One GitHub check per distinct new repo, as a RowError on the first row that names it."""
-    errors = []
-    for full_name, row in repo_rows.values():
+def _existing_account_notes(user: User, student: PlannedStudent) -> list[str]:
+    """What in the file won't take effect, because an existing account is used as it is."""
+    notes = []
+    if user.get_full_name() != student.name:
+        notes.append(
+            f'Uses the existing account, named "{user.get_full_name()}" '
+            f'(the file says "{student.name}").'
+        )
+    if student.email and student.email.casefold() != user.email.casefold():
+        # Doesn't show the account's own email, since it may belong to another course's student.
+        notes.append(f"{student.email} isn't saved: this account keeps its current email.")
+    return notes
+
+
+def _unreadable_repos(repo_rows, checked_repos) -> dict[str, RowError]:
+    """One GitHub check per distinct new repo not already checked, as a RowError on the first
+    row that names it. Keyed by the repo's casefolded full name."""
+    errors = {}
+    for key, (full_name, row) in repo_rows.items():
+        if key in checked_repos:
+            continue
         try:
             _check_repo_is_readable(Repo(full_name=full_name))
         except ProjectSetupError as error:
-            errors.append(RowError(row, str(error)))
+            errors[key] = RowError(row, str(error))
     return errors
+
+
+def _mark_unreadable_repos(teams, students_by_row, unreadable: dict[str, RowError]) -> None:
+    """Show each failed repo's error on every team naming it and on the row that reports it."""
+    for team in teams:
+        error = unreadable.get(team.repo.casefold()) if team.repo_is_new else None
+        if error:
+            team.repo_error_row = error.row
+    for error in unreadable.values():
+        student = students_by_row[error.row]
+        student.status = "error"
+        student.note = f"{student.note} {error.message}".strip()
 
 
 # --- Temporary passwords in bulk (US-44, #127) ---

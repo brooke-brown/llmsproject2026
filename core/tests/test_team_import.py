@@ -8,6 +8,8 @@ Every student here is made up.
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from github import UnknownObjectException
 
 from core.models import Enrollment, Repo, Team, TeamMembership
@@ -104,6 +106,73 @@ class ReadingTests(TeamSetupFixture):
 
         with self.assertRaisesMessage(TeamImportError, "1 MB"):
             plan(self.project, HEADER + "\n" + "x" * (1024 * 1024))
+
+    def test_a_row_with_more_cells_than_the_header_is_an_error(self):
+        result = plan(
+            self.project, "team,name,github_login\nTeam Gamma,Smith, John,jsmith\n"
+        )
+        self.assertEqual([e.row for e in result.errors], [2])
+        self.assertIn("more cells", messages(result)[0])
+        self.assertIn("quotes", messages(result)[0])
+        self.assertEqual(result.teams[0].students[0].status, "error")
+
+    def test_a_row_with_more_cells_than_the_header_is_not_imported(self):
+        from core.services import TeamImportError
+
+        with self.assertRaises(TeamImportError):
+            do_import(self.project, "team,name,github_login\nTeam Gamma,Smith, John,jsmith\n")
+        self.assertFalse(User.objects.filter(github_login__iexact="John").exists())
+
+    def test_a_row_with_extra_cells_reports_only_that(self):
+        # Its cells are shifted, so "John Q" isn't really a username to complain about.
+        result = plan(self.project, "team,name,github_login\nTeam Gamma,Smith, John Q,jsmith\n")
+        self.assertEqual(len(result.errors), 1)
+
+    def test_a_row_with_extra_cells_does_not_claim_the_shifted_username(self):
+        result = plan(
+            self.project,
+            "team,name,github_login\nTeam Gamma,Smith, John,jsmith\nTeam Gamma,John Real,John\n",
+        )
+        self.assertEqual([e.row for e in result.errors], [2])
+
+    def test_a_shifted_repo_cell_is_not_used(self):
+        result = plan(
+            self.project,
+            f"{HEADER}\nTeam Gamma,Smith, John,jsmith,,https://github.com/acme/shifted\n",
+        )
+        self.assertEqual([e.row for e in result.errors], [2])
+        self.assertEqual(result.teams[0].repo, "")
+        self.get_repo.assert_not_called()
+
+    def test_trailing_blank_cells_past_the_header_are_fine(self):
+        result = plan(self.project, csv_text("Team Gamma,Ada Lovelace,ada-dev,,,,  ,"))
+        self.assertEqual(result.errors, [])
+
+    def test_a_file_with_bare_carriage_returns_works(self):
+        from core.services import read_team_csv
+
+        data = csv_text("Team Gamma,Ada Lovelace,ada-dev,,", "Team Gamma,Bo Byte,-bad-,,")
+        result = plan(self.project, read_team_csv(data.replace("\n", "\r").encode("utf-8")))
+        self.assertEqual([s.name for s in result.teams[0].students], ["Ada Lovelace", "Bo Byte"])
+        self.assertEqual([e.row for e in result.errors], [3])
+
+    def test_a_file_at_the_limit_still_fits_once_a_browser_doubles_its_newlines(self):
+        from core.services import MAX_TEAM_CSV_BYTES, read_team_csv
+
+        start = csv_text("Team Gamma,Ada Lovelace,ada-dev,,")
+        data = (start + "\n" * (MAX_TEAM_CSV_BYTES - len(start))).encode("utf-8")
+        text = read_team_csv(data)
+        # What the hidden textarea sends back: every newline becomes CRLF.
+        self.assertEqual(plan(self.project, text.replace("\n", "\r\n")).errors, [])
+
+    def test_a_windows_1252_file_at_the_limit_is_not_rejected_for_growing_in_utf_8(self):
+        from core.services import MAX_TEAM_CSV_BYTES, read_team_csv
+
+        start = csv_text("Team Gamma,José Núñez,jose-dev,,").encode("cp1252")
+        # Lines of non-breaking spaces count as blank, and each byte is two in UTF-8.
+        line = b"\xa0" * 99 + b"\n"
+        data = start + line * ((MAX_TEAM_CSV_BYTES - len(start)) // len(line))
+        self.assertEqual(plan(self.project, read_team_csv(data)).errors, [])
 
 
 class PreviewTests(TeamSetupFixture):
@@ -258,6 +327,132 @@ class PreviewTests(TeamSetupFixture):
         result = plan(self.project, csv_text("Team Beta,Cy Code,cy-dev,,https://github.com/acme/beta"))
         self.assertEqual(result.errors, [])
         self.assertTrue(result.teams[0].repo_is_new)
+
+    def test_a_repo_the_team_already_has_is_shown_as_already_there(self):
+        result = plan(self.project, csv_text("Team Alpha,Cy Code,cy-dev,,https://github.com/ACME/existing"))
+        (team,) = result.teams
+        self.assertEqual((team.repo, team.repo_is_new), ("acme/existing", False))
+        self.get_repo.assert_not_called()
+
+    def test_an_existing_team_name_with_a_double_space_matches(self):
+        spaced = Team.objects.create(project=self.project, name="Team  Spaced")
+        for name in ("Team  Spaced", "team spaced"):
+            result = plan(self.project, csv_text(f"{name},Cy Code,cy-dev,,"))
+            self.assertEqual(result.errors, [], name)
+            self.assertEqual((result.teams[0].name, result.teams[0].is_new), (spaced.name, False), name)
+
+    def test_a_member_of_a_team_with_a_double_space_is_already_there(self):
+        spaced = Team.objects.create(project=self.project, name="Team  Spaced")
+        member = make_user("spaced-student", "Sam", "Spaced")
+        enroll(member, self.course, Enrollment.Role.STUDENT)
+        TeamMembership.objects.create(user=member, team=spaced)
+        result = plan(self.project, csv_text("Team  Spaced,Sam Spaced,spaced-student,,"))
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.teams[0].students[0].status, "on_team")
+
+    def test_importing_into_a_team_with_a_double_space_creates_no_new_team(self):
+        Team.objects.create(project=self.project, name="Team  Spaced")
+        result = do_import(self.project, csv_text("Team  Spaced,Cy Code,cy-dev,,"))
+        self.assertEqual(result.teams, 0)
+        self.assertEqual(TeamMembership.objects.get(user__github_login="cy-dev").team.name, "Team  Spaced")
+
+    def test_an_email_an_existing_account_will_not_take_is_noted(self):
+        result = plan(self.project, csv_text("Team Alpha,Grace Example,sample-grace,grace@new.example,"))
+        student = result.teams[0].students[0]
+        self.assertIn("grace@new.example", student.note)
+        self.assertIn("isn't saved", student.note)
+
+    def test_the_email_and_name_notes_can_both_appear(self):
+        result = plan(self.project, csv_text("Team Alpha,Gracie E.,sample-grace,grace@new.example,"))
+        note = result.teams[0].students[0].note
+        self.assertIn("Grace Example", note)
+        self.assertIn("grace@new.example", note)
+
+    def test_a_matching_or_blank_email_gets_no_note(self):
+        User.objects.filter(pk=self.grace.pk).update(email="grace@example.com")
+        for email in ("GRACE@example.com", ""):
+            result = plan(self.project, csv_text(f"Team Alpha,Grace Example,sample-grace,{email},"))
+            self.assertEqual(result.teams[0].students[0].note, "", email)
+
+    def test_the_note_does_not_show_the_accounts_own_email(self):
+        User.objects.filter(pk=self.grace.pk).update(email="private@example.com")
+        result = plan(self.project, csv_text("Team Alpha,Grace Example,sample-grace,grace@new.example,"))
+        self.assertNotIn("private@example.com", result.teams[0].students[0].note)
+
+    def test_a_new_account_has_no_email_note(self):
+        result = plan(self.project, csv_text("Team Gamma,Ada Lovelace,ada-dev,ada@example.com,"))
+        self.assertEqual(result.teams[0].students[0].note, "")
+
+    def test_an_unreadable_repo_marks_its_row_and_its_team(self):
+        self.get_repo.side_effect = UnknownObjectException(404, {"message": "Not Found"}, {})
+        result = plan(
+            self.project,
+            csv_text(
+                "Team Gamma,Ada Lovelace,ada-dev,,https://github.com/acme/private",
+                "Team Gamma,Bo Byte,bo-dev,,",
+            ),
+        )
+        (team,) = result.teams
+        self.assertEqual([s.status for s in team.students], ["error", "new"])
+        self.assertEqual(team.repo_error_row, 2)
+
+    def test_every_team_naming_an_unreadable_repo_is_marked(self):
+        self.get_repo.side_effect = UnknownObjectException(404, {"message": "Not Found"}, {})
+        url = "https://github.com/acme/private"
+        result = plan(
+            self.project,
+            csv_text(f"Team Gamma,Ada Lovelace,ada-dev,,{url}", f"Team Delta,Bo Byte,bo-dev,,{url}"),
+        )
+        self.assertEqual([team.repo_error_row for team in result.teams], [2, 2])
+        self.assertEqual(self.get_repo.call_count, 1)
+
+    def test_a_readable_repo_marks_nothing(self):
+        result = plan(self.project, csv_text("Team Gamma,Ada Lovelace,ada-dev,,https://github.com/acme/fine"))
+        self.assertIsNone(result.teams[0].repo_error_row)
+
+    def test_repos_already_checked_are_not_checked_again(self):
+        from core.services import plan_team_import
+
+        text = csv_text(
+            "Team Gamma,Ada Lovelace,ada-dev,,https://github.com/ACME/one",
+            "Team Delta,Bo Byte,bo-dev,,https://github.com/acme/two",
+        )
+        result = plan_team_import(self.project, text, checked_repos={"acme/one"})
+        self.assertEqual(result.errors, [])
+        self.get_repo.assert_called_once_with("acme/two")
+        self.assertEqual(result.checked_repos, {"acme/one", "acme/two"})
+
+    def test_a_repo_that_fails_its_check_is_not_listed_as_checked(self):
+        self.get_repo.side_effect = UnknownObjectException(404, {"message": "Not Found"}, {})
+        result = plan(self.project, csv_text("Team Gamma,Ada Lovelace,ada-dev,,https://github.com/acme/private"))
+        self.assertEqual(result.checked_repos, set())
+
+    def test_the_number_of_queries_does_not_grow_with_the_rows(self):
+        def queries_for(count):
+            rows = ["Team Alpha,Grace Example,sample-grace,,"]
+            rows += [f"Team Gamma,Student Number{n},student-{n},," for n in range(count)]
+            with CaptureQueriesContext(connection) as queries:
+                self.assertEqual(plan(self.project, csv_text(*rows)).errors, [])
+            return len(queries)
+
+        self.assertEqual(queries_for(2), queries_for(40))
+
+    def test_existing_accounts_are_matched_regardless_of_case(self):
+        result = plan(self.project, csv_text("Team Alpha,Grace Example,SAMPLE-GRACE,,"))
+        self.assertEqual(result.teams[0].students[0].status, "on_team")
+
+    def test_a_username_taken_in_another_case_is_still_an_error(self):
+        make_user("taken-name")
+        User.objects.filter(username="taken-name").update(github_login="someone-else")
+        result = plan(self.project, csv_text("Team Gamma,Ada Lovelace,TAKEN-name,,"))
+        self.assertEqual([e.row for e in result.errors], [2])
+
+    def test_more_rows_than_one_lookup_can_hold_are_all_matched(self):
+        rows = [f"Team Gamma,Student Number{n},student-{n},," for n in range(1200)]
+        rows.append("Team Alpha,Grace Example,sample-grace,,")
+        statuses = [s.status for team in plan(self.project, csv_text(*rows)).teams for s in team.students]
+        self.assertEqual(statuses.count("new"), 1200)
+        self.assertEqual(statuses.count("on_team"), 1)
 
 
 class ImportTests(TeamSetupFixture):

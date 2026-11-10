@@ -7,6 +7,12 @@ app_name = "dashboard"
 urlpatterns = [
     path("", views.home, name="home"),
     path("student/", views.student_home, name="student_home"),
+    # Keyed on what a recomputed flag keeps, not Flag.pk, which changes on every run.
+    path(
+        "teams/<int:team_id>/flags/<slug:rule>/<str:week>/dispute/",
+        views.flag_dispute,
+        name="flag_dispute",
+    ),
     path("courses/<int:course_id>/", views.course_overview, name="course_overview"),
     path(
         "courses/<int:course_id>/generating/",
@@ -62,6 +68,25 @@ urlpatterns = [
         "projects/<int:project_id>/teams/import/confirm/",
         views.team_import_confirm,
         name="team_import_confirm",
+    ),
+    path("projects/<int:project_id>/sprints/new/", views.sprint_create, name="sprint_create"),
+    path("sprints/<int:sprint_id>/", views.sprint, name="sprint"),
+    path("sprints/<int:sprint_id>/edit/", views.sprint_edit, name="sprint_edit"),
+    path("sprints/<int:sprint_id>/delete/", views.sprint_delete, name="sprint_delete"),
+    path(
+        "sprints/<int:sprint_id>/requirements/import/",
+        views.sprint_requirements_import,
+        name="sprint_requirements_import",
+    ),
+    path(
+        "sprints/<int:sprint_id>/requirements/add/",
+        views.sprint_requirement_add,
+        name="sprint_requirement_add",
+    ),
+    path(
+        "sprints/<int:sprint_id>/requirements/copy/",
+        views.sprint_requirements_copy,
+        name="sprint_requirements_copy",
     ),
     path("projects/<int:project_id>/passwords/", views.passwords, name="passwords"),
     path(

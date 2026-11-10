@@ -144,22 +144,6 @@ class ProjectSetupPageTests(SetupUiFixture):
     def test_it_says_when_the_project_has_no_teams(self):
         self.assertContains(self.page(self.other_project), "No teams yet")
 
-    def test_it_links_to_add_requirements_when_there_are_none(self):
-        response = self.page()
-
-        self.assertContains(response, f'href="{requirements_url(self.project.id)}"')
-        self.assertContains(response, "Add requirements")
-        self.assertContains(response, "No requirements yet")
-
-    def test_it_counts_requirements_and_links_to_edit_them(self):
-        Requirement.objects.create(project=self.project, number=1, text="Log in")
-        Requirement.objects.create(project=self.project, number=2, text="Log out")
-
-        response = self.page()
-
-        self.assertContains(response, "2 requirements")
-        self.assertContains(response, "Edit requirements")
-
     def test_it_links_back_to_the_course(self):
         self.assertContains(self.page(), f'href="{overview_url(self.course.id)}"')
 
