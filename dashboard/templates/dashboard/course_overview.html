@@ -16,10 +16,10 @@
   </div>
   <div class="layout">
     <div>
-      {% if project.teams.all %}
+      {% if project.ranked_teams %}
       <h2>Teams</h2>
       <div class="cards">
-        {% for team in project.teams.all %}
+        {% for team in project.ranked_teams %}
         <article class="card{% if team.flag_rank == 0 %} flag{% elif team.flag_rank == 1 %} warn{% endif %}">
           <div class="row">
             <h3><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></h3>

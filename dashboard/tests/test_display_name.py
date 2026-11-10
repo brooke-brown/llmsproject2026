@@ -16,7 +16,9 @@ from dashboard.services import SummaryFailure, TeamGeneration
 from summaries.models import Summary
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
-from .test_flag_rules import WEEK, give
+from .sprint_helpers import give, sprint_for
+
+WEEK = date(2026, 10, 26)
 from .test_summary_page import summary_url
 
 Role = Enrollment.Role
@@ -179,7 +181,10 @@ class FlagReasonNameTests(DisplayNameFixture):
         give(self.first_only, self.team, "major", "major", "major", "major")
         give(self.last_only, self.team, "minor")
         give(self.nameless, self.team, "minor")
-        return {flag.user.id: flag.reason for flag in flags.low_requirement_share(self.team)}
+        return {
+            flag.user.id: flag.reason
+            for flag in flags.low_requirement_share(self.team, sprint_for(self.team.project))
+        }
 
     def test_a_flag_reason_names_a_student_by_their_name(self):
         reason = self.reasons()[self.last_only.id]

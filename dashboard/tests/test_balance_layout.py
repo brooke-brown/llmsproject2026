@@ -16,6 +16,8 @@ from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag
 from summaries.models import Claim, Summary
 
+from .sprint_helpers import flaggable_sprint, sprint_for
+
 WEEK = date(2026, 10, 26)
 EARLIER_WEEK = date(2026, 10, 19)
 
@@ -78,8 +80,14 @@ class CoursePickerTests(BalanceFixture):
         other = Course.objects.create(name="CS 3240, Fall 2026")
         Enrollment.objects.create(user=self.instructor, course=other, role="ta")
         beta = Team.objects.create(project=self.project, name="Team Beta")
-        Flag.objects.create(team=self.alpha, rule="r", reason="x", severity="flag", week_start=WEEK)
-        Flag.objects.create(team=beta, rule="r", reason="x", severity="warning", week_start=WEEK)
+        TeamMembership.objects.create(user=make_user("sample-beta"), team=beta)
+        Flag.objects.create(
+            team=self.alpha, rule="r", reason="x", severity="flag",
+            sprint=flaggable_sprint(self.alpha),
+        )
+        Flag.objects.create(
+            team=beta, rule="r", reason="x", severity="warning", sprint=flaggable_sprint(beta)
+        )
         Team.objects.create(project=Project.objects.create(course=other, name="P"), name="T1")
 
         content = self.get("home")
@@ -92,7 +100,10 @@ class CoursePickerTests(BalanceFixture):
         other = Course.objects.create(name="CS 3240, Fall 2026")
         Enrollment.objects.create(user=self.instructor, course=other, role="ta")
         for severity in ("flag", "warning"):
-            Flag.objects.create(team=self.alpha, rule="r", reason="x", severity=severity, week_start=WEEK)
+            Flag.objects.create(
+                team=self.alpha, rule="r", reason="x", severity=severity,
+                sprint=flaggable_sprint(self.alpha),
+            )
 
         content = self.get("home")
 
@@ -157,13 +168,17 @@ class TeamPageTests(BalanceFixture):
         self.assertNotIn('class="tag', self.get("team", self.alpha.id))  # Nothing generated yet.
         self.summary(self.ada)
         self.assertIn('<span class="tag ok">No flags</span>', self.get("team", self.alpha.id))
-        Flag.objects.create(team=self.alpha, rule="r", reason="x", severity="flag", week_start=WEEK)
+        Flag.objects.create(
+            team=self.alpha, rule="r", reason="x", severity="flag",
+            sprint=flaggable_sprint(self.alpha),
+        )
         self.assertIn('<span class="tag flag">Flag</span>', self.get("team", self.alpha.id))
 
     def give_shares(self):
-        # Ada 3 of 4 points and Grace 1 of 4, in a week both have a summary for.
-        make_claim(self.summary(self.ada), "major")
-        make_claim(self.summary(self.grace), "minor")
+        # Ada 3 of 4 points and Grace 1 of 4, in a sprint both have a summary for.
+        sprint = sprint_for(self.project)
+        make_claim(Summary.objects.create(team=self.alpha, user=self.ada, sprint=sprint), "major")
+        make_claim(Summary.objects.create(team=self.alpha, user=self.grace, sprint=sprint), "minor")
 
     def test_the_chart_shows_each_students_share_and_the_equal_share(self):
         self.give_shares()
@@ -190,7 +205,10 @@ class TeamPageTests(BalanceFixture):
 
     def test_a_flagged_students_slice_is_red(self):
         self.give_shares()
-        Flag.objects.create(team=self.alpha, user=self.grace, rule="r", reason="x", severity="flag", week_start=WEEK)
+        Flag.objects.create(
+            team=self.alpha, user=self.grace, rule="r", reason="x", severity="flag",
+            sprint=sprint_for(self.project),
+        )
 
         self.assertIn("fill: var(--flag)", self.get("team", self.alpha.id))
 

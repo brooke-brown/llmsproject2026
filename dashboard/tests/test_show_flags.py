@@ -1,11 +1,10 @@
 """Tests for US-20 (#62): see flagged teams first.
 
 Pages read stored Flag rows, so these tests create flags directly instead of running
-the rules. Each team and each student is rendered in its own <article>, so the
+the rules. A flag belongs to a finished sprint every student has a complete summary for (US-41),
+so make_flag sets that up too. Each team and each student is rendered in its own <article>, so the
 tests check what appears inside a given team's or student's article.
 """
-
-from datetime import date
 
 from django.test import TestCase
 from django.utils.html import escape
@@ -13,11 +12,11 @@ from django.utils.html import escape
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag
 
+from .sprint_helpers import flaggable_sprint
 from .test_course_overview import enroll, make_user, overview_url, team_url
 
 Role = Enrollment.Role
 Severity = Flag.Severity
-WEEK = date(2026, 10, 26)
 
 
 def make_flag(team, severity, reason, user=None):
@@ -27,7 +26,7 @@ def make_flag(team, severity, reason, user=None):
         rule="low-requirement-share",
         reason=reason,
         severity=severity,
-        week_start=WEEK,
+        sprint=flaggable_sprint(team),
     )
 
 
@@ -55,6 +54,11 @@ class ShowFlagsFixture(TestCase):
         for student in [cls.ada, cls.grace]:
             enroll(student, cls.course, Role.STUDENT)
             TeamMembership.objects.create(user=student, team=cls.alpha)
+        # Only a team with students can raise flags.
+        for team in [cls.beta, cls.charlie, cls.delta]:
+            student = make_user(f"sample-{team.name.split()[-1].lower()}")
+            enroll(student, cls.course, Role.STUDENT)
+            TeamMembership.objects.create(user=student, team=team)
 
     def get_overview(self):
         self.client.force_login(self.instructor)
@@ -100,6 +104,7 @@ class OverviewOrderTests(ShowFlagsFixture):
     def test_teams_are_ordered_within_their_own_project(self):
         project_two = Project.objects.create(course=self.course, name="Project Two")
         flagged_later = Team.objects.create(project=project_two, name="Team Aardvark")
+        TeamMembership.objects.create(user=self.ada, team=flagged_later)
         make_flag(flagged_later, Severity.FLAG, "Aardvark reason")
 
         content = self.get_overview()

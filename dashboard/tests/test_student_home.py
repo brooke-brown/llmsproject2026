@@ -1,8 +1,8 @@
 """Tests for US-30 (#107): a student's home lists their projects and any flags about them.
 
-Not covered yet, because what they need isn't built: links to peer evaluations (US-37), the
-"Dispute" link (US-31), and flags labelled by sprint (US-41). Until US-41, a flag is labelled
-by its week. The link to offline contributions (US-33) is tested with that feature.
+Not covered yet, because what it needs isn't built: links to peer evaluations (US-37). The
+link to offline contributions (US-33) is tested with that feature. Flags are labelled by their
+sprint (US-41).
 
 URLs are reversed per test rather than at module level, so each criterion passes or fails
 on its own instead of the whole module failing on a single NoReverseMatch.
@@ -17,6 +17,7 @@ from django.utils.html import escape
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag, FlagDispute
 
+from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user
 
 Role = Enrollment.Role
@@ -26,23 +27,23 @@ def student_home_url():
     return reverse("dashboard:student_home")
 
 
-def make_flag(team, user, week_start, reason, severity=Flag.Severity.FLAG):
+def make_flag(team, user, sprint, reason, severity=Flag.Severity.FLAG):
     return Flag.objects.create(
         team=team,
         user=user,
         rule="low-requirement-share",
         reason=reason,
         severity=severity,
-        week_start=week_start,
+        sprint=sprint,
     )
 
 
-def make_dispute(team, student, week_start, flag_reason="Disputed reason.", **fields):
+def make_dispute(team, student, sprint, flag_reason="Disputed reason.", **fields):
     return FlagDispute.objects.create(
         team=team,
         student=student,
         rule="low-requirement-share",
-        week_start=week_start,
+        sprint=sprint,
         flag_reason=flag_reason,
         severity=Flag.Severity.FLAG,
         explanation="I paired on most of it.",
@@ -57,6 +58,10 @@ class StudentHomeFixture(TestCase):
         cls.project = Project.objects.create(course=cls.course, name="Project One")
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         cls.other_team = Team.objects.create(project=cls.project, name="Team Beta")
+        cls.sprint1 = sprint_for(cls.project, "Sprint 1")
+        cls.sprint2 = sprint_for(
+            cls.project, "Sprint 2", start=date(2026, 11, 2), end=date(2026, 11, 8)
+        )
 
         cls.student = make_user("sample-casey", "Casey", "Sample")
         cls.teammate = make_user("sample-riley", "Riley", "Sample")
@@ -116,17 +121,17 @@ class MyProjectsTests(StudentHomeFixture):
 
 
 class FlagsAboutMeTests(StudentHomeFixture):
-    def test_lists_my_flag_with_its_severity_week_and_reason(self):
-        reason = "Casey Sample did 10% of the team's requirement-tied work in the week of Nov 2."
-        make_flag(self.team, self.student, date(2026, 11, 2), reason)
+    def test_lists_my_flag_with_its_severity_sprint_and_reason(self):
+        reason = "Casey Sample did 10% of the team's requirement-tied work in Sprint 2."
+        make_flag(self.team, self.student, self.sprint2, reason)
         response = self.get_home()
         self.assertContains(response, escape(reason))
         self.assertContains(response, "Flag")
-        self.assertContains(response, "Week of Nov 2, 2026")
+        self.assertContains(response, "<small>Sprint 2</small>", html=False)
 
     def test_lists_warnings_too(self):
         make_flag(
-            self.team, self.student, date(2026, 11, 2), "A warning reason.",
+            self.team, self.student, self.sprint2, "A warning reason.",
             Flag.Severity.WARNING,
         )
         response = self.get_home()
@@ -134,19 +139,19 @@ class FlagsAboutMeTests(StudentHomeFixture):
         self.assertContains(response, "Warning")
 
     def test_newest_first(self):
-        make_flag(self.team, self.student, date(2026, 10, 26), "Older reason.")
-        make_flag(self.team, self.student, date(2026, 11, 2), "Newer reason.")
+        make_flag(self.team, self.student, self.sprint1, "Older reason.")
+        make_flag(self.team, self.student, self.sprint2, "Newer reason.")
         content = self.get_home().content.decode()
         self.assertLess(content.index("Newer reason."), content.index("Older reason."))
 
     def test_shows_my_disputes_status(self):
-        week = date(2026, 11, 2)
-        make_flag(self.team, self.student, week, "Disputed reason.")
+        sprint = self.sprint2
+        make_flag(self.team, self.student, sprint, "Disputed reason.")
         FlagDispute.objects.create(
             team=self.team,
             student=self.student,
             rule="low-requirement-share",
-            week_start=week,
+            sprint=sprint,
             flag_reason="Disputed reason.",
             severity=Flag.Severity.FLAG,
             explanation="I paired on most of it.",
@@ -157,28 +162,28 @@ class FlagsAboutMeTests(StudentHomeFixture):
         self.assertContains(response, "Flag kept")
 
     def test_a_withdrawn_flag_reads_as_instructors_see_it_without_its_reason(self):
-        week = date(2026, 11, 2)
-        make_flag(self.team, self.student, week, "Withdrawn reason.")
-        make_dispute(self.team, self.student, week, status=FlagDispute.Status.FLAG_WITHDRAWN)
+        sprint = self.sprint2
+        make_flag(self.team, self.student, sprint, "Withdrawn reason.")
+        make_dispute(self.team, self.student, sprint, status=FlagDispute.Status.FLAG_WITHDRAWN)
         response = self.get_home()
         self.assertContains(response, "Withdrawn after dispute")
-        self.assertContains(response, "Flag for the week of Nov 2, 2026")
+        self.assertContains(response, "Flag in Sprint 2")
         self.assertNotContains(response, "Withdrawn reason.")
 
     def test_a_withdrawn_flag_still_links_to_its_dispute(self):
-        week = date(2026, 11, 2)
-        flag = make_flag(self.team, self.student, week, "Withdrawn reason.")
-        make_dispute(self.team, self.student, week, status=FlagDispute.Status.FLAG_WITHDRAWN)
+        sprint = self.sprint2
+        flag = make_flag(self.team, self.student, sprint, "Withdrawn reason.")
+        make_dispute(self.team, self.student, sprint, status=FlagDispute.Status.FLAG_WITHDRAWN)
         self.assertContains(
             self.get_home(),
-            reverse("dashboard:flag_dispute", args=[flag.team_id, flag.rule, "2026-11-02"]),
+            reverse("dashboard:flag_dispute", args=[flag.team_id, flag.rule, self.sprint2.id]),
         )
 
     def test_shows_the_instructors_note_on_a_decided_dispute(self):
-        week = date(2026, 11, 2)
-        make_flag(self.team, self.student, week, "Kept reason.")
+        sprint = self.sprint2
+        make_flag(self.team, self.student, sprint, "Kept reason.")
         make_dispute(
-            self.team, self.student, week,
+            self.team, self.student, sprint,
             status=FlagDispute.Status.FLAG_KEPT,
             resolution_note="Your commits that week were all formatting.",
         )
@@ -187,23 +192,23 @@ class FlagsAboutMeTests(StudentHomeFixture):
         self.assertContains(response, "Your commits that week were all formatting.")
 
     def test_an_open_dispute_shows_no_note(self):
-        week = date(2026, 11, 2)
-        make_flag(self.team, self.student, week, "Open reason.")
-        make_dispute(self.team, self.student, week)
+        sprint = self.sprint2
+        make_flag(self.team, self.student, sprint, "Open reason.")
+        make_dispute(self.team, self.student, sprint)
         self.assertNotContains(self.get_home(), "Note from your instructor")
 
     def test_a_dispute_whose_flag_is_no_longer_raised_still_shows(self):
-        make_dispute(self.team, self.student, date(2026, 11, 2), flag_reason="Old reason.")
+        make_dispute(self.team, self.student, self.sprint2, flag_reason="Old reason.")
         response = self.get_home()
         self.assertContains(response, "Flag no longer raised")
-        self.assertContains(response, "Week of Nov 2, 2026")
+        self.assertContains(response, "<small>Sprint 2</small>", html=False)
         self.assertContains(response, "Old reason.")
         self.assertContains(response, "Disputed · Open")
         self.assertNotContains(response, "No flags about you")
 
     def test_an_unraised_decided_dispute_shows_its_note_and_hides_a_withdrawn_reason(self):
         make_dispute(
-            self.team, self.student, date(2026, 11, 2),
+            self.team, self.student, self.sprint2,
             flag_reason="Old reason.",
             status=FlagDispute.Status.FLAG_WITHDRAWN,
             resolution_note="Agreed, you paired on it.",
@@ -215,24 +220,24 @@ class FlagsAboutMeTests(StudentHomeFixture):
         self.assertContains(response, "Agreed, you paired on it.")
 
     def test_never_shows_a_teammates_unraised_dispute(self):
-        make_dispute(self.team, self.teammate, date(2026, 11, 2), flag_reason="Teammate's.")
+        make_dispute(self.team, self.teammate, self.sprint2, flag_reason="Teammate's.")
         response = self.get_home()
         self.assertNotContains(response, "Teammate&#x27;s.")
         self.assertNotContains(response, "Flag no longer raised")
         self.assertContains(response, "No flags about you")
 
     def test_never_shows_flags_about_teammates_or_the_whole_team(self):
-        week = date(2026, 11, 2)
-        make_flag(self.team, self.teammate, week, "About the teammate.")
-        make_flag(self.team, None, week, "About the whole team.")
-        make_flag(self.other_team, self.stranger, week, "About another team.")
+        sprint = self.sprint2
+        make_flag(self.team, self.teammate, sprint, "About the teammate.")
+        make_flag(self.team, None, sprint, "About the whole team.")
+        make_flag(self.other_team, self.stranger, sprint, "About another team.")
         response = self.get_home()
         self.assertNotContains(response, "About the teammate.")
         self.assertNotContains(response, "About the whole team.")
         self.assertNotContains(response, "About another team.")
 
     def test_a_student_with_no_flags_sees_no_flags_about_you(self):
-        make_flag(self.team, self.teammate, date(2026, 11, 2), "About the teammate.")
+        make_flag(self.team, self.teammate, self.sprint2, "About the teammate.")
         self.assertContains(self.get_home(), "No flags about you")
 
 
@@ -261,7 +266,7 @@ class StudentHomeAccessTests(StudentHomeFixture):
         project = Project.objects.create(course=other_course, name="Elsewhere Project")
         team = Team.objects.create(project=project, name="Team Elsewhere")
         TeamMembership.objects.create(user=self.student, team=team)
-        make_flag(team, self.student, date(2026, 11, 2), "Flag from elsewhere.")
+        make_flag(team, self.student, sprint_for(project), "Flag from elsewhere.")
         response = self.get_home()
         self.assertNotContains(response, "Elsewhere Project")
         self.assertNotContains(response, "Flag from elsewhere.")
