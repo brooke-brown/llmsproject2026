@@ -98,7 +98,7 @@ FlagDispute      → Team + student + rule + Sprint, replacing week_start
 - Reusing teams in a later project is a UI feature ("Copy teams from a previous project"), not a schema change.
 - **Roles live on `Enrollment`, never on `User`.** One person can be a TA in one course and a student in another.
 - **Every user has `User.github_login`.** It's how commits, PRs and reviews are matched to students.
-- **`User.must_change_password`** is set by a temporary password and cleared when the user changes it. Until then, middleware keeps them on the password change page.
+- **`User.must_change_password`** is set by a temporary password or a password set in the admin, and cleared when the user changes it. Until then, middleware keeps them on the password change page.
 - **A team has one repo**, enforced on the dashboard. `Repo` stays its own table and the admin isn't restricted, so code that reads a team's repos must still handle several.
 - Use the word **"Team"** everywhere (code, UI, issues), never "group."
 - Later, optional: `joined_at`/`left_at` on `TeamMembership` for students who switch or drop mid-project.
@@ -128,7 +128,7 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 
 **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
 
-**Student side:** student logins (#102, #106), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
+**Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
 
 **Later, with no issues yet:** polished per-requirement progress view, numeric diff checks, GitHub OAuth login, consent, background jobs, "paired with" detection.

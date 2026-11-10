@@ -12,6 +12,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from core import services
 from core.models import Course, Enrollment, Project, Team, TeamMembership
@@ -299,3 +300,114 @@ class MustChangePasswordAdminTests(TestCase):
         self.client.force_login(User.objects.create_superuser(username="root", github_login="root"))
         response = self.client.get(reverse("admin:core_user_change", args=[account.pk]))
         self.assertContains(response, 'name="must_change_password"')
+
+
+class AdminSetPasswordTests(TestCase):
+    """Whoever sets a password in the admin knows it, so the account has to replace it."""
+
+    def setUp(self):
+        self.client.force_login(
+            User.objects.create_superuser(username="sample-root", github_login="sample-root")
+        )
+
+    def change_password(self, account, **fields):
+        data = {
+            "usable_password": "true",
+            "password1": TEMPORARY_PASSWORD,
+            "password2": TEMPORARY_PASSWORD,
+        }
+        data.update(fields)
+        return self.client.post(
+            reverse("admin:auth_user_password_change", args=[account.pk]), data
+        )
+
+    def add_account(self, **fields):
+        data = {
+            "username": "sample-new",
+            "github_login": "sample-new",
+            "usable_password": "true",
+            "password1": TEMPORARY_PASSWORD,
+            "password2": TEMPORARY_PASSWORD,
+        }
+        data.update(fields)
+        return self.client.post(reverse("admin:core_user_add"), data)
+
+    def stored(self, login):
+        return User.objects.get(github_login=login)
+
+    def test_changing_a_password_requires_a_change_at_next_login(self):
+        account = make_user("sample-ta")
+
+        response = self.change_password(account)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(self.stored("sample-ta").check_password(TEMPORARY_PASSWORD))
+        self.assertIs(self.stored("sample-ta").must_change_password, True)
+
+    def test_a_refused_change_leaves_the_account_alone(self):
+        account = make_user("sample-ta")
+
+        response = self.change_password(account, password2="something-Else-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.stored("sample-ta").check_password(OLD_PASSWORD))
+        self.assertIs(self.stored("sample-ta").must_change_password, False)
+
+    def test_disabling_a_password_requires_no_change(self):
+        """Nobody can log in to change it."""
+        account = make_user("sample-ta", must_change_password=True)
+
+        self.change_password(
+            account,
+            **{"usable_password": "false", "password1": "", "password2": "", "unset-password": "1"},
+        )
+
+        self.assertFalse(self.stored("sample-ta").has_usable_password())
+        self.assertIs(self.stored("sample-ta").must_change_password, False)
+
+    def test_a_new_account_with_a_password_must_change_it(self):
+        response = self.add_account()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(self.stored("sample-new").check_password(TEMPORARY_PASSWORD))
+        self.assertIs(self.stored("sample-new").must_change_password, True)
+
+    def test_a_new_account_with_no_password_requires_no_change(self):
+        self.add_account(usable_password="false", password1="", password2="")
+
+        self.assertFalse(self.stored("sample-new").has_usable_password())
+        self.assertIs(self.stored("sample-new").must_change_password, False)
+
+
+class WhitespacePasswordServiceTests(TestCase):
+    def test_a_password_of_only_whitespace_is_refused(self):
+        account = make_user("sample-casey")
+
+        with self.assertRaises(services.ProjectSetupError) as caught:
+            services.set_temporary_password(account, "            ")
+
+        self.assertIn("only spaces", str(caught.exception))
+        self.assertTrue(User.objects.get(pk=account.pk).check_password(OLD_PASSWORD))
+
+
+class HasSetOwnPasswordTests(TestCase):
+    def test_true_once_they_have_logged_in_with_no_change_pending(self):
+        account = make_user("sample-casey", last_login=timezone.now())
+
+        self.assertIs(account.has_set_own_password, True)
+
+    def test_false_if_they_have_never_logged_in(self):
+        self.assertIs(make_user("sample-casey").has_set_own_password, False)
+
+    def test_false_while_a_change_is_pending(self):
+        account = make_user(
+            "sample-casey", last_login=timezone.now(), must_change_password=True
+        )
+
+        self.assertIs(account.has_set_own_password, False)
+
+    def test_false_with_no_usable_password(self):
+        account = make_user("sample-casey", last_login=timezone.now())
+        account.set_unusable_password()
+
+        self.assertIs(account.has_set_own_password, False)

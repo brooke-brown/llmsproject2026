@@ -343,14 +343,23 @@ def team_create(request, project_id):
 
 
 def _change_team(request, team_id, success, change, *args):
-    """Run a change, say how it went, and return to the team page."""
+    """Run a change, say how it went, and return to the team page. `success` is a message, or
+    a function making one from what the change returned."""
     try:
-        change(*args)
+        result = change(*args)
     except setup.ProjectSetupError as error:
         messages.error(request, str(error))
     else:
-        messages.success(request, success)
+        messages.success(request, success(result) if callable(success) else success)
     return redirect("dashboard:team", team_id=team_id)
+
+
+def _login_note(student, password):
+    """Which username to share with a password, when it isn't the GitHub one pages tell
+    students to use. Only an older account can differ."""
+    if password and student.username != student.github_login:
+        return f" They log in with the username {student.username}, not their GitHub username."
+    return ""
 
 
 @login_required
@@ -376,15 +385,22 @@ def team_delete(request, team_id):
 def student_add(request, team_id):
     team = services.get_team_for_instructor(request.user, team_id)
     github_login = request.POST.get("github_login", "")
+    password = request.POST.get("temporary_password", "")
     return _change_team(
         request,
         team.id,
-        f"Added {github_login.strip()} to {team.name}.",
+        lambda student: (
+            f"Added {github_login.strip()} to {team.name}"
+            f"{' with a temporary password' if password else ''}."
+            f"{_login_note(student, password)}"
+        ),
         setup.add_student,
         team,
         request.POST.get("full_name", ""),
         github_login,
         request.POST.get("email", ""),
+        password,
+        request.user,
     )
 
 
@@ -392,13 +408,19 @@ def student_add(request, team_id):
 @require_POST
 def membership_edit(request, membership_id):
     membership = services.get_membership_for_instructor(request.user, membership_id)
+    password = request.POST.get("temporary_password", "")
     return _change_team(
         request,
         membership.team_id,
-        "Updated the student's name.",
+        lambda student: (
+            f"Updated the student's name{' and temporary password' if password else ''}."
+            f"{_login_note(student, password)}"
+        ),
         setup.edit_student,
         membership.user,
         request.POST.get("full_name", ""),
+        password,
+        request.user,
     )
 
 
