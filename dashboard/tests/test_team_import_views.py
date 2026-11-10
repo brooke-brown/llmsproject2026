@@ -3,10 +3,17 @@
 These drive the real pages. GitHub is mocked, and every student is made up.
 """
 
+import tempfile
+import time
+from pathlib import Path
+from unittest import mock
+
+import requests
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
+from github import UnknownObjectException
 
 from core.models import Enrollment, Repo, Team, TeamMembership
 
@@ -91,14 +98,34 @@ class PreviewPageTests(TeamSetupFixture):
         self.assertRegex(page.content.decode(), r"<button[^>]*\bdisabled")
 
     def test_the_csv_travels_in_the_confirm_form_and_is_not_saved_to_disk(self):
-        import tempfile
-        from pathlib import Path
-
-        before = set(Path(tempfile.gettempdir()).glob("*"))
-        page = self.preview()
+        with tempfile.TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
+            page = self.preview()
+            self.assertEqual(list(Path(media).rglob("*")), [])
         self.assertContains(page, 'name="csv"')
         self.assertContains(page, "Ada Lovelace")
-        self.assertEqual(set(Path(tempfile.gettempdir()).glob("*")), before)
+
+    def test_the_confirm_form_is_multipart_so_punctuation_is_not_percent_encoded(self):
+        # Form encoding can triple a comma-heavy file, past Django's 2.5 MB limit on a POST.
+        self.assertRegex(
+            self.preview().content.decode(),
+            r'<form action="[^"]*/confirm[^"]*" method="post" enctype="multipart/form-data">',
+        )
+
+    def test_a_repo_the_team_already_has_is_not_called_missing(self):
+        page = self.preview(f"{HEADER}\nTeam Alpha,Cy Code,cy-dev,,https://github.com/acme/existing\n")
+        self.assertContains(page, "acme/existing")
+        self.assertNotContains(page, "No repo given")
+
+    def test_an_email_the_account_will_not_take_is_noted(self):
+        page = self.preview(f"{HEADER}\nTeam Alpha,Grace Example,sample-grace,grace@new.example,\n")
+        self.assertContains(page, "isn&#x27;t saved")
+
+    def test_an_unreadable_repo_shows_no_success_tags_for_its_row(self):
+        self.get_repo.side_effect = UnknownObjectException(404, {"message": "Not Found"}, {})
+        page = self.preview(f"{HEADER}\nTeam Gamma,Ada Lovelace,ada-dev,,https://github.com/acme/private\n")
+        self.assertContains(page, "Row 2: error", count=2)  # The repo and the student.
+        self.assertNotContains(page, ">New<")
+        self.assertNotContains(page, "New student")
 
     def test_a_bad_file_is_rejected_with_a_message_on_the_upload_page(self):
         for data, expected in (
@@ -142,6 +169,46 @@ class ConfirmTests(TeamSetupFixture):
 
     def test_confirm_only_accepts_post(self):
         self.assertEqual(self.client.get(confirm_url(self.project.id)).status_code, 405)
+
+    def preview_token(self, text=GOOD):
+        page = self.client.post(import_url(self.project.id), upload(text))
+        self.assertContains(page, 'name="checked_repos"')
+        return page.context["checked_repos"]
+
+    def confirm_with(self, token, text=GOOD):
+        return self.client.post(
+            confirm_url(self.project.id), {"csv": text, "checked_repos": token}, follow=True
+        )
+
+    def test_a_repo_is_checked_once_across_preview_and_confirm(self):
+        self.confirm_with(self.preview_token())
+        self.assertEqual(self.get_repo.call_count, 1)
+        self.assertTrue(Repo.objects.filter(full_name="acme/gamma").exists())
+
+    def test_github_failing_after_a_clean_preview_does_not_fail_the_confirm(self):
+        token = self.preview_token()
+        self.get_repo.side_effect = requests.ConnectionError()
+        response = self.confirm_with(token)
+        self.assertEqual(page_messages(response), "Added 1 team, 3 students and 1 repo.")
+
+    def test_a_tampered_token_means_the_repo_is_checked_again(self):
+        self.confirm_with(self.preview_token() + "x")
+        self.assertEqual(self.get_repo.call_count, 2)
+        self.assertTrue(Repo.objects.filter(full_name="acme/gamma").exists())
+
+    def test_an_old_token_means_the_repo_is_checked_again(self):
+        with mock.patch("django.core.signing.time.time", return_value=time.time() - 3600):
+            token = self.preview_token()
+        self.confirm_with(token)
+        self.assertEqual(self.get_repo.call_count, 2)
+
+    def test_a_repo_the_preview_did_not_check_is_still_checked(self):
+        token = self.preview_token()
+        changed = GOOD.replace("acme/gamma", "acme/swapped")
+        self.get_repo.side_effect = UnknownObjectException(404, {"message": "Not Found"}, {})
+        response = self.confirm_with(token, changed)
+        self.assertContains(response, "Row 2")
+        self.assertFalse(Repo.objects.filter(full_name="acme/swapped").exists())
 
 
 class ImportAccessTests(TeamSetupFixture):
