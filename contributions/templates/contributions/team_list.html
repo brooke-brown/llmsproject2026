@@ -24,6 +24,7 @@
         {% else %}
         <form action="{% url 'contributions:confirm' contribution.pk %}" method="post">
           {% csrf_token %}
+          <input type="hidden" name="updated_at" value="{{ contribution.updated_at.isoformat }}">
           <button type="submit">I can confirm this</button>
         </form>
         {% endif %}

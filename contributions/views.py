@@ -101,14 +101,19 @@ def team_contribution_list(request, project_id):
 @login_required
 @require_POST
 def contribution_confirm(request, contribution_id):
-    contribution = services.get_teammates_contribution(request.user, contribution_id)
-    services.confirm_contribution(contribution, request.user)
+    contribution = services.get_team_contribution(request.user, contribution_id)
+    try:
+        services.confirm_contribution(
+            contribution, request.user, request.POST.get("updated_at", "")
+        )
+    except services.ContributionChanged:
+        messages.error(request, services.CHANGED_MESSAGE)
     return redirect("contributions:team_list", project_id=contribution.team.project_id)
 
 
 @login_required
 @require_POST
 def contribution_unconfirm(request, contribution_id):
-    contribution = services.get_teammates_contribution(request.user, contribution_id)
+    contribution = services.get_team_contribution(request.user, contribution_id)
     services.undo_confirmation(contribution, request.user)
     return redirect("contributions:team_list", project_id=contribution.team.project_id)
