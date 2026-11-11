@@ -227,12 +227,13 @@ def _average(values: list[int]) -> Decimal | None:
 
 
 def rating_summary(team: Team, evaluation: PeerEvaluation) -> list[StudentRatings]:
-    """Each student on the team, by name, with their teammates' ratings of them in the
-    evaluation. Only ratings between the team's current students count."""
+    """Each student on the team, by last name then first name, as in the team page's
+    summaries and pie legend, with their teammates' ratings of them in the evaluation. Only
+    ratings between the team's current students count."""
     students = [
         membership.user
         for membership in team.memberships.select_related("user").order_by(
-            "user__first_name", "user__last_name", "user__github_login"
+            "user__last_name", "user__first_name", "user__github_login"
         )
     ]
     by_id = {student.pk: student for student in students}

@@ -282,6 +282,13 @@ class SeparateFromEvidenceTests(ResultsFixture):
         self.assertLess(page.index("Summaries by student"), page.index('id="peer-title"'))
         self.assertLess(page.index('id="share-title"'), page.index('id="peer-title"'))
 
+    def test_students_are_in_the_same_order_as_the_summaries(self):
+        response = self.client.get(team_url(self.team.id))
+        summaries_order = [m.user for m in response.context["memberships"]]
+        peer_order = [row.user for row in response.context["peer_results"]]
+        self.assertEqual(peer_order, summaries_order)
+        self.assertEqual(peer_order, [self.quinn, self.sam, self.tara, self.riley])
+
     def test_ratings_never_change_shares_pie_or_flags(self):
         sprint = sprint_for(self.project)
         give(self.sam, self.team, "major", "major", sprint=sprint)
