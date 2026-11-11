@@ -70,6 +70,8 @@
     .bar { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding-block: 12px; font-size: 14px; }
     .bar .brand { display: inline-flex; gap: 8px; align-items: center; color: var(--ink); font-weight: 700; letter-spacing: .1em; }
     .bar .brand i, article.login .brand i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+    .bar .nav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+    .bar .nav a { color: var(--ink); font-weight: 600; }
     .bar .crumb { color: var(--muted); }
     .bar .crumb a { color: var(--muted); }
     .bar .crumb a:hover { color: var(--ink); }
@@ -323,12 +325,20 @@
   {% block topbar %}
   <header class="top">
     <div class="bar container">
-      <a class="brand" href="{% url 'dashboard:home' %}"><i></i>STRIVE</a>
+      {% if nav_restricted %}<span class="brand"><i></i>STRIVE</span>{% else %}<a class="brand" href="{% url 'dashboard:home' %}"><i></i>STRIVE</a>{% endif %}
+      {% if not nav_restricted %}
+      {% if nav_staff or nav_student %}
+      <nav class="nav" aria-label="Main">
+        {% if nav_staff %}<a href="{% url 'dashboard:home' %}">Courses</a>{% endif %}
+        {% if nav_student %}<a href="{% url 'dashboard:student_home' %}">My projects</a>{% endif %}
+      </nav>
+      {% endif %}
       {% block crumb %}{% endblock %}
+      {% endif %}
       {% if user.is_authenticated %}
       <span class="who">
-        {{ user.get_username }}
-        <a href="{% url 'password_change' %}">Change password</a>
+        {{ user.display_name }}
+        {% if not nav_restricted %}<a href="{% url 'password_change' %}">Change password</a>{% endif %}
         <form action="{% url 'logout' %}" method="post">
           {% csrf_token %}
           <button type="submit" class="secondary outline">Log out</button>
