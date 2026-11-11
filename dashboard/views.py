@@ -2,7 +2,7 @@ from django.contrib import messages
 from django.db.models import Count
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordChangeView, RedirectURLMixin
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
@@ -650,3 +650,76 @@ def sprint_requirements_copy(request, sprint_id):
         noun = ngettext("requirement", "requirements", count)
         messages.success(request, f"Copied {count} {noun} from {source.name}.")
     return destination
+
+
+def _render_team_import(request, project, error=""):
+    return render(request, "dashboard/team_import.html", {"project": project, "error": error})
+
+
+def _render_team_import_preview(request, project, text, plan):
+    return render(
+        request,
+        "dashboard/team_import_preview.html",
+        {
+            "project": project,
+            "csv": text,
+            "plan": plan,
+            "checked_repos": setup.sign_checked_repos(plan.checked_repos),
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def team_import(request, project_id):
+    """Upload a CSV and preview what importing it would do. Nothing is saved."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if request.method == "GET":
+        return _render_team_import(request, project)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return _render_team_import(request, project, "Choose a CSV file to upload.")
+    try:
+        # One byte past the limit is enough to tell the file is too big, without reading it all.
+        text = setup.read_team_csv(upload.read(setup.MAX_TEAM_CSV_BYTES + 1))
+        plan = setup.plan_team_import(project, text)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    return _render_team_import_preview(request, project, text, plan)
+
+
+@login_required
+@require_GET
+def team_import_template(request, project_id):
+    services.get_project_for_instructor(request.user, project_id)
+    response = HttpResponse(setup.TEAM_CSV_TEMPLATE, content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="strive-teams-template.csv"'
+    return response
+
+
+@login_required
+@require_POST
+def team_import_confirm(request, project_id):
+    """Recheck the CSV carried from the preview, then import it all or none of it."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    text = request.POST.get("csv", "")
+    try:
+        checked = setup.read_checked_repos(request.POST.get("checked_repos", ""))
+        plan = setup.plan_team_import(project, text, checked)
+        if not plan.ok:
+            return _render_team_import_preview(request, project, text, plan)
+        if plan.nothing_to_add:
+            messages.info(
+                request, "Nothing was imported: everything in this file is already in the project."
+            )
+            return redirect("dashboard:project_setup", project_id=project.id)
+        result = setup.run_team_import(project, plan)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    messages.success(
+        request,
+        f"Added {result.teams} {ngettext('team', 'teams', result.teams)}, "
+        f"{result.students} {ngettext('student', 'students', result.students)} and "
+        f"{result.repos} {ngettext('repo', 'repos', result.repos)}.",
+    )
+    return redirect("dashboard:project_setup", project_id=project.id)

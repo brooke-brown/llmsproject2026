@@ -1,0 +1,57 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Preview import · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' project.course_id %}">{{ project.course.name }}</a> / <a href="{% url 'dashboard:project_setup' project.id %}">{{ project.name }}</a> / <a href="{% url 'dashboard:team_import' project.id %}">Import teams</a> / Preview</span>{% endblock %}
+
+{% block content %}
+<div class="headrow"><h1>Preview import</h1></div>
+
+{% if plan.errors %}
+<section class="setup-panel">
+  <h2>{{ plan.errors|length }} problem{{ plan.errors|length|pluralize }} to fix</h2>
+  <p class="keynote">Fix these in the file and upload it again. Nothing was saved.</p>
+  {% for error in plan.errors %}
+  <p class="finding flag"><strong>Row {{ error.row }}</strong> {{ error.message }}</p>
+  {% endfor %}
+</section>
+{% elif plan.nothing_to_add %}
+<p class="keynote">Everything in this file is already in the project, so confirming changes nothing.</p>
+{% else %}
+<p class="keynote">Nothing is saved until you confirm.</p>
+{% endif %}
+
+{% for team in plan.teams %}
+<section class="setup-panel">
+  <h2>{{ team.name }} <span class="tag {% if team.is_new %}ok{% else %}none{% endif %}">{% if team.is_new %}New team{% else %}Already there{% endif %}</span></h2>
+  <p class="keynote">
+    {% if team.repo %}Repo: {{ team.repo }} {% if team.repo_error_row %}<span class="tag flag">Row {{ team.repo_error_row }}: error</span>{% else %}<span class="tag {% if team.repo_is_new %}ok{% else %}none{% endif %}">{% if team.repo_is_new %}New{% else %}Already there{% endif %}</span>{% endif %}{% else %}No repo given.{% endif %}
+  </p>
+  {% for student in team.students %}
+  <div class="setup-row">
+    <span><strong>{{ student.name|default:"(no name)" }}</strong> {{ student.github_login }}{% if student.email %} · {{ student.email }}{% endif %}{% if student.note and student.status != "error" %}<br><small class="keynote">{{ student.note }}</small>{% endif %}</span>
+    <span>
+      {% if student.status == "new" %}<span class="tag ok">New student</span>
+      {% elif student.status == "existing" %}<span class="tag ok">Existing account</span>
+      {% elif student.status == "on_team" %}<span class="tag none">Already there</span>
+      {% else %}<span class="tag flag">Row {{ student.row }}: error</span>{% endif %}
+    </span>
+  </div>
+  {% endfor %}
+</section>
+{% endfor %}
+
+{# Multipart, because form encoding can triple a comma-heavy file and pass Django's size limit. #}
+<form action="{% url 'dashboard:team_import_confirm' project.id %}" method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  {# Carried here instead of saved on the server, because it is student data. #}
+  {# The newline after the tag is dropped by the browser, so a CSV starting with a blank line keeps it. #}
+  <textarea name="csv" hidden>
+{{ csv }}</textarea>
+  <input type="hidden" name="checked_repos" value="{{ checked_repos }}">
+  <p class="form-actions">
+    <button type="submit" class="primary"{% if plan.errors %} disabled aria-disabled="true"{% endif %}>Confirm import</button>
+    <a href="{% url 'dashboard:team_import' project.id %}">Choose another file</a>
+  </p>
+</form>
+{% endblock %}

@@ -58,6 +58,17 @@ urlpatterns = [
         name="requirement_delete",
     ),
     path("projects/<int:project_id>/teams/new/", views.team_create, name="team_create"),
+    path("projects/<int:project_id>/teams/import/", views.team_import, name="team_import"),
+    path(
+        "projects/<int:project_id>/teams/import/template.csv",
+        views.team_import_template,
+        name="team_import_template",
+    ),
+    path(
+        "projects/<int:project_id>/teams/import/confirm/",
+        views.team_import_confirm,
+        name="team_import_confirm",
+    ),
     path("projects/<int:project_id>/sprints/new/", views.sprint_create, name="sprint_create"),
     path("sprints/<int:sprint_id>/", views.sprint, name="sprint"),
     path("sprints/<int:sprint_id>/edit/", views.sprint_edit, name="sprint_edit"),
