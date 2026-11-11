@@ -2,7 +2,7 @@ from django.contrib import messages
 from django.db.models import Count
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordChangeView, RedirectURLMixin
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
@@ -44,8 +44,8 @@ def student_home(request):
 
 @login_required
 @require_http_methods(["GET", "POST"])
-def flag_dispute(request, team_id, rule, week):
-    page = services.get_dispute_page(request.user, team_id, rule, week)
+def flag_dispute(request, team_id, rule, sprint_id):
+    page = services.get_dispute_page(request.user, team_id, rule, sprint_id)
     explanation = page.dispute.explanation if page.dispute else ""
     error = ""
     if request.method == "POST":
@@ -116,10 +116,13 @@ def course_generating_status(request, course_id):
 @login_required
 def team(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
-    memberships, share_week = services.add_contribution_shares(
-        team, services.team_memberships_with_summaries(team)
-    )
+    sprints = services.team_page_sprints(team.project)
+    sprint = services.team_page_sprint(team, sprints, request.GET.get("sprint"))
+    memberships = list(services.team_memberships_with_summaries(team, sprint))
+    in_progress_through = services.add_sprint_summaries(memberships, sprint)
+    memberships = services.add_contribution_shares(team, memberships, sprint)
     services.add_disputes(memberships)
+    has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
         request,
         "dashboard/team.html",
@@ -127,12 +130,21 @@ def team(request, team_id):
             "generation_run": services.active_generation_runs(team_ids=[team.id]).get(team.id),
             "team": team,
             "repos": services.team_repos(team),
-            "team_flags": services.team_wide_flags(team),
+            "has_sprints": has_sprints,
+            "sprints": sprints,
+            "sprint": sprint,
+            "in_progress_through": in_progress_through,
+            "every_student_has_summary": (
+                sprint is not None and services.every_student_has_summary(memberships, sprint)
+            ),
+            "team_flags": services.team_wide_flags(team, sprint),
             "memberships": memberships,
             "legend": services.pie_legend(memberships),
-            "share_week": share_week,
-            "share_week_note": services.share_week_note(team, share_week) if share_week else "",
-            "team_status": services.team_status(team),
+            "team_status": (
+                services.team_sprint_status(team, sprint, in_progress_through)
+                if has_sprints
+                else services.team_status(team)
+            ),
             "equal_share": round(100 / len(memberships)) if memberships else None,
             "can_set_up": services.is_course_instructor(request.user, team.project.course),
             "editing": request.GET.get("edit") == "1",
@@ -639,3 +651,110 @@ def sprint_requirements_copy(request, sprint_id):
         noun = ngettext("requirement", "requirements", count)
         messages.success(request, f"Copied {count} {noun} from {source.name}.")
     return destination
+
+
+def _render_team_import(request, project, error=""):
+    return render(request, "dashboard/team_import.html", {"project": project, "error": error})
+
+
+def _render_team_import_preview(request, project, text, plan):
+    return render(
+        request,
+        "dashboard/team_import_preview.html",
+        {
+            "project": project,
+            "csv": text,
+            "plan": plan,
+            "checked_repos": setup.sign_checked_repos(plan.checked_repos),
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def team_import(request, project_id):
+    """Upload a CSV and preview what importing it would do. Nothing is saved."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if request.method == "GET":
+        return _render_team_import(request, project)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return _render_team_import(request, project, "Choose a CSV file to upload.")
+    try:
+        # One byte past the limit is enough to tell the file is too big, without reading it all.
+        text = setup.read_team_csv(upload.read(setup.MAX_TEAM_CSV_BYTES + 1))
+        plan = setup.plan_team_import(project, text)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    return _render_team_import_preview(request, project, text, plan)
+
+
+@login_required
+@require_GET
+def team_import_template(request, project_id):
+    services.get_project_for_instructor(request.user, project_id)
+    response = HttpResponse(setup.TEAM_CSV_TEMPLATE, content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="strive-teams-template.csv"'
+    return response
+
+
+@login_required
+@require_POST
+def team_import_confirm(request, project_id):
+    """Recheck the CSV carried from the preview, then import it all or none of it."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    text = request.POST.get("csv", "")
+    try:
+        checked = setup.read_checked_repos(request.POST.get("checked_repos", ""))
+        plan = setup.plan_team_import(project, text, checked)
+        if not plan.ok:
+            return _render_team_import_preview(request, project, text, plan)
+        if plan.nothing_to_add:
+            messages.info(
+                request, "Nothing was imported: everything in this file is already in the project."
+            )
+            return redirect("dashboard:project_setup", project_id=project.id)
+        result = setup.run_team_import(project, plan)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    messages.success(
+        request,
+        f"Added {result.teams} {ngettext('team', 'teams', result.teams)}, "
+        f"{result.students} {ngettext('student', 'students', result.students)} and "
+        f"{result.repos} {ngettext('repo', 'repos', result.repos)}.",
+    )
+    return redirect("dashboard:project_setup", project_id=project.id)
+
+
+@login_required
+@require_GET
+def passwords(request, project_id):
+    """Say how many students would get a temporary password. Nothing is changed here."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    return render(
+        request,
+        "dashboard/passwords.html",
+        {"project": project, "plan": setup.plan_temporary_passwords(project, request.user)},
+    )
+
+
+@login_required
+@require_POST
+def passwords_generate(request, project_id):
+    """Generate the passwords and send them back once, as a download that isn't cached."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if not setup.plan_temporary_passwords(project, request.user).count:
+        messages.info(request, "No students need a temporary password.")
+        return redirect("dashboard:passwords", project_id=project.id)
+    try:
+        rows = setup.generate_temporary_passwords(project, request.user)
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+        return redirect("dashboard:passwords", project_id=project.id)
+    response = HttpResponse(
+        setup.temporary_passwords_csv(rows), content_type="text/csv; charset=utf-8"
+    )
+    response["Content-Disposition"] = 'attachment; filename="strive-temporary-passwords.csv"'
+    # The only copy of these passwords, so no browser or proxy should keep one.
+    response["Cache-Control"] = "no-store"
+    return response

@@ -25,15 +25,15 @@
         {# Worded as instructors see them on the team page. #}
         {% for flag in membership.my_flags %}
         {% if flag.is_withdrawn %}
-        <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j, Y" }}
-          {% if flag.dispute %}<a class="tag dispute" href="{% url 'dashboard:flag_dispute' flag.team_id flag.rule flag.week_start|date:'Y-m-d' %}">{% include "dashboard/_dispute_status.html" with dispute=flag.dispute for_student=True %}</a>{% endif %}
+        <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} in {{ flag.sprint.name }}
+          {% if flag.dispute %}<a class="tag dispute" href="{% url 'dashboard:flag_dispute' flag.team_id flag.rule flag.sprint_id %}">{% include "dashboard/_dispute_status.html" with dispute=flag.dispute for_student=True %}</a>{% endif %}
         </p>
         {% else %}
         <p class="finding {{ flag.severity }}">
           <mark>{{ flag.get_severity_display }}</mark>
-          <small>Week of {{ flag.week_start|date:"M j, Y" }}</small>
+          <small>{{ flag.sprint.name }}</small>
           {{ flag.reason }}
-          {% url 'dashboard:flag_dispute' flag.team_id flag.rule flag.week_start|date:'Y-m-d' as dispute_url %}
+          {% url 'dashboard:flag_dispute' flag.team_id flag.rule flag.sprint_id as dispute_url %}
           {% if flag.dispute %}
           <a class="tag dispute" href="{{ dispute_url }}">{% include "dashboard/_dispute_status.html" with dispute=flag.dispute for_student=True %}</a>
           {% else %}
@@ -46,13 +46,13 @@
         {% for dispute in membership.unraised_disputes %}
         <p class="finding gone">
           <mark>Flag no longer raised</mark>
-          <small>Week of {{ dispute.week_start|date:"M j, Y" }}</small>
+          <small>{{ dispute.sprint.name }}</small>
           {% if dispute.status != "flag_withdrawn" %}{{ dispute.flag_reason }}{% endif %}
           {# A decided dispute stays readable; an open one's page is hidden once its flag is gone (#108). #}
           {% if dispute.status == "open" %}
           <span class="tag dispute">Disputed · {{ dispute.get_status_display }}</span>
           {% else %}
-          <a class="tag dispute" href="{% url 'dashboard:flag_dispute' dispute.team_id dispute.rule dispute.week_start|date:'Y-m-d' %}">Disputed · {{ dispute.get_status_display }}</a>
+          <a class="tag dispute" href="{% url 'dashboard:flag_dispute' dispute.team_id dispute.rule dispute.sprint_id %}">Disputed · {{ dispute.get_status_display }}</a>
           {% endif %}
         </p>
         {% include "dashboard/_dispute_note.html" %}
@@ -61,6 +61,7 @@
         <p class="tags"><span class="tag ok">No flags about you</span></p>
         {% endif %}
       </div>
+      <p class="foot"><a href="{% url 'contributions:list' membership.team.project_id %}">My offline contributions</a></p>
     </article>
     {% endfor %}
   </div>
