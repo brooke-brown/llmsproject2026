@@ -1,11 +1,14 @@
 import csv
 import io
 import re
+import secrets
+import string
 from dataclasses import dataclass, field
 from datetime import timedelta
 from itertools import batched
 
 import requests
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core import signing
 from django.core.exceptions import ValidationError
@@ -337,13 +340,17 @@ def _set_password_as(instructor: User | None, student: User, password: str) -> N
     """Set a temporary password, unless the student is also in a course `instructor` doesn't
     teach. Otherwise adding someone to a team would hand over their account in every course.
     With no instructor given, no course counts as taught, so an enrolled student is refused."""
-    taught = Enrollment.objects.filter(user=instructor, role=Enrollment.Role.INSTRUCTOR)
-    if student.enrollments.exclude(course__in=taught.values("course")).exists():
+    if _in_course_not_taught_by(instructor, student):
         raise ProjectSetupError(
             f"{student.github_login} is also enrolled in a course you don't teach, so their "
             "password can only be changed in the admin."
         )
     set_temporary_password(student, password)
+
+
+def _in_course_not_taught_by(instructor: User | None, student: User) -> bool:
+    taught = Enrollment.objects.filter(user=instructor, role=Enrollment.Role.INSTRUCTOR)
+    return student.enrollments.exclude(course__in=taught.values("course")).exists()
 
 
 def _refuse_unclaimed_account(student: User) -> None:
@@ -1067,3 +1074,167 @@ def _mark_unreadable_repos(teams, students_by_row, unreadable: dict[str, RowErro
         student = students_by_row[error.row]
         student.status = "error"
         student.note = f"{student.note} {error.message}".strip()
+
+
+# --- Temporary passwords in bulk (US-44, #127) ---
+
+# No look-alike characters (0/O, 1/l/I), so a password read off a page is typed correctly. It
+# is letters and digits only, so it never starts with a character Excel reads as a formula.
+PASSWORD_ALPHABET = "".join(c for c in string.ascii_letters + string.digits if c not in "0O1lI")
+PASSWORD_LENGTH = 12
+PASSWORD_ATTEMPTS = 5
+BLOCKED_NOTE = "Not given a password here: this account can only be changed in the admin."
+OTHER_COURSE_NOTE = (
+    "Not given a password here: also enrolled in a course you don't teach, so change it in the "
+    "admin."
+)
+PASSWORD_CSV_COLUMNS = ("team", "name", "github_login", "email", "temporary_password", "note")
+
+
+@dataclass
+class PasswordTarget:
+    user: User
+    team: str
+    has_temporary: bool = False  # Whether it has a temporary password that would be replaced.
+    note: str = ""
+
+
+@dataclass
+class PasswordPlan:
+    targets: list[PasswordTarget]  # Students who will get a password.
+    blocked: list[PasswordTarget]  # Accounts that can only be changed in the admin.
+    left_alone: int  # Students who chose their own password.
+
+    @property
+    def count(self) -> int:
+        return len(self.targets)
+
+    @property
+    def replaced(self) -> int:
+        return sum(target.has_temporary for target in self.targets)
+
+
+@dataclass
+class PasswordRow:
+    """One line of the downloaded file. The plain password exists only here, never saved."""
+
+    team: str
+    name: str
+    github_login: str
+    email: str
+    password: str  # Blank for an account that can't be given one here.
+    note: str = ""
+    user: User | None = None
+
+
+def plan_temporary_passwords(project: Project, instructor: User) -> PasswordPlan:
+    """Who would get a temporary password: students on the project's teams who can't log in
+    yet or still have an unchanged temporary one. Saves nothing.
+
+    A student also in a course `instructor` doesn't teach is blocked, as on the team page, or
+    the instructor would know a working login for that course too."""
+    targets, blocked, left_alone = [], [], 0
+    memberships = (
+        TeamMembership.objects.filter(team__project=project)
+        .select_related("user", "team")
+        .order_by("team__name", "user__last_name", "user__first_name", "user__github_login")
+    )
+    for membership in memberships:
+        user = membership.user
+        waiting = user.must_change_password
+        if user.has_usable_password() and not waiting:
+            left_alone += 1
+            continue
+        target = PasswordTarget(user, membership.team.name, has_temporary=waiting and user.has_usable_password())
+        try:
+            _refuse_unless_student_only(user)
+        except ProjectSetupError:
+            target.note = BLOCKED_NOTE
+            blocked.append(target)
+        else:
+            if _in_course_not_taught_by(instructor, user):
+                target.note = OTHER_COURSE_NOTE
+                blocked.append(target)
+            else:
+                targets.append(target)
+    return PasswordPlan(targets, blocked, left_alone)
+
+
+def generate_temporary_passwords(project: Project, instructor: User) -> list[PasswordRow]:
+    """Give every student in `instructor`'s plan a random temporary password, all or none, and
+    return a row for each, blocked accounts included with a blank password.
+
+    The plain passwords are returned and nothing else: they aren't stored or logged. Raises
+    ProjectSetupError if a password can't be made, or a student changed theirs meanwhile, and
+    then nothing has changed.
+
+    Hashing is slow, so it all happens before the transaction: SQLite holds its write lock
+    for a whole transaction, and every other write in the app would wait on it.
+    """
+    plan = plan_temporary_passwords(project, instructor)
+    rows, hashes = [], []
+    for target in plan.targets:
+        password = _random_valid_password(target.user)
+        rows.append(_row(target, password))
+        hashes.append((target.user, make_password(password)))
+    with transaction.atomic():
+        for user, hashed in hashes:
+            # Only if the password is still the one planned on, so one a student chose while
+            # the others were hashing is never overwritten.
+            saved = User.objects.filter(pk=user.pk, password=user.password).update(
+                password=hashed, must_change_password=True
+            )
+            if not saved:
+                raise ProjectSetupError(
+                    f"{user.github_login} changed their password at the same moment, so no "
+                    "passwords were changed. Please try again."
+                )
+    rows.extend(_row(target, "") for target in plan.blocked)
+    return rows
+
+
+def temporary_passwords_csv(rows) -> str:
+    """The file to download. Cells that Excel would read as a formula get a leading quote."""
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(PASSWORD_CSV_COLUMNS)
+    for row in rows:
+        cells = [row.team, row.name, row.github_login, row.email, row.password, row.note]
+        writer.writerow([_spreadsheet_safe(cell) for cell in cells])
+    return out.getvalue()
+
+
+def _row(target: PasswordTarget, password: str) -> PasswordRow:
+    user = target.user
+    return PasswordRow(
+        team=target.team,
+        name=user.get_full_name(),
+        github_login=user.github_login,
+        email=user.email,
+        password=password,
+        note=target.note,
+        user=user,
+    )
+
+
+def _random_password() -> str:
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(PASSWORD_LENGTH))
+
+
+def _random_valid_password(user: User) -> str:
+    """A random password that passes the password rules for `user`, trying a few times."""
+    for _ in range(PASSWORD_ATTEMPTS):
+        password = _random_password()
+        try:
+            validate_password(password, user=user)
+        except ValidationError:
+            continue
+        return password
+    raise ProjectSetupError(
+        f"Couldn't make a password for {user.github_login} that passes the password rules, "
+        "so no passwords were changed."
+    )
+
+
+def _spreadsheet_safe(cell: str) -> str:
+    return "'" + cell if cell.startswith(("=", "+", "-", "@", "\t", "\r")) else cell

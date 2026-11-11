@@ -128,7 +128,7 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 - Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint; the course overview is labelled from the team's latest one. Weekly summaries no longer raise flags.
 - Built (US-42, #124): the team page has a sprint menu (`?sprint=<id>`), defaulting to the latest sprint the team has a summary for. Its tag, flags, disputes, shares, pie and summary links are all for that sprint. Shares appear once every student has a summary for it, partial or not; a partial one is labelled "in progress, through <date>", and a missing one "Not generated".
 
-**Setup at scale:** CSV import of teams and students (#126, built: instructors upload on the project's edit page, preview, then confirm), and generating temporary passwords in bulk (#127).
+**Setup at scale:** CSV import of teams and students (#126, built: instructors upload on the project's edit page, preview, then confirm), and generating temporary passwords in bulk (#127, built: the project's edit page downloads a CSV once, never stored).
 
 **Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.

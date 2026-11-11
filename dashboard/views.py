@@ -723,3 +723,37 @@ def team_import_confirm(request, project_id):
         f"{result.repos} {ngettext('repo', 'repos', result.repos)}.",
     )
     return redirect("dashboard:project_setup", project_id=project.id)
+
+
+@login_required
+@require_GET
+def passwords(request, project_id):
+    """Say how many students would get a temporary password. Nothing is changed here."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    return render(
+        request,
+        "dashboard/passwords.html",
+        {"project": project, "plan": setup.plan_temporary_passwords(project, request.user)},
+    )
+
+
+@login_required
+@require_POST
+def passwords_generate(request, project_id):
+    """Generate the passwords and send them back once, as a download that isn't cached."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if not setup.plan_temporary_passwords(project, request.user).count:
+        messages.info(request, "No students need a temporary password.")
+        return redirect("dashboard:passwords", project_id=project.id)
+    try:
+        rows = setup.generate_temporary_passwords(project, request.user)
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+        return redirect("dashboard:passwords", project_id=project.id)
+    response = HttpResponse(
+        setup.temporary_passwords_csv(rows), content_type="text/csv; charset=utf-8"
+    )
+    response["Content-Disposition"] = 'attachment; filename="strive-temporary-passwords.csv"'
+    # The only copy of these passwords, so no browser or proxy should keep one.
+    response["Cache-Control"] = "no-store"
+    return response

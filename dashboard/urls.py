@@ -88,6 +88,12 @@ urlpatterns = [
         views.sprint_requirements_copy,
         name="sprint_requirements_copy",
     ),
+    path("projects/<int:project_id>/passwords/", views.passwords, name="passwords"),
+    path(
+        "projects/<int:project_id>/passwords/generate/",
+        views.passwords_generate,
+        name="passwords_generate",
+    ),
     path("teams/<int:team_id>/rename/", views.team_rename, name="team_rename"),
     path("teams/<int:team_id>/delete/", views.team_delete, name="team_delete"),
     path("teams/<int:team_id>/students/add/", views.student_add, name="student_add"),
