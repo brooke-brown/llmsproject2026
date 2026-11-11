@@ -197,6 +197,12 @@ class CreateTests(EvaluationFixture):
         self.assertIn("Enter a name", response.content.decode())
         self.assertFalse(PeerEvaluation.objects.exists())
 
+    def test_service_rejects_a_blank_name_too(self):
+        from peereval import services
+
+        with self.assertRaisesMessage(services.EvaluationError, "Enter a name."):
+            services.create_evaluation(self.project, self.instructor, "  ", LATER)
+
     def test_name_used_in_this_project_is_rejected_regardless_of_case(self):
         self.closed(name="Midpoint")
         response = self.create(name="MIDPOINT")
@@ -275,6 +281,10 @@ class ChangeTests(EvaluationFixture):
         self.assertIn("Enter a closing date and time", page_messages(response))
         evaluation.refresh_from_db()
         self.assertEqual(evaluation.closes_at, LATER)
+
+    def test_change_form_starts_with_the_current_closing_time_in_new_york(self):
+        self.evaluation(closes_at=datetime(2026, 11, 21, 2, 0, tzinfo=ZoneInfo("UTC")))
+        self.assertIn('value="2026-11-20T21:00"', self.setup_page())
 
     def test_closed_evaluation_cannot_change(self):
         evaluation = self.closed()

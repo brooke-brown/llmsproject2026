@@ -1,0 +1,24 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}New peer evaluation · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' project.course_id %}">{{ project.course.name }}</a> / <a href="{% url 'dashboard:project_setup' project.id %}">{{ project.name }}</a> / New peer evaluation</span>{% endblock %}
+
+{% block content %}
+<div class="headrow"><h1>New peer evaluation</h1></div>
+<form class="narrow" action="{% url 'peereval:evaluation_create' project.id %}" method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  {{ form.name.errors }}
+  <label for="{{ form.name.id_for_label }}">Name, such as "Midpoint"</label>
+  <input id="{{ form.name.id_for_label }}" type="text" name="name" value="{{ form.name.value|default_if_none:'' }}" maxlength="100" required autofocus>
+  {{ form.closes_at.errors }}
+  <label for="{{ form.closes_at.id_for_label }}">{{ form.closes_at.label }}</label>
+  {{ form.closes_at }}
+  <p class="form-actions">
+    <button type="submit" class="primary">Open peer evaluation</button>
+    <a href="{% url 'dashboard:project_setup' project.id %}">Cancel</a>
+  </p>
+</form>
+<p class="keynote">It opens now and closes at the time you choose, in New York time. Students on the project's teams rate each teammate, and only instructors and TAs see the ratings. Only one peer evaluation can be open at a time.</p>
+{% endblock %}

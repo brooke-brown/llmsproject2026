@@ -1,0 +1,36 @@
+<section class="setup-panel">
+  <h2>Peer evaluations</h2>
+  {% for evaluation in peer_evaluations %}
+  <div class="setup-row">
+    <span><strong>{{ evaluation.name }}</strong> {% if evaluation.is_open %}<span class="tag ok">Open</span>{% else %}<span class="tag none">Closed</span>{% endif %}</span>
+    <span>{% if evaluation.is_open %}Closes{% else %}Closed{% endif %} {{ evaluation.closes_at|date:"M j, Y, g:i A" }} · {% if evaluation.rating_count %}{{ evaluation.rating_count }} rating{{ evaluation.rating_count|pluralize }}{% else %}No ratings yet{% endif %}</span>
+  </div>
+  <div class="row-actions">
+    {% if evaluation.is_open %}
+    <form class="compact wide" action="{% url 'peereval:evaluation_change' evaluation.id %}" method="post">
+      {% csrf_token %}
+      <input type="datetime-local" name="closes_at" value="{{ evaluation.closes_at|date:'Y-m-d\TH:i' }}" aria-label="New closing time for {{ evaluation.name }}, New York time" required>
+      <button type="submit" class="outline">Change closing time</button>
+    </form>
+    <form action="{% url 'peereval:evaluation_close' evaluation.id %}" method="post" onsubmit="return confirm('Close {{ evaluation.name|escapejs }} now? Students can no longer rate, and it can\'t be reopened.')">
+      {% csrf_token %}
+      <button type="submit" class="text-button">close now</button>
+    </form>
+    {% endif %}
+    <form action="{% url 'peereval:evaluation_delete' evaluation.id %}" method="post" onsubmit="return confirm('Delete {{ evaluation.name|escapejs }}? An evaluation with ratings can\'t be deleted.')">
+      {% csrf_token %}
+      <button type="submit" class="text-button">delete</button>
+    </form>
+  </div>
+  {% empty %}
+  <p class="keynote">No peer evaluations yet.</p>
+  {% endfor %}
+  <p class="form-actions"><a role="button" href="{% url 'peereval:evaluation_create' project.id %}">New peer evaluation</a></p>
+  <h3>Questions students answer</h3>
+  <p class="keynote">Each student rates each teammate from 1 to 5 on every question, with an optional comment. Only instructors and TAs see the ratings.</p>
+  <ol>
+    {% for question in peer_questions %}
+    <li>{{ question.text }} <span class="keynote">(1 = {{ question.label_1 }}, 5 = {{ question.label_5 }})</span></li>
+    {% endfor %}
+  </ol>
+</section>

@@ -135,6 +135,7 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 
 **Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
+- Opening a peer evaluation (US-36): instructors open, re-time, close and delete evaluations in the Peer evaluations panel on "Edit project". One per project can be open at a time; it's open while now is before `closes_at`, and one with ratings can't be deleted. Logic is in `peereval/services.py`.
 - Disputing a flag (US-31): students dispute a flag about them from the student home, and edit the dispute until it's decided. The page is at `teams/<id>/flags/<rule>/<sprint_id>/dispute/`, never `Flag.pk`, because `compute_flags` replaces flags on every run. A decided dispute stays readable after its flag is no longer raised; an open one is hidden.
 
 **Later, with no issues yet:** polished per-requirement progress view, numeric diff checks, GitHub OAuth login, consent, background jobs, "paired with" detection.
