@@ -13,6 +13,7 @@ from contributions.models import Contribution
 from core import services as setup
 from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
 from core.models import Sprint
+from peereval.models import PeerRating
 from summaries.models import Summary
 
 from . import services
@@ -128,6 +129,7 @@ def team(request, team_id):
     in_progress_through = services.add_sprint_summaries(memberships, sprint)
     memberships = services.add_contribution_shares(team, memberships, sprint)
     services.add_disputes(memberships)
+    peer_rating_count = services.add_peer_rating_counts(team, memberships)
     has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
         request,
@@ -145,6 +147,7 @@ def team(request, team_id):
             ),
             "team_flags": services.team_wide_flags(team, sprint),
             "memberships": memberships,
+            "peer_rating_count": peer_rating_count,
             "legend": services.pie_legend(memberships),
             "team_status": (
                 services.team_sprint_status(team, sprint, in_progress_through)
@@ -281,6 +284,7 @@ def project_setup(request, project_id):
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
             "contribution_count": Contribution.objects.filter(team__project=project).count(),
+            "peer_rating_count": PeerRating.objects.filter(evaluation__project=project).count(),
             "editing": request.GET.get("edit") == "1",
         },
     )

@@ -1,5 +1,6 @@
 import math
 import re
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -28,6 +29,7 @@ from core.models import (
 from core import services as setup_services
 from ingest import services as ingest_services
 from ingest.models import Artifact
+from peereval.models import PeerRating
 from summaries import services as summaries_services
 from summaries.llm import LLMError
 from summaries.models import Claim, Summary
@@ -743,6 +745,23 @@ def team_memberships_with_summaries(team, sprint=None):
             ),
         )
     )
+
+
+def add_peer_rating_counts(team, memberships):
+    """Give each membership `peer_rating_count`, the ratings its student gave or got from
+    someone else on this team, and return how many ratings are between the team's students.
+    These are what removing the student, or deleting the team, deletes."""
+    student_ids = [membership.user_id for membership in memberships]
+    ratings = PeerRating.objects.filter(
+        evaluation__project=team.project_id, rater__in=student_ids, ratee__in=student_ids
+    ).values_list("rater_id", "ratee_id")
+    counts = Counter()
+    for rater_id, ratee_id in ratings:
+        counts[rater_id] += 1
+        counts[ratee_id] += 1
+    for membership in memberships:
+        membership.peer_rating_count = counts[membership.user_id]
+    return len(ratings)
 
 
 # The pie's colours for students with no flag or warning. They are theme variables in
