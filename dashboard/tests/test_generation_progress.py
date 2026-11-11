@@ -4,9 +4,11 @@ A run's progress is read from its GenerationRun row, which the run updates as ea
 finishes. `ingest` and `generate_summary` are mocked, as in the other generation tests.
 """
 
+import json
 from datetime import timedelta
 
-from django.test import Client
+from django.db.migrations.loader import MigrationLoader
+from django.test import Client, SimpleTestCase
 from django.urls import reverse
 
 from dashboard.models import GenerationRun
@@ -14,7 +16,7 @@ from core.models import Enrollment
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
 from .test_generate_summary import LAST_WEEK, NOW, generate_url, retry_url, team_article
-from .test_generation_run import GenerationRunFixture
+from .test_generation_run import GenerationRunFixture, status_url
 
 
 def run_for(team, done=1, total=4, failures=None, minutes_left=10):
@@ -113,11 +115,24 @@ class OverviewProgressTests(GenerationRunFixture):
         self.assertIn("Grace Example", card)
         self.assertIn("The LLM request timed out.", card)
 
-    def test_a_run_with_no_count_yet_shows_an_unfilled_bar_and_says_it_is_starting(self):
-        run_for(self.team, done=0, total=0)
+    def test_a_run_with_no_student_done_yet_shows_an_unfilled_bar_and_says_it_is_starting(self):
+        # _start_run records the student count straight away, so "Starting" must not depend on it.
+        run_for(self.team, done=0, total=4)
         card = self.card()
         self.assertIn("Starting", card)
         self.assertIn("<progress>", card.replace(' aria-label="Progress"', ""))
+        self.assertNotIn("0 of 4 students done", card)
+
+    def test_starting_goes_once_a_student_is_done(self):
+        run_for(self.team, done=1, total=4)
+        self.assertNotIn("Starting", self.card())
+
+    def test_starting_shows_during_a_real_run_while_github_activity_is_pulled(self):
+        seen = []
+        self.ingest.side_effect = lambda *args: seen.append(self.card()) or []
+        self.click_generate()
+        self.assertTrue(seen)
+        self.assertIn("Starting", seen[0])
 
     def test_an_expired_run_shows_nothing(self):
         run_for(self.team, minutes_left=-5)
@@ -135,17 +150,39 @@ class OverviewProgressTests(GenerationRunFixture):
 class RefreshTests(GenerationRunFixture):
     REFRESH = '<meta http-equiv="refresh" content="5">'
 
-    def test_the_overview_refreshes_itself_while_a_run_is_active(self):
+    def status(self):
+        return json.loads(self.client.get(status_url(self.course.id)).content)
+
+    def test_the_overview_uses_only_its_poller_and_never_a_meta_refresh(self):
         run_for(self.team)
         html = self.client.get(overview_url(self.course.id)).content.decode()
-        self.assertIn(self.REFRESH, html)
-
-    def test_the_overview_stops_refreshing_when_no_run_is_active(self):
-        html = self.client.get(overview_url(self.course.id)).content.decode()
         self.assertNotIn('http-equiv="refresh"', html)
+        self.assertIn('data-generating-status="', html)
+
+    def test_the_overview_has_no_poller_when_no_run_is_active(self):
+        html = self.client.get(overview_url(self.course.id)).content.decode()
+        self.assertNotIn('data-generating-status="', html)
         run_for(self.team, minutes_left=-1)
         html = self.client.get(overview_url(self.course.id)).content.decode()
-        self.assertNotIn('http-equiv="refresh"', html)
+        self.assertNotIn('data-generating-status="', html)
+
+    def test_a_running_card_has_a_slot_the_poller_fills_with_its_progress(self):
+        run_for(self.team)
+        card = team_article(self.client.get(overview_url(self.course.id)).content.decode(), "Team Alpha")
+        self.assertIn(f'data-progress-for="{self.team.id}"', card)
+
+    def test_the_status_gives_each_running_teams_progress(self):
+        run_for(self.team, done=2, total=3, failures=[{"name": "Grace Example", "reason": "Timed out."}])
+        status = self.status()
+        self.assertEqual(status["team_ids"], [self.team.id])
+        progress = status["progress"][str(self.team.id)]
+        self.assertIn("2 of 3 students done", progress)
+        self.assertIn('<progress value="2" max="3"', progress)
+        self.assertIn("Grace Example", progress)
+
+    def test_the_status_gives_no_progress_when_nothing_runs(self):
+        run_for(self.team, minutes_left=-1)
+        self.assertEqual(self.status(), {"team_ids": [], "progress": {}})
 
     def test_the_team_page_shows_progress_and_refreshes_while_its_team_runs(self):
         run_for(self.team, done=2, total=3)
@@ -196,3 +233,11 @@ class SprintRunProgressTests(GenerationRunFixture):
         # Grace goes first (by last name) and fails; by Ada's turn she is done and named.
         self.assertEqual(seen, [(0, 2, []), (1, 2, ["Grace Example"])])
         self.assertFalse(GenerationRun.objects.filter(team=self.team).exists())
+
+
+class MigrationOrderTests(SimpleTestCase):
+    def test_the_progress_migration_follows_flags_per_sprint(self):
+        loader = MigrationLoader(None, ignore_no_migrations=True)
+        self.assertEqual(loader.detect_conflicts(), {})
+        migration = loader.disk_migrations[("dashboard", "0005_generationrun_progress")]
+        self.assertEqual(migration.dependencies, [("dashboard", "0004_flags_per_sprint")])
