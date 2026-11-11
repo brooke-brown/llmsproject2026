@@ -1,7 +1,10 @@
-"""Opening, changing and deleting peer evaluations, and students rating their teammates.
-Views call these and show the errors."""
+"""Opening, changing and deleting peer evaluations, students rating their teammates, and
+what instructors and TAs see of the ratings. Views call these and show the errors."""
 
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
@@ -12,9 +15,10 @@ from django.utils import timezone
 
 from contributions.services import get_student_team
 from core.models import Project, Team, User
-from dashboard.services import check_course_instructor, teammates
+from dashboard.services import check_course_instructor, parse_id, teammates
 
 from .models import DUPLICATE_NAME_ERROR, PeerEvaluation, PeerRating
+from .questions import QUESTIONS, Question
 
 
 class EvaluationError(Exception):
@@ -169,6 +173,104 @@ def save_rating(
             raise EvaluationError(" ".join(error.messages)) from error
         rating.save()
     return rating
+
+
+def team_page_evaluation(
+    evaluations: list[PeerEvaluation], value: str | None
+) -> PeerEvaluation | None:
+    """The evaluation the team page shows, from `evaluations` (project_evaluations, newest
+    first): the one whose ID is `value`, or else the newest. None if there are none."""
+    chosen = parse_id(value)
+    for evaluation in evaluations:
+        if evaluation.pk == chosen:
+            return evaluation
+    return evaluations[0] if evaluations else None
+
+
+@dataclass
+class QuestionAverage:
+    question: Question
+    average: Decimal | None  # None when no rating answers the question.
+
+
+@dataclass
+class ReceivedRating:
+    rater: User
+    scores: list[tuple[Question, int | None]]  # In QUESTIONS order; None if not answered.
+    comment: str
+
+
+@dataclass
+class StudentRatings:
+    """How a student's teammates rated them in one evaluation, and how far they've got
+    rating their teammates. For instructors and TAs only: never render it for a student."""
+
+    user: User
+    teammate_count: int
+    ratings: list[ReceivedRating]  # Teammates' ratings of this student, by rater's name.
+    averages: list[QuestionAverage]
+    rated_count: int  # How many teammates this student has rated.
+
+    @property
+    def rater_count(self) -> int:
+        return len(self.ratings)
+
+    @property
+    def finished_rating(self) -> bool:
+        return self.rated_count >= self.teammate_count
+
+
+def _average(values: list[int]) -> Decimal | None:
+    if not values:
+        return None
+    return (Decimal(sum(values)) / len(values)).quantize(Decimal("0.1"), ROUND_HALF_UP)
+
+
+def rating_summary(team: Team, evaluation: PeerEvaluation) -> list[StudentRatings]:
+    """Each student on the team, by last name then first name, as in the team page's
+    summaries and pie legend, with their teammates' ratings of them in the evaluation. Only
+    ratings between the team's current students count."""
+    students = [
+        membership.user
+        for membership in team.memberships.select_related("user").order_by(
+            "user__last_name", "user__first_name", "user__github_login"
+        )
+    ]
+    by_id = {student.pk: student for student in students}
+    name_order = {student.pk: place for place, student in enumerate(students)}
+    received = defaultdict(list)
+    rated_count = Counter()
+    ratings = evaluation.ratings.filter(rater__in=by_id, ratee__in=by_id)
+    for rating in ratings.only("rater_id", "ratee_id", "scores", "comment"):
+        rated_count[rating.rater_id] += 1
+        received[rating.ratee_id].append(rating)
+
+    rows = []
+    for student in students:
+        theirs = sorted(received[student.pk], key=lambda r: name_order[r.rater_id])
+        rows.append(
+            StudentRatings(
+                user=student,
+                teammate_count=len(students) - 1,
+                ratings=[
+                    ReceivedRating(
+                        rater=by_id[rating.rater_id],
+                        scores=[(q, rating.scores.get(q.key)) for q in QUESTIONS],
+                        comment=rating.comment,
+                    )
+                    for rating in theirs
+                ],
+                averages=[
+                    QuestionAverage(
+                        q,
+                        _average([r.scores[q.key] for r in theirs if q.key in r.scores]),
+                    )
+                    for q in QUESTIONS
+                ],
+                rated_count=rated_count[student.pk],
+            )
+        )
+    return rows
 
 
 def delete_evaluation(evaluation: PeerEvaluation) -> None:

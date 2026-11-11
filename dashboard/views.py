@@ -141,6 +141,15 @@ def team(request, team_id):
         membership.offline_contributions = offline.get(membership.user_id, [])
     peer_rating_count = services.add_peer_rating_counts(team, memberships)
     has_sprints = bool(sprints) or team.project.sprints.exists()
+    # Teammates' ratings: staff only (get_team_for_staff above), and kept apart from shares
+    # and flags, which never read them.
+    peer_evaluations = peereval_services.project_evaluations(team.project)
+    peer_evaluation = peereval_services.team_page_evaluation(
+        peer_evaluations, request.GET.get("evaluation")
+    )
+    peer_results = (
+        peereval_services.rating_summary(team, peer_evaluation) if peer_evaluation else []
+    )
     return render(
         request,
         "dashboard/team.html",
@@ -158,6 +167,10 @@ def team(request, team_id):
             "team_flags": services.team_wide_flags(team, sprint),
             "memberships": memberships,
             "peer_rating_count": peer_rating_count,
+            "peer_evaluations": peer_evaluations,
+            "peer_evaluation": peer_evaluation,
+            "peer_results": peer_results,
+            "peer_still_rating": [row for row in peer_results if not row.finished_rating],
             "legend": services.pie_legend(memberships),
             "team_status": (
                 services.team_sprint_status(team, sprint)
