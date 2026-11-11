@@ -108,7 +108,7 @@
       {% with contributions=membership.offline_contributions %}
       {% if contributions %}
       <details>
-        <summary>Offline contributions <span class="count">{{ contributions|length }} self-reported</span></summary>
+        <summary>Offline contributions, all sprints <span class="count">· {{ contributions|length }} self-reported</span></summary>
         <ul class="offline-list">
           {% for contribution in contributions %}{% include "dashboard/_offline_contribution.html" %}{% endfor %}
         </ul>

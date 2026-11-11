@@ -72,8 +72,8 @@
 
 {% if offline_contributions is not None %}
 <section class="offline offline-summary" id="offline-contributions" aria-labelledby="offline-title">
-  <h2 id="offline-title">Offline contributions, {{ summary.sprint.name }}</h2>
-  <p class="keynote">Self-reported, not checked against GitHub. These are what {{ summary.user.display_name }} recorded doing outside the code during this sprint. They aren't claims, and never count toward shares or flags.</p>
+  <h2 id="offline-title">Offline contributions, {{ summary.sprint.name }}{% if offline_through %} (through {{ offline_through|date:"M j" }}){% endif %}</h2>
+  <p class="keynote">Self-reported, not checked against GitHub. These are what {{ summary.user.display_name }} recorded doing outside the code during this sprint{% if offline_through %}, up to the last day this summary covers{% endif %}. They aren't claims, and never count toward shares or flags.</p>
   {% if offline_contributions %}
   <ul class="offline-list">
     {% for contribution in offline_contributions %}{% include "dashboard/_offline_contribution.html" %}{% endfor %}

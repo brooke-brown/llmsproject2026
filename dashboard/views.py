@@ -253,6 +253,10 @@ def summary(request, summary_id):
     summary = services.get_summary_for_staff(request.user, summary_id)
     claims = services.verified_claims(summary)
     period_start, period_end = services.summary_period(summary)
+    # Offline work stops where the claims do, so a partial summary doesn't list later work.
+    offline_through = (
+        services.summary_covered_through(summary) if summary.sprint_id is not None else None
+    )
     return render(
         request,
         "dashboard/summary.html",
@@ -266,8 +270,16 @@ def summary(request, summary_id):
             "weeks": services.student_weeks(summary),
             # Weekly summaries have no sprint to place offline work in, so they show none.
             "offline_contributions": (
-                contributions.contributions_for(summary.team, summary.user, summary.sprint)
+                contributions.contributions_for(
+                    summary.team, summary.user, summary.sprint, through=offline_through
+                )
                 if summary.sprint_id is not None
+                else None
+            ),
+            # Set only when the summary stops before its sprint's last day.
+            "offline_through": (
+                offline_through
+                if offline_through is not None and offline_through < summary.sprint.end_date
                 else None
             ),
         },

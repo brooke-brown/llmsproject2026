@@ -111,10 +111,11 @@ def _project_sprints(team: Team):
     return list(Sprint.objects.filter(project_id=team.project_id).order_by("start_date", "pk"))
 
 
-def contributions_for(team: Team, student, sprint=None) -> list[Contribution]:
+def contributions_for(team: Team, student, sprint=None, through=None) -> list[Contribution]:
     """What `student` recorded on `team`, for instructors and TAs: newest work first, each
     with `confirmation_count`, `confirmed_by` and `sprint_names` (see `_for_staff`). With a
-    sprint, only work dated from its first through its last day.
+    sprint, only work dated from its first through its last day. With `through`, only work
+    dated on or before that day, such as the last day a partial summary covers.
 
     Self-reported and never checked: not evidence for a claim, and never counted toward
     shares or flags."""
@@ -123,6 +124,8 @@ def contributions_for(team: Team, student, sprint=None) -> list[Contribution]:
         contributions = contributions.filter(
             date__gte=sprint.start_date, date__lte=sprint.end_date
         )
+    if through is not None:
+        contributions = contributions.filter(date__lte=through)
     return _for_staff(contributions, _project_sprints(team))
 
 
