@@ -450,3 +450,51 @@ class AccessTests(SeeContributionsTestCase):
                 self.login(user)
                 self.assertEqual(self.team_page().status_code, 403)
                 self.assertEqual(self.summary_page(summary).status_code, 403)
+
+
+class ReviewFixTests(SeeContributionsTestCase):
+    """Fixes from the #156 review.
+
+    - The team page's list covers every sprint, unlike the rest of the page, which follows the
+      sprint menu, so it says "all sprints".
+    - A summary written before its sprint ended only lists offline work up to the day its
+      claims cover, and says so, as `contributions_for(..., through=<date>)`.
+    """
+
+    def test_the_team_pages_list_says_it_covers_all_sprints(self):
+        self.make_contribution()
+
+        section = self.student_section(self.student_a, self.team_page(sprint=self.sprint1.id))
+
+        self.assertIn("all sprints", section.text.lower())
+
+    def test_contributions_for_can_stop_at_a_day(self):
+        kept = self.make_contribution(date=date(2026, 8, 13))
+        self.make_contribution(date=date(2026, 8, 14))
+
+        found = services.contributions_for(
+            self.team, self.student_a, sprint=self.sprint1, through=date(2026, 8, 13)
+        )
+
+        self.assertEqual(list(found), [kept])
+
+    def test_a_partial_summary_lists_only_work_up_to_the_day_it_covers(self):
+        # Written on Aug 13, during Sprint 1 (Aug 10-17), so it covers Aug 10-13.
+        summary = give(
+            self.student_a, self.team, "major", sprint=self.sprint1,
+            generated=datetime(2026, 8, 13, 15, 0, tzinfo=ZoneInfo("America/New_York")),
+        )
+        covered = self.make_contribution(date=date(2026, 8, 13))
+        later = self.make_contribution(date=date(2026, 8, 15))
+
+        section = self.summary_section(summary)
+
+        self.assertEqual(section.contribution_ids, [covered.pk])
+        self.assertNotIn(later.pk, section.contribution_ids)
+        self.assertIn("through Aug 13", section.text)
+
+    def test_a_complete_summary_doesnt_say_through(self):
+        summary = self.summary_for(self.student_a)
+        self.make_contribution()
+
+        self.assertNotIn("through", self.summary_section(summary).text)
