@@ -13,7 +13,9 @@ from contributions.models import Contribution
 from core import services as setup
 from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
 from core.models import Sprint
+from peereval import services as peereval_services
 from peereval.models import PeerRating
+from peereval.questions import QUESTIONS
 from summaries.models import Summary
 
 from . import services
@@ -295,6 +297,9 @@ def project_setup(request, project_id):
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
             "contribution_count": Contribution.objects.filter(team__project=project).count(),
+            "peer_evaluations": peereval_services.project_evaluations(project),
+            "open_peer_evaluation": peereval_services.open_evaluation(project),
+            "peer_questions": QUESTIONS,
             "peer_rating_count": PeerRating.objects.filter(evaluation__project=project).count(),
             "editing": request.GET.get("edit") == "1",
         },

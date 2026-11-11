@@ -10,6 +10,9 @@ from core.models import Project, TeamMembership
 
 from .questions import MAX_SCORE, MIN_SCORE, QUESTION_KEYS
 
+# Shared by the model's constraint and the service's check, so the two never word it differently.
+DUPLICATE_NAME_ERROR = "This project already has a peer evaluation with this name."
+
 
 class PeerEvaluation(models.Model):
     """A round of peer ratings an instructor opens for a project, such as "Midpoint"."""
@@ -33,7 +36,7 @@ class PeerEvaluation(models.Model):
                 "project",
                 Lower("name"),
                 name="peereval_evaluation_project_name_unique_ci",
-                violation_error_message="This project already has a peer evaluation with this name.",
+                violation_error_message=DUPLICATE_NAME_ERROR,
             ),
         ]
 
