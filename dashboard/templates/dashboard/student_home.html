@@ -61,7 +61,7 @@
         <p class="tags"><span class="tag ok">No flags about you</span></p>
         {% endif %}
       </div>
-      <p class="foot"><a href="{% url 'contributions:list' membership.team.project_id %}">My offline contributions</a></p>
+      <p class="foot"><a href="{% url 'contributions:list' membership.team.project_id %}">My offline contributions</a><br><a href="{% url 'contributions:team_list' membership.team.project_id %}">Team's offline contributions</a></p>
     </article>
     {% endfor %}
   </div>

@@ -1,5 +1,6 @@
 import math
 import re
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -28,6 +29,7 @@ from core.models import (
 from core import services as setup_services
 from ingest import services as ingest_services
 from ingest.models import Artifact
+from peereval.models import PeerRating
 from summaries import services as summaries_services
 from summaries.llm import LLMError
 from summaries.models import Claim, Summary
@@ -764,6 +766,23 @@ def team_memberships_with_summaries(team, sprint=None):
     )
 
 
+def add_peer_rating_counts(team, memberships):
+    """Give each membership `peer_rating_count`, the ratings its student gave or got from
+    someone else on this team, and return how many ratings are between the team's students.
+    These are what removing the student, or deleting the team, deletes."""
+    student_ids = [membership.user_id for membership in memberships]
+    ratings = PeerRating.objects.filter(
+        evaluation__project=team.project_id, rater__in=student_ids, ratee__in=student_ids
+    ).values_list("rater_id", "ratee_id")
+    counts = Counter()
+    for rater_id, ratee_id in ratings:
+        counts[rater_id] += 1
+        counts[ratee_id] += 1
+    for membership in memberships:
+        membership.peer_rating_count = counts[membership.user_id]
+    return len(ratings)
+
+
 # The pie's colours for students with no flag or warning. They are theme variables in
 # base.html, none of them red or amber.
 PIE_PALETTE = [f"var(--pie-{number})" for number in range(1, 7)]
@@ -964,6 +983,7 @@ def course_projects_with_teams(course, chosen_sprint_ids=(), now=None):
             Prefetch("requirements", queryset=Requirement.objects.order_by("number")),
         )
     )
+    runs = active_generation_runs(course=course)
     for project in projects:
         project.started_sprints = started_sprints(project, now)
         project.menu_sprints = project.started_sprints[::-1]
@@ -975,6 +995,7 @@ def course_projects_with_teams(course, chosen_sprint_ids=(), now=None):
         project.overview_sprint = overview_sprint(project.menu_sprints, chosen_sprint_ids, now)
         for team in project.teams.all():
             _add_summary_status(team)
+            team.active_run = runs.get(team.id)
             _add_sprint_status(team, project.overview_sprint, today)
         # Sorting is stable, so each rank stays in name order.
         project.ranked_teams = sorted(project.teams.all(), key=lambda team: team.flag_rank)
@@ -1217,9 +1238,36 @@ def _write_summaries(team, students, week_start):
             # Anything else is unexpected. Its error isn't shown, so no student work can
             # reach the page.
             failures.append(SummaryFailure(student, "an unexpected error"))
+        _record_progress(team, student, failures[-1] if failures and failures[-1].student == student else None)
     if not failures:
         flags.compute_flags(team)
     return TeamGeneration(team, week_start, len(students), failures)
+
+
+def _record_progress(team, student, failure):
+    """Count a student as done on the team's run, naming them if their summary failed."""
+    try:
+        with transaction.atomic():
+            run = GenerationRun.objects.select_for_update().filter(team=team).first()
+            if run is None:
+                return
+            run.done_count += 1
+            if failure is not None:
+                run.failures = [*run.failures, {"name": student_name(student), "reason": failure.reason}]
+            run.save(update_fields=["done_count", "failures"])
+    except OperationalError:
+        # Progress is only for show, so a busy database mustn't fail the run.
+        pass
+
+
+def active_generation_runs(team_ids=None, course=None):
+    """The runs going right now, by team ID, for the progress display."""
+    runs = GenerationRun.objects.filter(expires_at__gt=timezone.now())
+    if course is not None:
+        runs = runs.filter(team__project__course=course)
+    if team_ids is not None:
+        runs = runs.filter(team_id__in=team_ids)
+    return {run.team_id: run for run in runs}
 
 
 def _write_sprint_summaries(team, students, sprint):
@@ -1235,6 +1283,7 @@ def _write_sprint_summaries(team, students, sprint):
             failures.append(SummaryFailure(student, str(error)))
         except Exception:
             failures.append(SummaryFailure(student, "an unexpected error"))
+        _record_progress(team, student, failures[-1] if failures and failures[-1].student == student else None)
     if not failures:
         flags.compute_flags(team)
     covered = sprint.covered_through(reporting_today())
@@ -1274,7 +1323,7 @@ def _start_run(team, student_count):
         with transaction.atomic():
             GenerationRun.objects.filter(team=team, expires_at__lte=now).delete()
             return GenerationRun.objects.create(
-                team=team, expires_at=now + timedelta(minutes=limit)
+                team=team, expires_at=now + timedelta(minutes=limit), student_count=student_count
             )
     except IntegrityError:
         raise GenerationError(_already_running_message(team)) from None

@@ -1,0 +1,45 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Team's offline contributions · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:student_home' %}">Your projects</a> / {{ project.name }}</span>{% endblock %}
+
+{% block content %}
+<div class="headrow">
+  <h1>Team's offline contributions</h1>
+</div>
+<p class="keynote">Confirm only work you saw or took part in.</p>
+<div class="contribution-list">
+  {% for contribution in contributions %}
+  <article class="card" id="contribution-{{ contribution.pk }}">
+    <div class="row">
+      <strong>{{ contribution.student.display_name }}</strong>
+      <span class="row-actions">
+        {% if contribution.confirmed_by_student %}
+        <span class="tag ok">You confirmed this</span>
+        <form action="{% url 'contributions:unconfirm' contribution.pk %}" method="post">
+          {% csrf_token %}
+          <button type="submit" class="text-button">Undo</button>
+        </form>
+        {% else %}
+        <form action="{% url 'contributions:confirm' contribution.pk %}" method="post">
+          {% csrf_token %}
+          <input type="hidden" name="updated_at" value="{{ contribution.updated_at.isoformat }}">
+          <button type="submit">I can confirm this</button>
+        </form>
+        {% endif %}
+      </span>
+    </div>
+    <p class="contribution-description">{{ contribution.description }}</p>
+    <p class="contribution-meta">
+      <span>{{ contribution.get_category_display }}</span>
+      <span>{{ contribution.date|date:"M j, Y" }}</span>
+      {% if contribution.hours is not None %}<span>{{ contribution.hours|floatformat:"-2" }} hour{{ contribution.hours|pluralize }}</span>{% endif %}
+      <span>Confirmed by {{ contribution.confirmation_count }} teammate{{ contribution.confirmation_count|pluralize }}</span>
+    </p>
+  </article>
+  {% empty %}
+  <p class="keynote">Your teammates haven't recorded any offline contributions for this project yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}

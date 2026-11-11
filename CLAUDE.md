@@ -30,6 +30,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
 | `contributions/` | `Contribution` and `Corroboration` models: offline work students report and teammates confirm. Never evidence for a claim, passed to the LLM or counted toward flags |
+| `peereval/` | `PeerEvaluation` and `PeerRating` models, and the questions as a constant in `questions.py`. Only instructors and TAs see ratings; never passed to the LLM or counted toward flags |
 
 ## Shared contracts: do not change without team agreement
 
@@ -73,6 +74,8 @@ Course                     e.g. "CS 3240, Fall 2026"
  └── Project               optional requirements PDF or pasted text → Requirement rows
       ├── Sprint           name, start and end date; a project has zero or more
       │    └── Requirement numbered per sprint; also keeps `project` until T-21
+      ├── PeerEvaluation   a named round of ratings, such as "Midpoint", with a closing time
+      │    └── PeerRating  one rater's 1–5 scores for one teammate, by question key; never shown to students
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
            ├── Repo             the team's GitHub repo
@@ -85,7 +88,7 @@ Summary          → Team + User + reporting week
 ValidationRun    → per-run log: first-pass rate, retries, drop rate
 Flag             → Team + Sprint: each finished sprint keeps its own flags
 FlagDispute      → Team + student + rule + Sprint: finds its flag by these, so it survives flags being recomputed
-GenerationRun    → Team: exists only while its summaries are generating
+GenerationRun    → Team: exists only while its summaries are generating; holds progress (students, done, failures)
 ```
 
 Planned changes for sprints (#119–#125):
@@ -129,7 +132,7 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 - Built (US-46, #136): each project on the course overview has a sprint menu (`?sprint=<id>`, repeated once per project), defaulting to the latest sprint that has ended. Teams are labelled and ordered by that sprint's flags, then open disputes from any sprint (the tag names an earlier one), and each team link carries the sprint to the team page. The overview and team page share one sprint tag (`team_sprint_status`), and the course picker counts flags in the sprint the overview opens on.
 - Built (US-42, #124): the team page has a sprint menu (`?sprint=<id>`), defaulting to the latest sprint the team has a summary for. Its tag, flags, disputes, shares, pie and summary links are all for that sprint. Shares appear once every student has a summary for it, partial or not; a partial one is labelled "in progress, through <date>", and a missing one "Not generated".
 
-**Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
+**Setup at scale:** CSV import of teams and students (#126, built: instructors upload on the project's edit page, preview, then confirm), and generating temporary passwords in bulk (#127, built: the project's edit page downloads a CSV once, never stored).
 
 **Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.

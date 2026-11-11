@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}STRIVE{% endblock %}</title>
+  {% block head_extra %}{% endblock %}
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.0.6/css/pico.min.css">
   <style>
     /* The design from docs/mockups/c-balance.html, on top of Pico's dark theme. Colours go
@@ -70,6 +71,11 @@
     .bar { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding-block: 12px; font-size: 14px; }
     .bar .brand { display: inline-flex; gap: 8px; align-items: center; color: var(--ink); font-weight: 700; letter-spacing: .1em; }
     .bar .brand i, article.login .brand i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+    .bar .nav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+    .bar .nav a { color: var(--ink); font-weight: 600; }
+    .progress-note { margin: 10px 0 4px; }
+    .progress-note progress { width: 100%; height: 8px; margin: 0 0 4px; }
+    .progress-note .keynote { margin: 2px 0; }
     .bar .crumb { color: var(--muted); }
     .bar .crumb a { color: var(--muted); }
     .bar .crumb a:hover { color: var(--ink); }
@@ -285,6 +291,8 @@
     .contribution-list { display: flex; flex-direction: column; gap: 12px; }
     .contribution-description { white-space: pre-line; overflow-wrap: anywhere; }
     .contribution-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 13.5px; }
+    .contribution-list .row-actions { align-items: center; }
+    .contribution-list .row-actions button:not(.text-button) { width: auto; margin: 0; padding: 4px 12px; font-size: 13.5px; white-space: nowrap; }
     .contribution-form { max-width: 560px; }
     .contribution-form label { display: block; margin: 0 0 12px; font-size: 13.5px; font-weight: 600; }
     .contribution-form label :is(input, select, textarea) { height: auto; margin: 4px 0 0; padding: 6px 10px; font-size: 13.5px; }
@@ -323,12 +331,20 @@
   {% block topbar %}
   <header class="top">
     <div class="bar container">
-      <a class="brand" href="{% url 'dashboard:home' %}"><i></i>STRIVE</a>
+      {% if nav_restricted %}<span class="brand"><i></i>STRIVE</span>{% else %}<a class="brand" href="{% url 'dashboard:home' %}"><i></i>STRIVE</a>{% endif %}
+      {% if not nav_restricted %}
+      {% if nav_staff or nav_student %}
+      <nav class="nav" aria-label="Main">
+        {% if nav_staff %}<a href="{% url 'dashboard:home' %}">Courses</a>{% endif %}
+        {% if nav_student %}<a href="{% url 'dashboard:student_home' %}">My projects</a>{% endif %}
+      </nav>
+      {% endif %}
       {% block crumb %}{% endblock %}
+      {% endif %}
       {% if user.is_authenticated %}
       <span class="who">
-        {{ user.get_username }}
-        <a href="{% url 'password_change' %}">Change password</a>
+        {{ user.display_name }}
+        {% if not nav_restricted %}<a href="{% url 'password_change' %}">Change password</a>{% endif %}
         <form action="{% url 'logout' %}" method="post">
           {% csrf_token %}
           <button type="submit" class="secondary outline">Log out</button>

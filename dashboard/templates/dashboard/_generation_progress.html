@@ -1,0 +1,13 @@
+{% comment %}A running team's progress. Needs `run`, a GenerationRun.{% endcomment %}
+<div class="progress-note" role="status">
+  {% if run.done_count %}
+  <progress value="{{ run.done_count }}" max="{{ run.student_count }}" aria-label="Progress"></progress>
+  <p class="keynote">{{ run.done_count }} of {{ run.student_count }} student{{ run.student_count|pluralize }} done</p>
+  {% else %}
+  <progress aria-label="Progress"></progress>
+  <p class="keynote">Starting: pulling GitHub activity and writing the first summary…</p>
+  {% endif %}
+  {% for failure in run.failures %}
+  <p class="keynote missing">Couldn't generate: {{ failure.name }} ({{ failure.reason }})</p>
+  {% endfor %}
+</div>
