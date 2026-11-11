@@ -125,7 +125,8 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 - Two sprints can overlap only by one sprint's last day being the next one's first day, and can never start on the same day.
 - Each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today and is labelled in progress.
 - A covered range is split into 7-day chunks, with a leftover of 3 days or fewer joining the previous chunk, so up to 10 days is one chunk. Every student on a team is chunked the same way. Several chunks go through an LLM merge pass and the validator again, and users only ever see the one report.
-- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint; the course overview and team status are labelled from the team's latest one, and the team page's shares use the latest sprint every student has a summary for, partial or not. Weekly summaries no longer raise flags.
+- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint; the course overview is labelled from the team's latest one. Weekly summaries no longer raise flags.
+- Built (US-42, #124): the team page has a sprint menu (`?sprint=<id>`), defaulting to the latest sprint the team has a summary for. Its tag, flags, disputes, shares, pie and summary links are all for that sprint. Shares appear once every student has a summary for it, partial or not; a partial one is labelled "in progress, through <date>", and a missing one "Not generated".
 
 **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
 

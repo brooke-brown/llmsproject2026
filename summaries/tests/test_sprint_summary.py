@@ -300,4 +300,4 @@ class SprintFlagCodeIgnoresWeeklySummariesTests(SprintTestCase):
             Summary.objects.create(team=self.team, user=user, sprint=self.sprint)
             Summary.objects.create(team=self.team, user=user, week_start=date(2026, 10, 26))
         # Neither kind has claims, so there's nothing to compare.
-        self.assertIsNone(flags.requirement_shares(self.team))
+        self.assertIsNone(flags.sprint_shares(self.team, self.sprint))

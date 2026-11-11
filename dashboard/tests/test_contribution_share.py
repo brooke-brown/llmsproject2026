@@ -2,8 +2,8 @@
 
 The share is the one the low-share flag rule uses: each student's verified,
 requirement-tied claims weighted by significance, as a percentage of the team's total,
-for the latest sprint in which every student on the team has a summary. It's shown for
-every team, flagged or not.
+for the sprint chosen on the team page (US-42), once every student has a summary for it.
+It's shown for every team, flagged or not.
 """
 
 from datetime import date
@@ -69,12 +69,15 @@ class ContributionShareTests(TestCase):
 
         self.assertIn("Sprint 1 (Oct 26 – Nov 1, 2026)", self.page())
 
-    def test_uses_the_latest_sprint_every_student_has_a_summary(self):
+    def test_an_earlier_sprint_every_student_has_a_summary_for_can_be_chosen(self):
         give(self.ada, self.team, "major", sprint=self.earlier)
         give(self.grace, self.team, "major", sprint=self.earlier)
         give(self.ada, self.team, "major")  # Grace has no summary this sprint.
 
-        content = self.page()
+        self.client.force_login(self.instructor)
+        content = self.client.get(
+            team_url(self.team.id), {"sprint": self.earlier.id}
+        ).content.decode()
 
         self.assertIn("Sprint 0 (Oct 19 – Oct 25, 2026)", content)
         self.assertIn("50%", self.share_beside(content, "Ada Sample"))
@@ -95,7 +98,8 @@ class ContributionShareTests(TestCase):
         content = self.page()
 
         self.assertNotIn("%", self.share_beside(content, "Ada Sample"))
-        self.assertNotIn("requirement-tied work", content)
+        self.assertNotIn('class="pie"', content)
+        self.assertIn("once every student has a summary for Sprint 1", content)
 
     def test_no_shares_when_nobody_has_requirement_tied_work(self):
         give(self.ada, self.team, "major", tied=False)

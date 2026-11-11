@@ -90,22 +90,6 @@ def sprint_shares(team, sprint):
     return {user_id: Fraction(score, total) for user_id, score in scores.items()}
 
 
-def requirement_shares(team):
-    """Shares to show on the team page, as (sprint, {user ID: Fraction}), or None if there's
-    nothing to compare.
-
-    They're for the latest sprint every student has a summary for, partial or not, so a running
-    sprint's shares are shown. Flags never use them: they use flaggable_sprints.
-    """
-    sprints = _sprints_every_student_has(team, include_partial=True)
-    if not sprints:
-        return None
-    shares = sprint_shares(team, sprints[-1])
-    if shares is None:
-        return None
-    return sprints[-1], shares
-
-
 def low_requirement_share(team, sprint):
     """Flag students whose weighted share of the sprint's requirement-tied work is low."""
     students = [membership.user for membership in team.memberships.select_related("user")]

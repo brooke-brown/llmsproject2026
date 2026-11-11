@@ -595,6 +595,23 @@ def team_status(team):
     return "in_progress" if all(summary.is_partial for summary in summaries) else "ok"
 
 
+def team_sprint_status(team, sprint, in_progress_through):
+    """The team page's tag for the sprint shown: 'flag' or 'warning' for its worst active flag,
+    'ok' for a sprint that can raise flags and raised none, 'in_progress' for one whose
+    summaries are partial, otherwise 'none'. Unlike team_status, it's about this sprint only."""
+    if sprint is None:
+        return "none"
+    severities = set(
+        active_flags().filter(team=team, sprint=sprint).values_list("severity", flat=True)
+    )
+    for severity in [Flag.Severity.FLAG, Flag.Severity.WARNING]:
+        if severity in severities:
+            return severity
+    if sprint in flags.flaggable_sprints(team):
+        return "ok"
+    return "in_progress" if in_progress_through else "none"
+
+
 def team_repos(team):
     """The team's repos, each with `has_artifacts`, since those can't be changed, and
     `has_cited_artifacts`, since those can't be removed either."""
@@ -614,16 +631,77 @@ def remove_student(membership):
         flags.compute_flags(membership.team)
 
 
-def team_wide_flags(team):
-    """The team's flags that aren't about one student."""
-    return flags_in_display_order().filter(team=team, user=None)
+def team_wide_flags(team, sprint):
+    """The team's flags in this sprint that aren't about one student."""
+    return flags_in_display_order().filter(team=team, sprint=sprint, user=None)
 
 
-def team_memberships_with_summaries(team):
+def team_page_sprints(project, now=None):
+    """The sprints in the team page's menu: those that have started, newest first."""
+    return started_sprints(project, now)[::-1]
+
+
+def team_page_sprint(team, sprints, value, now=None):
+    """The sprint the team page shows, from `sprints` (team_page_sprints): the one whose ID is
+    `value`, or else the latest sprint the team has a summary for, or else the project's
+    default_sprint. None if no sprint has started."""
+    chosen = parse_id(value)
+    for sprint in sprints:
+        if sprint.id == chosen:
+            return sprint
+    latest = (
+        team.summaries.filter(sprint__isnull=False)
+        .select_related("sprint")
+        .order_by("-sprint__start_date", "-sprint__end_date")
+        .first()
+    )
+    if latest is not None:
+        return latest.sprint
+    return default_sprint(team.project, now)
+
+
+def summary_covered_through(summary):
+    """The last day a sprint summary covers: the day it was generated, or its sprint's last day
+    if it was generated after the sprint ended."""
+    generated_on = summary.generated_at.astimezone(ingest_services.REPORTING_TIME_ZONE).date()
+    return summary.sprint.covered_through(generated_on)
+
+
+def add_sprint_summaries(memberships, sprint):
+    """Give each membership `sprint_summary`, its student's summary for the sprint or None,
+    with `covered_through` set when it's partial. Return the earliest day any partial one covers
+    through, for labelling the sprint in progress, or None if none is partial.
+
+    Uses the `team_summaries` from team_memberships_with_summaries, so it runs no queries.
+    """
+    earliest = None
+    for membership in memberships:
+        membership.sprint_summary = None
+        if sprint is None:
+            continue
+        for summary in membership.user.team_summaries:
+            if summary.sprint_id == sprint.id:
+                membership.sprint_summary = summary
+                summary.covered_through = None
+                if summary.is_partial:
+                    summary.covered_through = summary_covered_through(summary)
+                    if earliest is None or summary.covered_through < earliest:
+                        earliest = summary.covered_through
+    return earliest
+
+
+def team_memberships_with_summaries(team, sprint=None):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
     `team_flags` about them, their `team_disputes`, `team_contributions` and the
     `team_corroborations` they gave. Each membership has `confirmations_of_their_work`, how
-    many times teammates confirmed the student's contributions on this team."""
+    many times teammates confirmed the student's contributions on this team.
+
+    With a `sprint`, `team_flags` and `team_disputes` are only that sprint's."""
+    team_flags = flags_in_display_order().filter(team=team)
+    team_disputes = FlagDispute.objects.filter(team=team)
+    if sprint is not None:
+        team_flags = team_flags.filter(sprint=sprint)
+        team_disputes = team_disputes.filter(sprint=sprint)
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
@@ -644,13 +722,12 @@ def team_memberships_with_summaries(team):
             Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"),
             Prefetch(
                 "user__flags",
-                queryset=flags_in_display_order().filter(team=team).select_related("sprint"),
+                queryset=team_flags.select_related("sprint"),
                 to_attr="team_flags",
             ),
             Prefetch(
                 "user__flag_disputes",
-                queryset=FlagDispute.objects.filter(team=team)
-                .select_related("resolved_by", "sprint")
+                queryset=team_disputes.select_related("resolved_by", "sprint")
                 .order_by("sprint__start_date", "id"),
                 to_attr="team_disputes",
             ),
@@ -717,15 +794,15 @@ def _pie_colours(severities):
     return colours
 
 
-def add_contribution_shares(team, memberships):
+def add_contribution_shares(team, memberships, sprint):
     """Give each of the team's memberships `contribution_share`, the student's whole-percent
-    share of the team's requirement-tied work, and return the memberships and the sprint the
-    shares are for.
+    share of the team's requirement-tied work in the sprint, and return the memberships.
 
     It's the share the low-share flag rule uses, rounded the same way as flag reasons, but it
     includes a partial sprint, which the rule skips. So each membership also gets `chart_flag`,
-    its worst flag if it's about the sprint being shown, otherwise None. Before there's
-    anything to compare, the sprint and every share are None.
+    its worst flag if it's about this sprint, otherwise None. Every share is None until every
+    student has a summary for the sprint, partial or not, and there's requirement-tied work to
+    compare. Uses the `team_summaries` from team_memberships_with_summaries.
 
     Each membership also gets `pie_order`, its place in the chart and legend (largest share
     first), and `pie`, the slice to draw for a student with a share above 0%, otherwise None.
@@ -733,8 +810,10 @@ def add_contribution_shares(team, memberships):
     sized from the exact shares, so they always fill the circle.
     """
     memberships = list(memberships)
-    shares = flags.requirement_shares(team)
-    sprint, shares = shares if shares is not None else (None, {})
+    shares = None
+    if sprint is not None and every_student_has_summary(memberships, sprint):
+        shares = flags.sprint_shares(team, sprint)
+    shares = shares or {}
     for membership in memberships:
         share = shares.get(membership.user_id)
         about_this_sprint = [
@@ -765,17 +844,16 @@ def add_contribution_shares(team, memberships):
             "path": _slice_path(start, end),
         }
         start = end
-    return memberships, sprint
+    return memberships
 
 
-def share_sprint_note(team, sprint):
-    """Why the shares for this sprint may change: "in progress", "partial", or "" if
-    complete."""
-    summaries = team.summaries.filter(sprint=sprint).prefetch_related("validation_runs")
-    partial = [summary for summary in summaries if summary.is_partial]
-    if not partial:
-        return ""
-    return "in progress" if partial[0].week_is_running else "partial"
+def every_student_has_summary(memberships, sprint):
+    """True if every membership's student has a summary for the sprint, partial or not, so
+    their shares can be compared. Uses the `team_summaries` from team_memberships_with_summaries."""
+    return bool(memberships) and all(
+        any(summary.sprint_id == sprint.id for summary in membership.user.team_summaries)
+        for membership in memberships
+    )
 
 
 def pie_legend(memberships):

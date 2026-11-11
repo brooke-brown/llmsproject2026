@@ -501,17 +501,17 @@ class TeamPageShareTests(SprintFlagFixture):
     def test_the_chart_shows_a_running_sprint_and_says_so(self):
         response = self.team_page_with_a_running_sprint()
 
-        self.assertContains(response, "Sprint 3 (in progress)")
+        self.assertContains(response, "Sprint 3 (in progress, through Nov 10)")
         self.assertContains(response, "flags don't use them")
-        self.assertEqual(response.context["share_sprint"], self.sprint3)
+        self.assertEqual(response.context["sprint"], self.sprint3)
         shares = {m.user_id: m.contribution_share for m in response.context["memberships"]}
         self.assertEqual(shares, {self.ada.id: 75, self.grace.id: 25})
 
-    def test_the_chart_says_partial_once_the_sprint_has_ended(self):
+    def test_the_chart_stays_in_progress_after_the_sprint_ends_until_regenerated(self):
         self.give(self.ada, self.pair, self.sprint2, "major", generated=DURING_SPRINT_2)
         self.give(self.grace, self.pair, self.sprint2, "minor", generated=DURING_SPRINT_2)
 
-        self.assertContains(self.team_page(), "Sprint 2 (partial)")
+        self.assertContains(self.team_page(), "Sprint 2 (in progress, through Nov 1)")
 
     def test_a_complete_chart_has_no_note(self):
         self.give_finished_sprint()
@@ -521,11 +521,15 @@ class TeamPageShareTests(SprintFlagFixture):
         self.assertContains(response, "work, Sprint 2</h2>")
         self.assertNotContains(response, "flags don't use them")
 
-    def test_a_student_missing_from_the_running_sprint_keeps_the_chart_on_a_full_one(self):
+    def test_a_student_missing_from_the_running_sprint_leaves_it_without_shares(self):
+        """US-42 shows the latest sprint with summaries; an earlier one can still be chosen."""
         self.give_finished_sprint()
         self.give(self.ada, self.pair, self.sprint3, "major", generated=NOW)
 
-        self.assertEqual(self.team_page().context["share_sprint"], self.sprint2)
+        response = self.team_page()
+
+        self.assertEqual(response.context["sprint"], self.sprint3)
+        self.assertEqual(response.context["legend"], [])
 
     def test_a_running_sprint_cant_raise_a_flag_or_clear_an_earlier_one(self):
         self.give_finished_sprint()
@@ -548,9 +552,12 @@ class TeamPageShareTests(SprintFlagFixture):
         self.assertNotIn("var(--warn)", rows[self.grace.id].pie["color"])
         self.assertNotIn("var(--flag)", rows[self.grace.id].pie["color"])
 
-    def test_that_flag_still_shows_on_the_students_card_naming_its_sprint(self):
+    def test_that_flag_shows_on_the_students_card_only_with_its_sprint(self):
         response = self.team_page_with_a_running_sprint(ada="minor", grace="major")
+        self.assertNotContains(response, "work in Sprint 2")
 
+        self.client.force_login(self.instructor)
+        response = self.client.get(team_url(self.pair.id), {"sprint": self.sprint2.id})
         self.assertContains(response, "work in Sprint 2")
 
     def test_a_flag_for_the_sprint_on_the_chart_still_marks_it(self):

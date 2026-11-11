@@ -185,16 +185,21 @@ class LegendTests(PieFixture):
 
         self.assertEqual(rows, ["Student1 Test 100%", "Student2 Test 0% Flag"])
 
-    def test_a_name_links_to_the_students_newest_summary(self):
+    def test_a_name_links_to_the_students_summary_for_the_sprint_shown(self):
         first, second = self.make_students(["major"], ["minor"])
+        sprint_1 = sprint_for(self.team.project)
+        shown = Summary.objects.get(team=self.team, user=first, sprint=sprint_1)
         sprint_2 = sprint_for(
             self.team.project, "Sprint 2", start=date(2026, 11, 2), end=date(2026, 11, 8)
         )
-        newest = Summary.objects.create(team=self.team, user=first, sprint=sprint_2)
+        newer = Summary.objects.create(team=self.team, user=first, sprint=sprint_2)
 
-        row = legend_rows(self.page())[0]
+        self.client.force_login(self.instructor)
+        content = self.client.get(team_url(self.team.id), {"sprint": sprint_1.id}).content.decode()
+        row = legend_rows(content)[0]
 
-        self.assertIn(f'href="/summaries/{newest.id}/"', row)
+        self.assertIn(f'href="/summaries/{shown.id}/"', row)
+        self.assertNotIn(f'href="/summaries/{newer.id}/"', row)
 
     def test_hovering_a_slice_shows_the_name_and_percentage(self):
         self.make_students(["major"], ["minor"])
