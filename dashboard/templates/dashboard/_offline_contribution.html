@@ -1,0 +1,13 @@
+<li class="offline-item" id="contribution-{{ contribution.pk }}">
+  <div class="row">
+    <strong>{{ contribution.get_category_display }}</strong>
+    <span class="tag self-reported">Self-reported</span>
+  </div>
+  <p class="contribution-description">{{ contribution.description }}</p>
+  <p class="contribution-meta">
+    <span>{{ contribution.date|date:"M j, Y" }}</span>
+    <span>{% for name in contribution.sprint_names %}{{ name }}{% if not forloop.last %}, {% endif %}{% empty %}No sprint{% endfor %}</span>
+    {% if contribution.hours is not None %}<span>{{ contribution.hours|floatformat:"-2" }} hour{{ contribution.hours|pluralize }}</span>{% endif %}
+    <span>{% if contribution.confirmation_count %}Confirmed by {{ contribution.confirmation_count }} teammate{{ contribution.confirmation_count|pluralize }}: {{ contribution.confirmed_by|join:", " }}{% else %}Not confirmed by teammates{% endif %}</span>
+  </p>
+</li>

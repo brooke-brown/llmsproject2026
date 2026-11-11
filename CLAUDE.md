@@ -113,7 +113,7 @@ Built, and what `main` does today:
 - "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo, then `generate_summary` once per student; flags are recomputed once every student has succeeded. A team can only have one run at a time (`GenerationRun`). The current week can be generated, but a summary written before its week ended (`Summary.is_partial`) is labelled, counts toward the team page's shares, and never counts toward flags until the week is generated again
 - Validator, retry, drop + "N couldn't be verified" note, `ValidationRun` logging
 - 1–2 flag rules, based on share of requirement-tied claims weighted by significance
-- Pages: course overview (teams, flagged ones first, labels only) → team (flag reasons, students and their summaries) → summary (claims with GitHub links and the unverified note)
+- Pages: course overview (teams, flagged ones first, labels only) → team (flag reasons, students and their summaries, and each student's offline contributions) → summary (claims with GitHub links and the unverified note, then the student's offline contributions in that sprint, labelled self-reported). Offline contributions come from `contributions.services.contributions_for` and are styled apart from claims (US-35, #112)
 
 ## Beta scope
 

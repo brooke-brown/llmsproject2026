@@ -104,6 +104,20 @@
       {% endfor %}
       {% endif %}
     </ul>
+    <section class="offline" id="offline-{{ membership.user_id }}">
+      {% with contributions=membership.offline_contributions %}
+      {% if contributions %}
+      <details>
+        <summary>Offline contributions <span class="count">{{ contributions|length }} self-reported</span></summary>
+        <ul class="offline-list">
+          {% for contribution in contributions %}{% include "dashboard/_offline_contribution.html" %}{% endfor %}
+        </ul>
+      </details>
+      {% else %}
+      <p class="keynote">No offline contributions recorded</p>
+      {% endif %}
+      {% endwith %}
+    </section>
     {% if can_set_up %}
     <span class="row-actions card-actions">
       <a class="edit-link" href="?edit_student={{ membership.id }}">edit</a>

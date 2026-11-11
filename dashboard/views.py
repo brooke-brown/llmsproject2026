@@ -9,6 +9,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from contributions import services as contributions
 from contributions.models import Contribution
 from core import services as setup
 from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
@@ -128,6 +129,9 @@ def team(request, team_id):
     in_progress_through = services.add_sprint_summaries(memberships, sprint)
     memberships = services.add_contribution_shares(team, memberships, sprint)
     services.add_disputes(memberships)
+    offline = contributions.contributions_by_student(team)
+    for membership in memberships:
+        membership.offline_contributions = offline.get(membership.user_id, [])
     has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
         request,
@@ -244,6 +248,12 @@ def summary(request, summary_id):
             "tied_count": sum(1 for claim in claims if claim.requirement_ids),
             "unverified_count": summary.unverified_count,
             "weeks": services.student_weeks(summary),
+            # Weekly summaries have no sprint to place offline work in, so they show none.
+            "offline_contributions": (
+                contributions.contributions_for(summary.team, summary.user, summary.sprint)
+                if summary.sprint_id is not None
+                else None
+            ),
         },
     )
 
