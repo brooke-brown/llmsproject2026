@@ -93,6 +93,21 @@ class GenerateDownloadTests(PasswordFixture):
         self.assertEqual(body["busy-student"]["temporary_password"], "")
         self.assertIn("admin", body["busy-student"]["note"])
 
+    def test_a_student_also_in_a_course_you_do_not_teach_is_not_given_a_password(self):
+        enroll(self.waiting, self.other_course, Enrollment.Role.STUDENT)
+        body = {r["github_login"]: r for r in rows(self.client.post(generate_url(self.project.id)))}
+        self.assertEqual(body["waiting-student"]["temporary_password"], "")
+        self.assertIn("course you don't teach", body["waiting-student"]["note"])
+        self.waiting.refresh_from_db()
+        self.assertTrue(self.waiting.check_password("Old-temporary-1"))
+
+    def test_the_page_counts_a_student_also_in_a_course_you_do_not_teach_as_blocked(self):
+        enroll(self.waiting, self.other_course, Enrollment.Role.STUDENT)
+        page = self.client.get(passwords_url(self.project.id))
+        self.assertContains(page, "1 student will get a temporary password")
+        self.assertContains(page, "1 account can't be given a password here")
+        self.assertContains(page, "course you don't teach")
+
     def test_with_nobody_to_give_a_password_to_it_redirects_with_a_message(self):
         for user in (self.new, self.waiting):
             user.set_password("My-own-choice-1")
