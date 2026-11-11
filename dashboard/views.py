@@ -9,6 +9,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from contributions import services as contributions
 from contributions.models import Contribution
 from core import services as setup
 from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
@@ -135,6 +136,9 @@ def team(request, team_id):
     in_progress_through = services.add_sprint_summaries(memberships, sprint)
     memberships = services.add_contribution_shares(team, memberships, sprint)
     services.add_disputes(memberships)
+    offline = contributions.contributions_by_student(team)
+    for membership in memberships:
+        membership.offline_contributions = offline.get(membership.user_id, [])
     peer_rating_count = services.add_peer_rating_counts(team, memberships)
     has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
@@ -244,6 +248,10 @@ def summary(request, summary_id):
     summary = services.get_summary_for_staff(request.user, summary_id)
     claims = services.verified_claims(summary)
     period_start, period_end = services.summary_period(summary)
+    # Offline work stops where the claims do, so a partial summary doesn't list later work.
+    offline_through = (
+        services.summary_covered_through(summary) if summary.sprint_id is not None else None
+    )
     return render(
         request,
         "dashboard/summary.html",
@@ -255,6 +263,20 @@ def summary(request, summary_id):
             "tied_count": sum(1 for claim in claims if claim.requirement_ids),
             "unverified_count": summary.unverified_count,
             "weeks": services.student_weeks(summary),
+            # Weekly summaries have no sprint to place offline work in, so they show none.
+            "offline_contributions": (
+                contributions.contributions_for(
+                    summary.team, summary.user, summary.sprint, through=offline_through
+                )
+                if summary.sprint_id is not None
+                else None
+            ),
+            # Set only when the summary stops before its sprint's last day.
+            "offline_through": (
+                offline_through
+                if offline_through is not None and offline_through < summary.sprint.end_date
+                else None
+            ),
         },
     )
 

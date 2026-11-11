@@ -216,7 +216,7 @@ Every evaluation asks the same five questions, each answered from 1 to 5: commun
 Students log in with a temporary password and choose their own (see [Student logins](#student-logins)). Their home page lists each project and team they're on, with their teammates, and has everything below.
 
 - **Flags and disputes:** a flag or warning about a student is shown with its reason and the sprint it's for. They can **dispute** it with a written explanation, and edit it until an instructor decides. A decided dispute stays readable even after its flag is no longer raised.
-- **Offline contributions:** work that isn't in GitHub, such as a meeting, design, user research, documentation or planning. Under **My offline contributions** a student records the date, a category, a description of up to 1,000 characters and, optionally, hours from 0.25 to 24. They can edit or delete it until a teammate confirms it. Under **Team's offline contributions**, a student can confirm a teammate's work they saw or took part in, which locks the original text. A confirmation is refused if the work was edited after the page loaded. Students see how many teammates confirmed, never who. Offline work is self-reported: it never counts toward shares or flags.
+- **Offline contributions:** work that isn't in GitHub, such as a meeting, design, user research, documentation or planning. Under **My offline contributions** a student records the date, a category, a description of up to 1,000 characters and, optionally, hours from 0.25 to 24. They can edit or delete it until a teammate confirms it. Under **Team's offline contributions**, a student can confirm a teammate's work they saw or took part in, which locks the original text. A confirmation is refused if the work was edited after the page loaded. Students see how many teammates confirmed, never who. Offline work is self-reported: it never counts toward shares or flags, and instructors and TAs see it labelled that way on the team and summary pages.
 - **Peer evaluation:** a link to the open evaluation, if there is one.
 
 Students never see summaries, claims or other people's flags.
@@ -228,8 +228,8 @@ Students never see summaries, claims or other people's flags.
 | `/accounts/login/`, `/accounts/logout/`, `/accounts/password_change/` | Log in, out and choose a password |
 | `/` | Your courses. Goes straight to the course if you only have one, or to the student home if you're only a student. |
 | `/courses/<id>/` | Each project's teams, with a sprint menu per project, labelled and ordered by that sprint's flags: flagged first, then warned, then teams with an open dispute, then the rest. The Generate summaries control, with its sprint menu, is on each team card. Instructors also get New project and Edit project. |
-| `/teams/<id>/` | A sprint menu, then repos, the sprint's flags with their reasons and disputes, a pie chart of each student's share, and students with all their summaries. Instructors can keep or withdraw a disputed flag. |
-| `/summaries/<id>/` | Verified claims with GitHub links, the "couldn't be verified" note, and in-progress labels |
+| `/teams/<id>/` | A sprint menu, then repos, the sprint's flags with their reasons and disputes, a pie chart of each student's share, and students with all their summaries. Each student also has their offline contributions for the whole project (all sprints, whichever one the page shows), newest first, labelled self-reported with who confirmed each one. Instructors can keep or withdraw a disputed flag. |
+| `/summaries/<id>/` | Verified claims with GitHub links, the "couldn't be verified" note, and in-progress labels. Below the claims, a sprint summary lists the student's offline contributions dated in that sprint, up to the last day the summary covers, labelled "Self-reported, not checked against GitHub". They are never claims and never count toward shares or flags. |
 | `/projects/<id>/setup/` | Edit project: sprints, teams (with CSV import and bulk passwords), peer evaluations and deleting the project. Instructors only. |
 | `/sprints/<id>/` | A sprint's name and dates and its requirements. Instructors only. |
 | `/student/` | The student home |
@@ -405,10 +405,10 @@ Each item was a GitHub issue. [`CLAUDE.md`](CLAUDE.md#beta-scope) has the detail
 - **Flags per sprint:** raised once a sprint has ended with every student's summary complete, with disputes tied to the sprint.
 - **Course overview and team page by sprint:** a sprint menu on each, with labels, ordering, shares and the pie chart for the chosen sprint.
 - **Setup at scale:** CSV import of teams and students, and bulk temporary passwords.
-- **Student side:** logins, the student home, flag disputes, offline contributions with teammate confirmation, and peer evaluations that students can answer.
+- **Student side:** logins, the student home, flag disputes, offline contributions with teammate confirmation that instructors can see, and peer evaluations that students can answer.
 - **Polish:** progress while summaries generate, role-aware navigation, and clear 403, 404 and empty pages.
 
-**Still to come in the beta:** instructors seeing students' offline contributions on the team and summary pages (US-35), instructors reading peer ratings (US-38), and removing the alpha's weekly summaries and code (T-21, #125).
+**Still to come in the beta:** instructors reading peer ratings (US-38, in review), and removing the alpha's weekly summaries and code (T-21, #125).
 
 ## Known limits
 

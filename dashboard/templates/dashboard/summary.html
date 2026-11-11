@@ -69,4 +69,18 @@
   <div class="stat empty">No claims were made for this {% if summary.sprint %}sprint{% else %}week{% endif %}.</div>
   {% endif %}
 {% endfor %}
+
+{% if offline_contributions is not None %}
+<section class="offline offline-summary" id="offline-contributions" aria-labelledby="offline-title">
+  <h2 id="offline-title">Offline contributions, {{ summary.sprint.name }}{% if offline_through %} (through {{ offline_through|date:"M j" }}){% endif %}</h2>
+  <p class="keynote">Self-reported, not checked against GitHub. These are what {{ summary.user.display_name }} recorded doing outside the code during this sprint{% if offline_through %}, up to the last day this summary covers{% endif %}. They aren't claims, and never count toward shares or flags.</p>
+  {% if offline_contributions %}
+  <ul class="offline-list">
+    {% for contribution in offline_contributions %}{% include "dashboard/_offline_contribution.html" %}{% endfor %}
+  </ul>
+  {% else %}
+  <p class="stat empty">No offline contributions recorded in {{ summary.sprint.name }}.</p>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}
