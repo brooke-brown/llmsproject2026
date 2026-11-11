@@ -27,4 +27,5 @@ urlpatterns = [
     path('accounts/password_change/', ChangePasswordView.as_view(), name='password_change'),
     path('', include('dashboard.urls')),
     path('', include('contributions.urls')),
+    path('', include('peereval.urls')),
 ]

@@ -5,10 +5,20 @@ from django.db.models import Exists, OuterRef, Q
 from django.db.models.functions import Lower
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils import timezone
 
 from core.models import Project, TeamMembership
 
 from .questions import MAX_SCORE, MIN_SCORE, QUESTION_KEYS
+
+# Shared by the model's constraint and the service's check, so the two never word it differently.
+DUPLICATE_NAME_ERROR = "This project already has a peer evaluation with this name."
+
+
+class PeerEvaluationQuerySet(models.QuerySet):
+    def open(self):
+        """Evaluations still open: now is before `closes_at`, as `PeerEvaluation.is_open_now`."""
+        return self.filter(closes_at__gt=timezone.now())
 
 
 class PeerEvaluation(models.Model):
@@ -27,18 +37,24 @@ class PeerEvaluation(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = PeerEvaluationQuerySet.as_manager()
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 "project",
                 Lower("name"),
                 name="peereval_evaluation_project_name_unique_ci",
-                violation_error_message="This project already has a peer evaluation with this name.",
+                violation_error_message=DUPLICATE_NAME_ERROR,
             ),
         ]
 
     def __str__(self):
         return self.name
+
+    def is_open_now(self) -> bool:
+        """Now is before `closes_at`, as `PeerEvaluation.objects.open()`."""
+        return timezone.now() < self.closes_at
 
 
 class PeerRating(models.Model):
