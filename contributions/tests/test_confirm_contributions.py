@@ -14,21 +14,32 @@ The issue leaves some names and wording open. These tests expect:
 - Confirming or undoing returning to the team's list, and a GET to either being a 405.
 - Confirming twice, or undoing a confirmation you haven't made, changing nothing.
 - A student on another team in the project opening the page and seeing only their own team.
+- The confirm form carrying the contribution's `updated_at` in a hidden `updated_at` field, and
+  a confirmation refused with a message including "read it again" when it no longer matches.
+- `services.confirm_contribution(contribution, teammate, seen_updated_at)`, raising
+  `PermissionDenied` when the model's rules refuse the confirmation, and the view fetching the
+  contribution with `services.get_team_contribution`.
 """
 
+import itertools
 import re
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
+from unittest import mock
+
 from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied
 from django.test import Client
 from django.urls import reverse
 
+from contributions import services
 from contributions.models import Contribution, Corroboration
 from core.models import TeamMembership
 
 from .test_offline_contributions import (
     MISSING_ID,
+    NOW,
     VALID,
     OfflineContributionsTestCase,
     delete_url,
@@ -65,6 +76,21 @@ class ConfirmContributionsTestCase(OfflineContributionsTestCase):
 
     def team_page(self):
         return self.client.get(team_list_url(self.project.id))
+
+    def seen_version(self, contribution):
+        """The version of the contribution that the team page's confirm form carries."""
+        row = self.row(self.team_page(), contribution)
+        field = re.search(r'<input\b[^>]*\bname="updated_at"[^>]*>', row)
+        self.assertIsNotNone(field, "the confirm form has no updated_at field")
+        return re.search(r'\bvalue="([^"]*)"', field.group(0)).group(1)
+
+    def post_confirm(self, contribution, **extra):
+        """Confirm as the browser would, sending what the page showed."""
+        return self.client.post(
+            confirm_url(contribution.pk),
+            {"updated_at": self.seen_version(contribution)},
+            **extra,
+        )
 
     def assert_form_posts_to(self, row, url):
         form = re.search(rf'<form\b[^>]*\baction="{re.escape(url)}"[^>]*>', row)
@@ -186,7 +212,7 @@ class ConfirmTests(ConfirmContributionsTestCase):
     def test_confirming_records_my_confirmation_and_returns_to_the_list(self):
         contribution = self.teammates_contribution()
 
-        response = self.client.post(confirm_url(contribution.pk))
+        response = self.post_confirm(contribution)
 
         self.assertRedirects(response, team_list_url(self.project.id))
         self.assertEqual(
@@ -196,7 +222,7 @@ class ConfirmTests(ConfirmContributionsTestCase):
 
     def test_once_confirmed_the_row_says_so_and_offers_undo(self):
         contribution = self.teammates_contribution()
-        self.client.post(confirm_url(contribution.pk))
+        self.post_confirm(contribution)
 
         row = self.row(self.team_page(), contribution)
 
@@ -218,8 +244,10 @@ class ConfirmTests(ConfirmContributionsTestCase):
     def test_confirming_twice_records_it_once(self):
         contribution = self.teammates_contribution()
 
-        self.client.post(confirm_url(contribution.pk))
-        response = self.client.post(confirm_url(contribution.pk))
+        seen = self.seen_version(contribution)
+
+        self.client.post(confirm_url(contribution.pk), {"updated_at": seen})
+        response = self.client.post(confirm_url(contribution.pk), {"updated_at": seen})
 
         self.assertRedirects(response, team_list_url(self.project.id))
         self.assertEqual(Corroboration.objects.count(), 1)
@@ -227,14 +255,16 @@ class ConfirmTests(ConfirmContributionsTestCase):
     def test_i_cannot_confirm_my_own_contribution(self):
         mine = self.make_contribution()
 
-        response = self.client.post(confirm_url(mine.pk))
+        response = self.client.post(
+            confirm_url(mine.pk), {"updated_at": mine.updated_at.isoformat()}
+        )
 
         self.assertEqual(response.status_code, 403)
         self.assertFalse(Corroboration.objects.exists())
 
     def test_confirming_locks_the_contribution_for_its_author(self):
         contribution = self.teammates_contribution()
-        self.client.post(confirm_url(contribution.pk))
+        self.post_confirm(contribution)
         self.login(self.student_b)
 
         self.client.post(edit_url(contribution.pk), {**VALID, "description": "Rewritten."})
@@ -497,3 +527,153 @@ class CsrfTests(ConfirmContributionsTestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(Corroboration.objects.count(), 1)
+
+
+class StaleConfirmationTests(ConfirmContributionsTestCase):
+    """A confirmation has to be of the text the teammate read, not an edit made since."""
+
+    STALE_MESSAGE = "read it again"
+
+    def setUp(self):
+        """Tick the clock a second per reading, so an edit changes `updated_at` as it would
+        in real use. The shared fixture freezes it, which would make every edit look unchanged.
+        """
+        super().setUp()
+        ticks = itertools.count()
+        ticking = mock.patch(
+            "django.utils.timezone.now",
+            side_effect=lambda: NOW + timedelta(seconds=next(ticks)),
+        )
+        ticking.start()
+        self.addCleanup(ticking.stop)
+
+    def test_the_confirm_form_carries_the_version_the_page_showed(self):
+        contribution = self.teammates_contribution()
+
+        row = self.row(self.team_page(), contribution)
+
+        self.assertRegex(
+            row, r'<input\b(?=[^>]*\btype="hidden")(?=[^>]*\bname="updated_at")[^>]*>'
+        )
+
+    def test_an_edit_after_the_page_loaded_refuses_the_confirmation(self):
+        contribution = self.teammates_contribution(description="Met with the client.")
+        seen = self.seen_version(contribution)
+        self.login(self.student_b)
+        self.client.post(
+            edit_url(contribution.pk), {**VALID, "description": "Designed the whole UI."}
+        )
+        self.login(self.student_a)
+
+        response = self.client.post(
+            confirm_url(contribution.pk), {"updated_at": seen}, follow=True
+        )
+
+        self.assertFalse(Corroboration.objects.exists())
+        self.assertIn(self.STALE_MESSAGE, page_text(response).lower())
+        self.assertIn("Designed the whole UI.", self.row(response, contribution))
+
+    def test_after_re_reading_i_can_confirm_the_new_text(self):
+        contribution = self.teammates_contribution()
+        seen = self.seen_version(contribution)
+        contribution.description = "Edited after the page loaded."
+        contribution.save()
+        self.client.post(confirm_url(contribution.pk), {"updated_at": seen})
+
+        response = self.post_confirm(contribution)
+
+        self.assertRedirects(response, team_list_url(self.project.id))
+        self.assertEqual(Corroboration.objects.count(), 1)
+
+    def test_a_confirmation_without_the_version_is_refused(self):
+        contribution = self.teammates_contribution()
+
+        response = self.client.post(confirm_url(contribution.pk), follow=True)
+
+        self.assertFalse(Corroboration.objects.exists())
+        self.assertIn(self.STALE_MESSAGE, page_text(response).lower())
+
+    def test_a_garbled_version_is_refused(self):
+        contribution = self.teammates_contribution()
+
+        response = self.client.post(
+            confirm_url(contribution.pk), {"updated_at": "not-a-time"}, follow=True
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Corroboration.objects.exists())
+        self.assertIn(self.STALE_MESSAGE, page_text(response).lower())
+
+    def test_an_edit_after_the_access_check_is_still_caught(self):
+        """The version is compared under the row lock, against the database, not against
+        the copy the view fetched before the transaction started."""
+        contribution = self.teammates_contribution()
+        seen = self.seen_version(contribution)
+        fetch = services.get_team_contribution
+
+        def fetch_then_edit(user, contribution_id):
+            fetched = fetch(user, contribution_id)
+            Contribution.objects.get(pk=contribution_id).save()
+            return fetched
+
+        with mock.patch(
+            "contributions.services.get_team_contribution", side_effect=fetch_then_edit
+        ):
+            self.client.post(confirm_url(contribution.pk), {"updated_at": seen})
+
+        self.assertFalse(Corroboration.objects.exists())
+
+
+class ConfirmServiceRuleTests(ConfirmContributionsTestCase):
+    """`confirm_contribution` enforces `Corroboration`'s own rules, whoever calls it."""
+
+    def confirm_through_service(self, contribution, teammate):
+        services.confirm_contribution(
+            contribution, teammate, contribution.updated_at.isoformat()
+        )
+
+    def test_it_refuses_a_self_confirmation(self):
+        mine = self.make_contribution()
+
+        with self.assertRaises(PermissionDenied):
+            self.confirm_through_service(mine, self.student_a)
+
+        self.assertFalse(Corroboration.objects.exists())
+
+    def test_it_refuses_someone_off_the_team(self):
+        contribution = self.teammates_contribution()
+
+        with self.assertRaises(PermissionDenied):
+            self.confirm_through_service(contribution, self.student_c)
+
+        self.assertFalse(Corroboration.objects.exists())
+
+    def test_it_records_a_valid_confirmation_once(self):
+        contribution = self.teammates_contribution()
+
+        self.confirm_through_service(contribution, self.student_a)
+        self.confirm_through_service(contribution, self.student_a)
+
+        self.assertEqual(
+            list(Corroboration.objects.values_list("contribution_id", "teammate_id")),
+            [(contribution.pk, self.student_a.pk)],
+        )
+
+    def test_a_student_removed_after_the_access_check_cannot_confirm(self):
+        """The team check runs again inside the transaction."""
+        contribution = self.teammates_contribution()
+        seen = self.seen_version(contribution)
+        fetch = services.get_team_contribution
+
+        def fetch_then_remove(user, contribution_id):
+            fetched = fetch(user, contribution_id)
+            TeamMembership.objects.filter(user=user, team=self.team).delete()
+            return fetched
+
+        with mock.patch(
+            "contributions.services.get_team_contribution", side_effect=fetch_then_remove
+        ):
+            response = self.client.post(confirm_url(contribution.pk), {"updated_at": seen})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Corroboration.objects.exists())
