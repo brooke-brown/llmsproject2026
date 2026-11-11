@@ -30,6 +30,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
 | `contributions/` | `Contribution` and `Corroboration` models: offline work students report and teammates confirm. Never evidence for a claim, passed to the LLM or counted toward flags |
+| `peereval/` | `PeerEvaluation` and `PeerRating` models, and the questions as a constant in `questions.py`. Only instructors and TAs see ratings; never passed to the LLM or counted toward flags |
 
 ## Shared contracts: do not change without team agreement
 
@@ -73,6 +74,8 @@ Course                     e.g. "CS 3240, Fall 2026"
  └── Project               optional requirements PDF or pasted text → Requirement rows
       ├── Sprint           name, start and end date; a project has zero or more
       │    └── Requirement numbered per sprint; also keeps `project` until T-21
+      ├── PeerEvaluation   a named round of ratings, such as "Midpoint", with a closing time
+      │    └── PeerRating  one rater's 1–5 scores for one teammate, by question key; never shown to students
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
            ├── Repo             the team's GitHub repo

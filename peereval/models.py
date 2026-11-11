@@ -1,0 +1,114 @@
+from django.conf import settings
+from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
+from django.db import models
+from django.db.models.functions import Lower
+
+from core.models import Project, TeamMembership
+
+from .questions import MAX_SCORE, MIN_SCORE, QUESTION_KEYS
+
+
+class PeerEvaluation(models.Model):
+    """A round of peer ratings an instructor opens for a project, such as "Midpoint"."""
+
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="peer_evaluations"
+    )
+    name = models.CharField(max_length=100)
+    closes_at = models.DateTimeField()
+    # PROTECT so removing an instructor's account can't silently delete students' ratings.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="peer_evaluations_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                "project",
+                Lower("name"),
+                name="peereval_evaluation_project_name_unique_ci",
+                violation_error_message="This project already has a peer evaluation with this name.",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class PeerRating(models.Model):
+    """One student's ratings of one teammate in an evaluation.
+
+    Confidential: students never see ratings, including ones about themselves, and ratings are
+    never passed to the LLM or counted toward flags. `__str__` leaves out scores and the
+    comment so they can't end up in logs.
+    """
+
+    evaluation = models.ForeignKey(
+        PeerEvaluation, on_delete=models.CASCADE, related_name="ratings"
+    )
+    rater = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="peer_ratings_given"
+    )
+    ratee = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="peer_ratings_received"
+    )
+    # Question key -> integer score from MIN_SCORE to MAX_SCORE, for every question.
+    scores = models.JSONField()
+    comment = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["evaluation", "rater", "ratee"], name="peereval_rating_unique"
+            ),
+        ]
+
+    def __str__(self):
+        return f"Peer rating {self.pk}"
+
+    def clean(self):
+        """Forms run this even after a required field failed, so any value can be missing."""
+        super().clean()
+        errors = {}
+        if self.rater_id is not None and self.rater_id == self.ratee_id:
+            errors["ratee"] = "A student can't rate themselves."
+        elif (
+            self.evaluation_id is not None
+            and self.rater_id is not None
+            and self.ratee_id is not None
+            and not self._share_a_team()
+        ):
+            errors[NON_FIELD_ERRORS] = "The rater and ratee aren't on the same team in this project."
+        score_error = self._scores_error()
+        if score_error:
+            errors["scores"] = score_error
+        if errors:
+            raise ValidationError(errors)
+
+    def _share_a_team(self):
+        rater_teams = TeamMembership.objects.filter(
+            user_id=self.rater_id, team__project_id=self.evaluation.project_id
+        ).values("team_id")
+        return TeamMembership.objects.filter(
+            user_id=self.ratee_id, team_id__in=rater_teams
+        ).exists()
+
+    def _scores_error(self):
+        if not isinstance(self.scores, dict):
+            return "Scores must map each question to a score."
+        missing = QUESTION_KEYS - self.scores.keys()
+        if missing:
+            return f"Missing a score for: {', '.join(sorted(missing))}."
+        unknown = self.scores.keys() - QUESTION_KEYS
+        if unknown:
+            return f"Unknown question: {', '.join(sorted(unknown))}."
+        for value in self.scores.values():
+            # bool is a subclass of int, and True would otherwise pass as 1.
+            if type(value) is not int or not MIN_SCORE <= value <= MAX_SCORE:
+                return f"Each score must be a whole number from {MIN_SCORE} to {MAX_SCORE}."
+        return None
