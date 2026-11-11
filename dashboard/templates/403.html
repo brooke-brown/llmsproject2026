@@ -1,0 +1,11 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}No access · STRIVE{% endblock %}
+
+{% block content %}
+<article class="form-card">
+  <h1>You don't have access to this page</h1>
+  <p>It belongs to a course or team that your account isn't part of. If you think you should have access, ask your instructor.</p>
+  <p class="form-actions">{% include "dashboard/_home_link.html" %}</p>
+</article>
+{% endblock %}

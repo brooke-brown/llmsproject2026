@@ -62,7 +62,7 @@
         {% endif %}
       </div>
       <p class="foot">
-        <a href="{% url 'contributions:list' membership.team.project_id %}">My offline contributions</a>
+        <a href="{% url 'contributions:list' membership.team.project_id %}">My offline contributions</a><br><a href="{% url 'contributions:team_list' membership.team.project_id %}">Team's offline contributions</a>
         {% with evaluation=membership.open_evaluation %}{% if evaluation %}
         <br><a href="{% url 'peereval:evaluation' evaluation.id %}">Peer evaluation: {{ evaluation.name }}</a> <small>closes {{ evaluation.closes_at|date:"M j, Y, g:i A" }}</small>
         {% endif %}{% endwith %}

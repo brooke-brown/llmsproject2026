@@ -113,7 +113,8 @@ class SprintChoiceTests(SprintGenerationFixture):
         Sprint.objects.create(
             project=self.other_project, name="Elsewhere", start_date=date(2026, 10, 1), end_date=date(2026, 10, 4)
         )
-        self.assertNotIn("Elsewhere", self.overview())
+        # Project Two's own sprint menu lists it (US-46), but this team's form doesn't.
+        self.assertNotIn("Elsewhere", team_article(self.overview(), "Team Alpha"))
 
     def test_it_defaults_to_the_current_sprint(self):
         article = team_article(self.overview(), "Team Alpha")
@@ -333,4 +334,7 @@ class SprintPagesTests(SprintGenerationFixture):
         article = team_article(self.overview(), "Team Alpha")
         self.assertIn("Sprint 2", article)
         self.assertNotIn("No summaries yet", article)
-        self.assertNotIn("Not generated", article)
+        # The overview shows Sprint 1, which has ended without Ada's summary: as on the team
+        # page, that's not generated rather than in progress.
+        self.assertIn("Not generated", article)
+        self.assertNotIn("In progress", article)

@@ -14,7 +14,7 @@ from contributions.services import get_team_for_project_student
 from core.models import Project, Team, User
 from dashboard.services import check_course_instructor
 
-from .models import PeerEvaluation, PeerRating
+from .models import DUPLICATE_NAME_ERROR, PeerEvaluation, PeerRating
 
 
 class EvaluationError(Exception):
@@ -82,7 +82,7 @@ def create_evaluation(
                 f"{current.name} is still open. Close it before opening another."
             )
         if project.peer_evaluations.filter(name__iexact=name).exists():
-            raise EvaluationError(f"This project already has a peer evaluation named {name}.")
+            raise EvaluationError(DUPLICATE_NAME_ERROR)
         return PeerEvaluation.objects.create(
             project=project, name=name, closes_at=closes_at, created_by=created_by
         )

@@ -1,0 +1,32 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Import teams · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' project.course_id %}">{{ project.course.name }}</a> / <a href="{% url 'dashboard:project_setup' project.id %}">{{ project.name }}</a> / Import teams</span>{% endblock %}
+
+{% block content %}
+<div class="headrow"><h1>Import teams from CSV</h1></div>
+
+<section class="setup-panel">
+  <h2>Upload</h2>
+  {% if error %}<p role="alert" class="msg error"><mark>{{ error }}</mark></p>{% endif %}
+  <p class="keynote">One row per student. The columns can be in any order, and headers ignore case.</p>
+  <ul class="keynote">
+    <li><strong>team</strong>: the team's name. A name already in the project adds to that team.</li>
+    <li><strong>name</strong>: the student's full name.</li>
+    <li><strong>github_login</strong>: their GitHub username.</li>
+    <li><strong>email</strong> (optional)</li>
+    <li><strong>repo_url</strong> (optional): the team's GitHub repo, such as https://github.com/acme/app.</li>
+  </ul>
+  <p class="keynote"><a href="{% url 'dashboard:team_import_template' project.id %}">Download a template</a>. Nothing is saved until you confirm the preview.</p>
+  <form action="{% url 'dashboard:team_import' project.id %}" method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <label for="team-csv">CSV file (up to 1 MB)</label>
+    <input id="team-csv" type="file" name="file" accept=".csv,text/csv" required>
+    <p class="form-actions">
+      <button type="submit" class="primary">Upload and preview</button>
+      <a href="{% url 'dashboard:project_setup' project.id %}">Cancel</a>
+    </p>
+  </form>
+</section>
+{% endblock %}

@@ -1,11 +1,17 @@
 from django.conf import settings
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.db import models
+from django.db.models import Exists, OuterRef, Q
 from django.db.models.functions import Lower
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 
 from core.models import Project, TeamMembership
 
 from .questions import MAX_SCORE, MIN_SCORE, QUESTION_KEYS
+
+# Shared by the model's constraint and the service's check, so the two never word it differently.
+DUPLICATE_NAME_ERROR = "This project already has a peer evaluation with this name."
 
 
 class PeerEvaluation(models.Model):
@@ -30,7 +36,7 @@ class PeerEvaluation(models.Model):
                 "project",
                 Lower("name"),
                 name="peereval_evaluation_project_name_unique_ci",
-                violation_error_message="This project already has a peer evaluation with this name.",
+                violation_error_message=DUPLICATE_NAME_ERROR,
             ),
         ]
 
@@ -55,7 +61,8 @@ class PeerRating(models.Model):
     ratee = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="peer_ratings_received"
     )
-    # Question key -> integer score from MIN_SCORE to MAX_SCORE, for every question.
+    # Question key -> integer score from MIN_SCORE to MAX_SCORE, for every question asked
+    # when the rating was first saved. A question added later doesn't make it invalid.
     scores = models.JSONField()
     comment = models.TextField(blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)
@@ -101,10 +108,14 @@ class PeerRating(models.Model):
     def _scores_error(self):
         if not isinstance(self.scores, dict):
             return "Scores must map each question to a score."
-        missing = QUESTION_KEYS - self.scores.keys()
+        answered = self._saved_keys()
+        # A new rating answers every question; a saved one keeps the questions it answered,
+        # so adding a question later doesn't make earlier ratings fail.
+        required = QUESTION_KEYS if answered is None else answered
+        missing = required - self.scores.keys()
         if missing:
             return f"Missing a score for: {', '.join(sorted(missing))}."
-        unknown = self.scores.keys() - QUESTION_KEYS
+        unknown = self.scores.keys() - QUESTION_KEYS - (answered or set())
         if unknown:
             return f"Unknown question: {', '.join(sorted(unknown))}."
         for value in self.scores.values():
@@ -112,3 +123,33 @@ class PeerRating(models.Model):
             if type(value) is not int or not MIN_SCORE <= value <= MAX_SCORE:
                 return f"Each score must be a whole number from {MIN_SCORE} to {MAX_SCORE}."
         return None
+
+    def _saved_keys(self):
+        """The question keys this rating had when it was last saved, or None if it's new."""
+        if self.pk is None:
+            return None
+        saved = PeerRating.objects.filter(pk=self.pk).values_list("scores", flat=True).first()
+        return set(saved) if isinstance(saved, dict) else None
+
+
+def ratings_without_a_shared_team():
+    """Ratings whose rater and ratee are no longer on a team together in the project."""
+    shared_team = TeamMembership.objects.filter(
+        user=OuterRef("rater"),
+        team__project=OuterRef("evaluation__project"),
+        team__memberships__user=OuterRef("ratee"),
+    )
+    return PeerRating.objects.exclude(Exists(shared_team))
+
+
+@receiver(post_delete, sender=TeamMembership)
+def delete_ratings_on_team(sender, instance, **kwargs):
+    """Delete the ratings a departing student gave or got that needed them on this team.
+
+    A signal rather than a service, because deletes in the admin call no service. Deleting a
+    team removes its memberships before the team itself, so this runs for every student.
+    """
+    ratings_without_a_shared_team().filter(
+        Q(rater=instance.user_id) | Q(ratee=instance.user_id),
+        evaluation__project__teams=instance.team_id,
+    ).delete()
