@@ -207,7 +207,7 @@
     .form-actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
     .form-actions button[type="submit"] { flex: none; width: auto; margin: 0; }
     .narrow { max-width: 480px; }
-    .narrow input[type="text"] { height: auto; margin: 4px 0 0; padding: 7px 10px; }
+    .narrow :is(input[type="text"], input[type="datetime-local"]) { height: auto; margin: 4px 0 0; padding: 7px 10px; }
     .setup-panel .fields input { height: auto; margin-bottom: 0; padding: 6px 10px; font-size: 13.5px; }
     .setup-panel > a { font-size: 13.5px; }
     .setup-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }

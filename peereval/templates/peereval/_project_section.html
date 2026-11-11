@@ -17,15 +17,21 @@
       <button type="submit" class="text-button">close now</button>
     </form>
     {% endif %}
-    <form action="{% url 'peereval:evaluation_delete' evaluation.id %}" method="post" onsubmit="return confirm('Delete {{ evaluation.name|escapejs }}? An evaluation with ratings can\'t be deleted.')">
+    {% if not evaluation.rating_count %}
+    <form action="{% url 'peereval:evaluation_delete' evaluation.id %}" method="post" onsubmit="return confirm('Delete {{ evaluation.name|escapejs }}?')">
       {% csrf_token %}
       <button type="submit" class="text-button">delete</button>
     </form>
+    {% endif %}
   </div>
   {% empty %}
   <p class="keynote">No peer evaluations yet.</p>
   {% endfor %}
+  {% if open_peer_evaluation %}
+  <p class="keynote">{{ open_peer_evaluation.name }} is open. Close it before opening another.</p>
+  {% else %}
   <p class="form-actions"><a role="button" href="{% url 'peereval:evaluation_create' project.id %}">New peer evaluation</a></p>
+  {% endif %}
   <h3>Questions students answer</h3>
   <p class="keynote">Each student rates each teammate from 1 to 5 on every question, with an optional comment. Only instructors and TAs see the ratings.</p>
   <ol>

@@ -298,6 +298,7 @@ def project_setup(request, project_id):
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
             "contribution_count": Contribution.objects.filter(team__project=project).count(),
             "peer_evaluations": peereval_services.project_evaluations(project),
+            "open_peer_evaluation": peereval_services.open_evaluation(project),
             "peer_questions": QUESTIONS,
             "peer_rating_count": PeerRating.objects.filter(evaluation__project=project).count(),
             "editing": request.GET.get("edit") == "1",

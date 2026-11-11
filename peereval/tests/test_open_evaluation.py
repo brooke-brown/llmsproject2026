@@ -207,7 +207,7 @@ class CreateTests(EvaluationFixture):
         self.closed(name="Midpoint")
         response = self.create(name="MIDPOINT")
         self.assertIn(
-            "This project already has a peer evaluation named MIDPOINT",
+            "This project already has a peer evaluation with this name.",
             response.content.decode(),
         )
         self.assertEqual(PeerEvaluation.objects.count(), 1)
