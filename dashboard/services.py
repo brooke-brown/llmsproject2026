@@ -28,6 +28,7 @@ from core.models import (
 from core import services as setup_services
 from ingest import services as ingest_services
 from ingest.models import Artifact
+from peereval.models import PeerEvaluation
 from summaries import services as summaries_services
 from summaries.llm import LLMError
 from summaries.models import Claim, Summary
@@ -343,7 +344,8 @@ def student_home_courses(user):
     and warnings about this user on that team, newest first, each with `is_withdrawn` and its
     `dispute` (or None). Flags about teammates or the whole team are never included. It also
     has `unraised_disputes`: the user's disputes on that team whose flag is no longer raised,
-    newest first, so a student can still read a dispute and its decision.
+    newest first, so a student can still read a dispute and its decision, and
+    `open_evaluation`: its project's open peer evaluation, or None.
     """
     student_course_ids = Enrollment.objects.filter(
         user=user, role=Enrollment.Role.STUDENT
@@ -378,8 +380,17 @@ def student_home_courses(user):
         .order_by("-sprint__start_date", "id")
     }
 
+    # Open means now is before closes_at, as in peereval.services.is_open.
+    open_evaluations = {
+        evaluation.project_id: evaluation
+        for evaluation in PeerEvaluation.objects.filter(
+            project__teams__memberships__user=user, closes_at__gt=timezone.now()
+        )
+    }
+
     courses = {}
     for membership in memberships:
+        membership.open_evaluation = open_evaluations.get(membership.team.project_id)
         membership.teammates = [
             other.user for other in membership.team.all_memberships if other.user_id != user.id
         ]

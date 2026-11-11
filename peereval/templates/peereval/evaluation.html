@@ -1,0 +1,32 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}{{ evaluation.name }} · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:student_home' %}">Your projects</a> / {{ evaluation.project.name }} / {{ evaluation.name }}</span>{% endblock %}
+
+{% block content %}
+<div class="headrow">
+  <h1>{{ evaluation.name }} peer evaluation</h1>
+  {% if is_open %}<span class="tag ok">Open</span>{% else %}<span class="tag none">Closed</span>{% endif %}
+</div>
+{% if is_open %}
+<p class="keynote">Rate each teammate on every question. You can change a rating until it closes {{ evaluation.closes_at|date:"M j, Y, g:i A" }}, New York time.</p>
+{% else %}
+<p class="keynote">This evaluation closed {{ evaluation.closes_at|date:"M j, Y, g:i A" }}, New York time, so ratings can't be submitted or changed.</p>
+{% endif %}
+<p class="keynote">Your ratings are seen only by your instructor and TAs, never by your teammates.</p>
+<section class="setup-panel">
+  <h2>Your teammates</h2>
+  {% for teammate in teammates %}
+  <div class="setup-row">
+    <strong>{{ teammate.display_name }}</strong>
+    <span>
+      {% if teammate.is_rated %}<span class="tag ok">Rated</span>{% else %}<span class="tag none">Not rated yet</span>{% endif %}
+      {% if is_open %}<a href="{% url 'peereval:rate' evaluation.id teammate.id %}">{% if teammate.is_rated %}Change rating{% else %}Rate{% endif %}</a>{% endif %}
+    </span>
+  </div>
+  {% empty %}
+  <p class="keynote">You don't have any teammates to rate.</p>
+  {% endfor %}
+</section>
+{% endblock %}

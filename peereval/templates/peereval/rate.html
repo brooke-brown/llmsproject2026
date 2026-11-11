@@ -1,0 +1,29 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Rate {{ ratee.display_name }} · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:student_home' %}">Your projects</a> / {{ evaluation.project.name }} / <a href="{% url 'peereval:evaluation' evaluation.id %}">{{ evaluation.name }}</a></span>{% endblock %}
+
+{% block content %}
+<div class="headrow"><h1>Rate {{ ratee.display_name }}</h1></div>
+<p class="keynote">Your ratings are seen only by your instructor and TAs, never by your teammates. Answer every question from 1 to 5. You can change this rating until {{ evaluation.closes_at|date:"M j, Y, g:i A" }}, New York time.</p>
+<form class="rating-form" method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  {% for field in form.question_fields %}
+  <fieldset>
+    <legend>{{ field.label }}</legend>
+    {{ field.errors }}
+    {{ field }}
+  </fieldset>
+  {% endfor %}
+  <label for="{{ form.comment.id_for_label }}">{{ form.comment.label }} <small>(optional, up to {{ comment_max_length|stringformat:"d" }} characters)</small>
+    {{ form.comment }}
+  </label>
+  {{ form.comment.errors }}
+  <p class="form-actions">
+    <button type="submit" class="primary">Submit rating</button>
+    <a href="{% url 'peereval:evaluation' evaluation.id %}">Cancel</a>
+  </p>
+</form>
+{% endblock %}

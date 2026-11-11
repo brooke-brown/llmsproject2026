@@ -1,16 +1,20 @@
-"""Opening, changing and deleting peer evaluations. Views call these and show the errors."""
+"""Opening, changing and deleting peer evaluations, and students rating their teammates.
+Views call these and show the errors."""
 
 from datetime import datetime
 
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Count
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from core.models import Project, User
+from contributions.services import get_team_for_project_student
+from core.models import Project, Team, User
 from dashboard.services import check_course_instructor
 
-from .models import PeerEvaluation
+from .models import PeerEvaluation, PeerRating
 
 
 class EvaluationError(Exception):
@@ -101,6 +105,75 @@ def close_now(evaluation: PeerEvaluation) -> PeerEvaluation:
         evaluation.closes_at = timezone.now()
         evaluation.save(update_fields=["closes_at"])
     return evaluation
+
+
+def get_evaluation_for_student(user: User, evaluation_id: int) -> tuple[PeerEvaluation, Team]:
+    """The evaluation and the user's team in its project. 404 if the evaluation doesn't exist,
+    403 unless they're a student in its course and on one of its project's teams."""
+    evaluation = get_object_or_404(
+        PeerEvaluation.objects.select_related("project__course"), pk=evaluation_id
+    )
+    return evaluation, get_team_for_project_student(user, evaluation.project_id)
+
+
+def teammates(team: Team, user: User) -> list[User]:
+    """Everyone on the team but the user, by name, as the student home lists them."""
+    return list(
+        User.objects.filter(team_memberships__team=team)
+        .exclude(pk=user.pk)
+        .order_by("first_name", "last_name", "github_login")
+    )
+
+
+def get_teammate(team: Team, user: User, ratee_id: int) -> User:
+    """A teammate the user can rate. 404 if no such user, 403 if it's them or not a teammate."""
+    ratee = get_object_or_404(User, pk=ratee_id)
+    if ratee == user or not team.memberships.filter(user=ratee).exists():
+        raise PermissionDenied
+    return ratee
+
+
+def teammates_with_status(evaluation: PeerEvaluation, team: Team, user: User) -> list[User]:
+    """The user's teammates, each with `is_rated`: whether the user has rated them. Only the
+    user's own ratings are read, and never their scores or comments."""
+    rated_ids = set(
+        evaluation.ratings.filter(rater=user).values_list("ratee_id", flat=True)
+    )
+    people = teammates(team, user)
+    for person in people:
+        person.is_rated = person.pk in rated_ids
+    return people
+
+
+def own_rating(evaluation: PeerEvaluation, rater: User, ratee: User) -> PeerRating | None:
+    return evaluation.ratings.filter(rater=rater, ratee=ratee).first()
+
+
+def closed_message(evaluation: PeerEvaluation) -> str:
+    return f"{evaluation.name} has closed, so ratings can't be submitted or changed."
+
+
+def save_rating(
+    evaluation: PeerEvaluation, rater: User, ratee: User, scores: dict[str, int], comment: str
+) -> PeerRating:
+    """Save the rater's rating of a teammate, replacing an earlier one. The closing time is
+    checked here, under the evaluation's lock, so a page left open past it can't save and a
+    rating can't land while the evaluation is being closed or deleted."""
+    with transaction.atomic():
+        try:
+            evaluation = _locked(evaluation)
+        except PeerEvaluation.DoesNotExist:
+            raise Http404
+        if not is_open(evaluation):
+            raise EvaluationError(closed_message(evaluation))
+        rating = own_rating(evaluation, rater, ratee) or PeerRating(
+            evaluation=evaluation, rater=rater, ratee=ratee
+        )
+        rating.scores = scores
+        rating.comment = comment
+        rating.full_clean()
+        rating.save()
+    return rating
 
 
 def delete_evaluation(evaluation: PeerEvaluation) -> None:

@@ -12,12 +12,15 @@ from datetime import datetime, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
 
+from django.core.exceptions import ValidationError
+from django.http import Http404
 from django.test import Client, TestCase
 from django.urls import reverse
 
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.tests.test_course_overview import enroll, make_user
 from dashboard.tests.test_generate_summary import page_messages
+from peereval import services
 from peereval.models import PeerEvaluation, PeerRating
 from peereval.questions import QUESTIONS
 
@@ -215,7 +218,10 @@ class RatingFormTests(RatingFixture):
 
     def test_after_submitting_im_back_on_the_evaluation_with_the_teammate_rated(self):
         response = self.submit(follow=False)
-        self.assertRedirects(response, evaluation_url(self.evaluation.id))
+        # Not fetched by assertRedirects, which would use up the message.
+        self.assertRedirects(
+            response, evaluation_url(self.evaluation.id), fetch_redirect_response=False
+        )
         response = self.client.get(evaluation_url(self.evaluation.id))
         page = response.content.decode()
         self.assertEqual(page.count("Not rated yet"), 1)
@@ -326,6 +332,13 @@ class AfterCloseTests(RatingFixture):
         self.submit()
         self.assertFalse(PeerRating.objects.exists())
 
+    def test_closing_between_the_views_check_and_the_save_is_refused(self):
+        refusal = services.EvaluationError(services.closed_message(self.evaluation))
+        with mock.patch("peereval.services.save_rating", side_effect=refusal):
+            response = self.submit()
+        self.assertRedirects(response, evaluation_url(self.evaluation.id))
+        self.assertIn("Midpoint has closed", page_messages(response))
+
     def test_closing_is_checked_at_the_exact_closing_time(self):
         self.move_to(CLOSES)
         self.submit()
@@ -358,6 +371,30 @@ class AfterCloseTests(RatingFixture):
         self.assertNotIn("Before close.", page)
         self.assertNotIn(rate_url(self.evaluation.id, self.teammate.id), page)
         self.assertIn("closed", page)
+
+
+class SaveRatingServiceTests(RatingFixture):
+    """save_rating re-reads the evaluation under its lock, for a change between the view's
+    check and the save."""
+
+    def test_refuses_an_evaluation_closed_since_it_was_read(self):
+        stale = PeerEvaluation.objects.get(pk=self.evaluation.pk)
+        PeerEvaluation.objects.filter(pk=stale.pk).update(closes_at=NOW)
+        with self.assertRaisesMessage(services.EvaluationError, "Midpoint has closed"):
+            services.save_rating(stale, self.student, self.teammate, ALL_FOURS, "")
+        self.assertFalse(PeerRating.objects.exists())
+
+    def test_an_evaluation_deleted_since_it_was_read_is_404(self):
+        stale = PeerEvaluation.objects.get(pk=self.evaluation.pk)
+        PeerEvaluation.objects.filter(pk=stale.pk).delete()
+        with self.assertRaises(Http404):
+            services.save_rating(stale, self.student, self.teammate, ALL_FOURS, "")
+
+    def test_refuses_a_ratee_no_longer_on_the_team(self):
+        TeamMembership.objects.filter(user=self.teammate).delete()
+        with self.assertRaises(ValidationError):
+            services.save_rating(self.evaluation, self.student, self.teammate, ALL_FOURS, "")
+        self.assertFalse(PeerRating.objects.exists())
 
 
 class AccessTests(RatingFixture):
