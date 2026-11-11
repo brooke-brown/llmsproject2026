@@ -2,8 +2,9 @@ from django.contrib import messages
 from django.db.models import Count
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordChangeView, RedirectURLMixin
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -13,6 +14,7 @@ from core import services as setup
 from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
 from core.models import Sprint
 from peereval import services as peereval_services
+from peereval.models import PeerRating
 from peereval.questions import QUESTIONS
 from summaries.models import Summary
 
@@ -100,10 +102,14 @@ def course_overview(request, course_id):
         "dashboard/course_overview.html",
         {
             "course": course,
-            "projects": services.course_projects_with_teams(course),
+            "projects": services.course_projects_with_teams(
+                course, services.parse_ids(request.GET.getlist("sprint"))
+            ),
             "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),
+            # The overview's forms return here, keeping the sprints chosen in its menus.
+            "next": request.get_full_path(),
         },
     )
 
@@ -112,7 +118,12 @@ def course_overview(request, course_id):
 @require_GET
 def course_generating_status(request, course_id):
     course = services.get_course_for_staff(request.user, course_id)
-    return JsonResponse({"team_ids": services.generating_team_ids(course)})
+    runs = services.active_generation_runs(course=course)
+    progress = {
+        team_id: render_to_string("dashboard/_generation_progress.html", {"run": run})
+        for team_id, run in runs.items()
+    }
+    return JsonResponse({"team_ids": sorted(runs), "progress": progress})
 
 
 @login_required
@@ -124,11 +135,13 @@ def team(request, team_id):
     in_progress_through = services.add_sprint_summaries(memberships, sprint)
     memberships = services.add_contribution_shares(team, memberships, sprint)
     services.add_disputes(memberships)
+    peer_rating_count = services.add_peer_rating_counts(team, memberships)
     has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
         request,
         "dashboard/team.html",
         {
+            "generation_run": services.active_generation_runs(team_ids=[team.id]).get(team.id),
             "team": team,
             "repos": services.team_repos(team),
             "has_sprints": has_sprints,
@@ -140,9 +153,10 @@ def team(request, team_id):
             ),
             "team_flags": services.team_wide_flags(team, sprint),
             "memberships": memberships,
+            "peer_rating_count": peer_rating_count,
             "legend": services.pie_legend(memberships),
             "team_status": (
-                services.team_sprint_status(team, sprint, in_progress_through)
+                services.team_sprint_status(team, sprint)
                 if has_sprints
                 else services.team_status(team)
             ),
@@ -165,16 +179,23 @@ def _redirect_back(request, default):
     return default
 
 
+def _back_to_overview(request, team):
+    """Return to the course overview the form came from, keeping its chosen sprints."""
+    return _redirect_back(
+        request, redirect("dashboard:course_overview", course_id=team.project.course_id)
+    )
+
+
 def _show_refusal(request, team, error):
     """Say why nothing ran. The overview lists every team, so the message says which one."""
     messages.error(request, f"{team.name}: {error}")
-    return redirect("dashboard:course_overview", course_id=team.project.course_id)
+    return _back_to_overview(request, team)
 
 
 def _show_generation(request, generation):
     """Keep how the run went for the course overview, and go there."""
     services.save_run_result(request.session, generation)
-    return redirect("dashboard:course_overview", course_id=generation.team.project.course_id)
+    return _back_to_overview(request, generation.team)
 
 
 @login_required
@@ -204,7 +225,7 @@ def retry_failed_summaries(request, team_id):
         return _show_refusal(request, team, error)
     if generation is None:
         messages.info(request, f"{team.name} has no failed summaries to retry.")
-        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+        return _back_to_overview(request, team)
     return _show_generation(request, generation)
 
 
@@ -278,6 +299,7 @@ def project_setup(request, project_id):
             "contribution_count": Contribution.objects.filter(team__project=project).count(),
             "peer_evaluations": peereval_services.project_evaluations(project),
             "peer_questions": QUESTIONS,
+            "peer_rating_count": PeerRating.objects.filter(evaluation__project=project).count(),
             "editing": request.GET.get("edit") == "1",
         },
     )
@@ -654,3 +676,110 @@ def sprint_requirements_copy(request, sprint_id):
         noun = ngettext("requirement", "requirements", count)
         messages.success(request, f"Copied {count} {noun} from {source.name}.")
     return destination
+
+
+def _render_team_import(request, project, error=""):
+    return render(request, "dashboard/team_import.html", {"project": project, "error": error})
+
+
+def _render_team_import_preview(request, project, text, plan):
+    return render(
+        request,
+        "dashboard/team_import_preview.html",
+        {
+            "project": project,
+            "csv": text,
+            "plan": plan,
+            "checked_repos": setup.sign_checked_repos(plan.checked_repos),
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def team_import(request, project_id):
+    """Upload a CSV and preview what importing it would do. Nothing is saved."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if request.method == "GET":
+        return _render_team_import(request, project)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return _render_team_import(request, project, "Choose a CSV file to upload.")
+    try:
+        # One byte past the limit is enough to tell the file is too big, without reading it all.
+        text = setup.read_team_csv(upload.read(setup.MAX_TEAM_CSV_BYTES + 1))
+        plan = setup.plan_team_import(project, text)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    return _render_team_import_preview(request, project, text, plan)
+
+
+@login_required
+@require_GET
+def team_import_template(request, project_id):
+    services.get_project_for_instructor(request.user, project_id)
+    response = HttpResponse(setup.TEAM_CSV_TEMPLATE, content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="strive-teams-template.csv"'
+    return response
+
+
+@login_required
+@require_POST
+def team_import_confirm(request, project_id):
+    """Recheck the CSV carried from the preview, then import it all or none of it."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    text = request.POST.get("csv", "")
+    try:
+        checked = setup.read_checked_repos(request.POST.get("checked_repos", ""))
+        plan = setup.plan_team_import(project, text, checked)
+        if not plan.ok:
+            return _render_team_import_preview(request, project, text, plan)
+        if plan.nothing_to_add:
+            messages.info(
+                request, "Nothing was imported: everything in this file is already in the project."
+            )
+            return redirect("dashboard:project_setup", project_id=project.id)
+        result = setup.run_team_import(project, plan)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    messages.success(
+        request,
+        f"Added {result.teams} {ngettext('team', 'teams', result.teams)}, "
+        f"{result.students} {ngettext('student', 'students', result.students)} and "
+        f"{result.repos} {ngettext('repo', 'repos', result.repos)}.",
+    )
+    return redirect("dashboard:project_setup", project_id=project.id)
+
+
+@login_required
+@require_GET
+def passwords(request, project_id):
+    """Say how many students would get a temporary password. Nothing is changed here."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    return render(
+        request,
+        "dashboard/passwords.html",
+        {"project": project, "plan": setup.plan_temporary_passwords(project, request.user)},
+    )
+
+
+@login_required
+@require_POST
+def passwords_generate(request, project_id):
+    """Generate the passwords and send them back once, as a download that isn't cached."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if not setup.plan_temporary_passwords(project, request.user).count:
+        messages.info(request, "No students need a temporary password.")
+        return redirect("dashboard:passwords", project_id=project.id)
+    try:
+        rows = setup.generate_temporary_passwords(project, request.user)
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+        return redirect("dashboard:passwords", project_id=project.id)
+    response = HttpResponse(
+        setup.temporary_passwords_csv(rows), content_type="text/csv; charset=utf-8"
+    )
+    response["Content-Disposition"] = 'attachment; filename="strive-temporary-passwords.csv"'
+    # The only copy of these passwords, so no browser or proxy should keep one.
+    response["Cache-Control"] = "no-store"
+    return response

@@ -88,7 +88,7 @@ Summary          → Team + User + reporting week
 ValidationRun    → per-run log: first-pass rate, retries, drop rate
 Flag             → Team + Sprint: each finished sprint keeps its own flags
 FlagDispute      → Team + student + rule + Sprint: finds its flag by these, so it survives flags being recomputed
-GenerationRun    → Team: exists only while its summaries are generating
+GenerationRun    → Team: exists only while its summaries are generating; holds progress (students, done, failures)
 ```
 
 Planned changes for sprints (#119–#125):
@@ -128,10 +128,11 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 - Two sprints can overlap only by one sprint's last day being the next one's first day, and can never start on the same day.
 - Each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today and is labelled in progress.
 - A covered range is split into 7-day chunks, with a leftover of 3 days or fewer joining the previous chunk, so up to 10 days is one chunk. Every student on a team is chunked the same way. Several chunks go through an LLM merge pass and the validator again, and users only ever see the one report.
-- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint; the course overview is labelled from the team's latest one. Weekly summaries no longer raise flags.
+- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint. Weekly summaries no longer raise flags.
+- Built (US-46, #136): each project on the course overview has a sprint menu (`?sprint=<id>`, repeated once per project), defaulting to the latest sprint that has ended. Teams are labelled and ordered by that sprint's flags, then open disputes from any sprint (the tag names an earlier one), and each team link carries the sprint to the team page. The overview and team page share one sprint tag (`team_sprint_status`), and the course picker counts flags in the sprint the overview opens on.
 - Built (US-42, #124): the team page has a sprint menu (`?sprint=<id>`), defaulting to the latest sprint the team has a summary for. Its tag, flags, disputes, shares, pie and summary links are all for that sprint. Shares appear once every student has a summary for it, partial or not; a partial one is labelled "in progress, through <date>", and a missing one "Not generated".
 
-**Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
+**Setup at scale:** CSV import of teams and students (#126, built: instructors upload on the project's edit page, preview, then confirm), and generating temporary passwords in bulk (#127, built: the project's edit page downloads a CSV once, never stored).
 
 **Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
