@@ -1,8 +1,7 @@
 """Tests for US-40 (#122): generate a team's summaries for a sprint.
 
 `ingest` and `generate_sprint_summary` are mocked, so nothing makes a network or LLM call.
-The clock is fixed at Monday Nov 2, 2026, noon in New York. The weekly flow keeps working
-beside this one until T-21 removes it, so its tests are in test_generate_summary.py.
+The clock is fixed at Monday Nov 2, 2026, noon in New York.
 """
 
 import re
@@ -72,7 +71,6 @@ class SprintGenerationFixture(TestCase):
         self.ingest = self.patch("ingest.services.ingest", return_value=[])
         self.generate = self.patch("summaries.services.generate_sprint_summary")
         self.generate.side_effect = self.save_summary
-        self.weekly = self.patch("summaries.services.generate_summary")
         self.compute_flags = self.patch("dashboard.flags.compute_flags")
         self.client.force_login(self.instructor)
 
@@ -184,7 +182,6 @@ class GenerateBySprintTests(SprintGenerationFixture):
         )
         for call in self.generate.call_args_list:
             self.assertEqual(call.args[1:], (self.team, self.ended))
-        self.weekly.assert_not_called()
         self.assertEqual(Summary.objects.filter(sprint=self.ended).count(), 2)
 
     def test_the_overview_says_what_was_generated_with_the_sprint_name_and_dates(self):

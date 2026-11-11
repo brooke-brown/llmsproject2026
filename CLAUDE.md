@@ -50,7 +50,7 @@ The `Sprint` model, `generate_sprint_summary` (T-19, with the T-20 chunking and 
   - `artifact_ids` use the format `owner/repo:type:id`, such as `acme/app:pr:12`, so they stay unique across a team's repos.
   - `Artifact.artifact_id` is unique per `Repo`, not globally: a later project reusing a GitHub repo has its own `Repo` row and copies. Always look IDs up within the team: `Artifact.objects.filter(repo__team=team, artifact_id=...)`.
   - `requirement_ids` hold `Requirement.number`, not the database ID. Once sprints land, a number only has meaning within its summary's sprint.
-- **Reporting dates:** the weekly report covers a Monday-Sunday week, inclusive, in `America/New_York`, until T-21 (#125) removes it. A sprint report (T-19) covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. `student_week_artifacts` and `unattributed_commits` take an optional `last_day`, and the validator's `validate_sprint_claims` takes the covered range. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
+- **Reporting dates:** a report covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. The alpha's Monday-Sunday weekly reports are no longer generated (T-21, #125), though existing weekly summaries stay until the data migration deletes them. `ingest.services.student_artifacts` and `unattributed_commits` take a first and last day, and the validator's `validate_sprint_claims` takes the covered range. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
   - Commit: author date
   - PR: merged date, or created date if unmerged
   - Review: submitted date
@@ -61,7 +61,7 @@ The `Sprint` model, `generate_sprint_summary` (T-19, with the T-20 chunking and 
 - **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field. `Artifact.review_state` holds GitHub's state for a review, such as `APPROVED`, and is empty for other types.
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
-  - `summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary`, and `summaries.services.generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary` (T-19), which replaces it when T-21 (#125) removes it. A sprint summary has `Summary.sprint` set and `week_start` empty
+  - `summaries.services.generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary`. A sprint summary has `Summary.sprint` set; the weekly `generate_summary` is gone (T-21).
   - `dashboard.flags.compute_flags(team: Team) -> list[Flag]`
 
 ## Data model
@@ -113,7 +113,7 @@ Built, and what `main` does today:
 
 - Setup: instructors create, rename and delete projects, manage requirements, and manage teams, students and each team's repo from the dashboard; deleting warns what goes with it in its confirmation, including summaries, and is only refused where a claim would lose its evidence or requirement (a repo or requirement that claims cite). Courses and instructor and TA enrollments stay in admin. Repo ingest by URL + token, including co-author trailers and PR review credit
 - Requirements PDF (or pasted text) → `Requirement` rows an instructor can edit on the project's requirements page or in admin; requirement tags + significance on claims; simple per-project requirement table
-- "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo, then `generate_summary` once per student; flags are recomputed once every student has succeeded. A team can only have one run at a time (`GenerationRun`). The current week can be generated, but a summary written before its week ended (`Summary.is_partial`) is labelled, counts toward the team page's shares, and never counts toward flags until the week is generated again
+- "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo for the chosen sprint, then `generate_sprint_summary` once per student; flags are recomputed once every student has succeeded. A team can only have one run at a time (`GenerationRun`). A summary written before its sprint ended (`Summary.is_partial`) is labelled in progress, counts toward the team page's shares, and never counts toward flags until the sprint is generated again
 - Validator, retry, drop + "N couldn't be verified" note, `ValidationRun` logging
 - 1–2 flag rules, based on share of requirement-tied claims weighted by significance
 - Pages: course overview (teams, flagged ones first, labels only) → team (flag reasons, students and their summaries, and each student's offline contributions) → summary (claims with GitHub links and the unverified note, then the student's offline contributions in that sprint, labelled self-reported). Offline contributions come from `contributions.services.contributions_for` and are styled apart from claims (US-35, #112)

@@ -10,7 +10,7 @@ LoginFixTests.test_the_same_week_ingest_credits_a_co_author_after_the_fix, which
 behavior that ingest already has.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -32,7 +32,7 @@ from ingest.tests.test_ingest_commits import (
     fake_commit,
     sha,
 )
-from ingest.tests.test_student_week_artifacts import (
+from ingest.tests.test_student_artifacts import (
     NEW_YORK,
     ONE_MICROSECOND,
     add_repo,
@@ -54,7 +54,7 @@ FOLLOWING_SUNDAY = date(2026, 11, 1)
 def unattributed(repo, week_start=WEEK_START):
     from ingest.services import unattributed_commits
 
-    return unattributed_commits(repo, week_start)
+    return unattributed_commits(repo, week_start, week_start + timedelta(days=6))
 
 
 def commit_by(character, login=None, name=GIT_NAME, email=GIT_EMAIL, message="Add the task model"):

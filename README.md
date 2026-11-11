@@ -183,21 +183,16 @@ Good to know:
 
 On the course overview, pick a sprint for a team and click **Generate summaries**.
 
-- **The menu lists the project's started sprints,** such as "Sprint 2 (Oct 30 – Nov 5)". Sprints that haven't started aren't offered, and a project with none shows a message instead. It defaults to the current sprint, or on a day shared by two sprints the one that just started, or else the most recently ended. Generating ingests each repo from the sprint's first day through today (or its last day once it has ended), then writes one summary per student. A sprint still running is labelled **in progress**, with the date it covers through, and generating it again after it ends covers all of it. Flags per sprint are not raised yet: that is the next beta issue (#123).
+- **The menu lists the project's started sprints,** such as "Sprint 2 (Oct 30 – Nov 5)". Sprints that haven't started aren't offered, and a project with none shows a message instead. It defaults to the current sprint, or on a day shared by two sprints the one that just started, or else the most recently ended. Generating ingests each repo from the sprint's first day through today (or its last day once it has ended), then writes one summary per student. A sprint still running is labelled **in progress**, with the date it covers through, and generating it again after it ends covers all of it. Flags are raised per sprint, once it has ended and every student has a complete summary.
 - **Retrying works by sprint.** A failed student is retried for the same sprint, without another ingest.
 
-The notes below describe the weekly flow, which still works through the same button's endpoint until T-21 (#125) removes it, so they apply to sprints except where they mention weeks and Mondays.
-
-
-- The date must be a **Monday**, for this week or an earlier one. Other days can't be picked in browsers that honour the date field's `step`, and are refused either way. It defaults to the most recent completed week.
-- **You can generate the current week to check on a team mid-week.** Its summaries are labelled **in progress**. The team page's contribution shares include them and say so, but flags don't count them. After the week ends they're labelled **partial** and flags still skip them until you generate that week again, so a Wednesday snapshot never affects a flag.
 - **Only one run per team at a time.** While a team is generating, its button shows a spinner on every fresh load of the overview, a second run is refused, and the page reloads itself when the run finishes. While a run is going, the course overview and that team's page show **Starting** until the first student is done, then **N of M students done** with a progress bar, and name any student whose summary has failed so far with the reason. The overview updates the progress in place every 5 seconds, so text typed into a form on it is kept until the run ends and the page reloads. The team page reloads itself every 5 seconds until the run ends. You can leave and come back: the run keeps going, and its result message appears the next time you open the course overview.
 - **A stuck run clears by itself.** If the server dies mid-run, the team is blocked until a time limit of 10 minutes plus 6 per student, which the refusal message shows. To clear it sooner, delete it under **Generation runs** in the admin.
-- Each click runs inside the web request, ingesting all of the team's repos once and then writing each student's summary in turn, so it can take a while. Each LLM call can take up to 2 minutes, and a summary can make up to 3 of them.
-- Generating the same week again regenerates the whole team's summaries, using fresh GitHub data.
-- A student with no activity gets a "No activity that week" summary, with no LLM call.
+- Each click runs inside the web request, ingesting all of the team's repos once and then writing each student's summary in turn, so it can take a while. Each LLM call can take up to 2 minutes, and a summary can make several of them: up to 3 attempts per chunk of the sprint, plus a merge.
+- Generating the same sprint again regenerates the whole team's summaries, using fresh GitHub data.
+- A student with no activity gets a "No activity in this sprint" summary, with no LLM call.
 - If ingest fails, the message names the repo, nothing changes and no LLM calls are made.
-- If a student's summary fails, the other students are still processed, and the failed student keeps any earlier summary for the week. The message names who failed, and the team gets a **Retry failed summaries** button that writes only those summaries again, without another ingest. This is separate from the automatic retries of claims that fail the validator.
+- If a student's summary fails, the other students are still processed, and the failed student keeps any earlier summary for the sprint. The message names who failed, and the team gets a **Retry failed summaries** button that writes only those summaries again, without another ingest. This is separate from the automatic retries of claims that fail the validator.
 
 ### Pages
 
@@ -221,7 +216,7 @@ Only instructors and TAs of a course can see its pages. Only instructors can cre
 |---|---|
 | `malformed_id` | A cited ID isn't in the format `owner/repo:type:id` |
 | `artifact_not_found` | A cited artifact isn't in one of this team's repos |
-| `outside_week` | A cited artifact is dated outside the reporting week |
+| `outside_dates` | A cited artifact is dated outside the sprint's dates |
 | `not_contributor` | The student isn't the author, co-author or reviewer of a cited artifact |
 | `unknown_requirement` | A requirement number doesn't exist in the project |
 

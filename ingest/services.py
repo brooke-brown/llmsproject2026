@@ -43,18 +43,21 @@ class RateLimitError(IngestError):
 
 
 def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
-    """Collects a repo's commits, PRs, reviews and issues for a week and returns its artifacts.
+    """Collects a repo's commits, PRs, reviews and issues for a range of days and returns its
+    artifacts.
 
-    The week runs from the start of week_start through the end of week_end, in the
-    reporting time zone. Commits come from every branch, and merge commits are skipped.
+    The range runs from the start of week_start through the end of week_end, in the reporting
+    time zone. The parameters keep the names they had when a report was always a week, but
+    any range works, and a sprint's report passes its first day and its last covered day.
+    Commits come from every branch, and merge commits are skipped.
     Co-authors are matched against the students on the repo's team at the time of the run,
-    on every stored commit, so a corrected login reaches commits from earlier weeks too.
+    on every stored commit, so a corrected login reaches commits from earlier dates too.
     A PR counts when it merged, or when it was created if unmerged. An issue counts when
     it was created. A review counts when it was submitted, whatever the PR's own date, but
     not if it's pending or by the PR's author. Activity from a deleted GitHub account is
     stored with no author login.
 
-    Running again is how a week is refreshed. PRs, reviews and issues stored for any week
+    Running again is how a range is refreshed. PRs, reviews and issues stored for any date
     pick up changes from GitHub, and each stays one row, so claims citing it keep their
     links. For the same reason, an artifact that's gone from GitHub stays stored.
 
@@ -324,17 +327,14 @@ def _diff_fields(files) -> dict:
     return {"diff": diff[:MAX_DIFF_CHARS], "diff_truncated": len(diff) > MAX_DIFF_CHARS}
 
 
-def student_week_artifacts(
-    user: User, team: Team, week_start: date, last_day: date | None = None
-) -> list[Artifact]:
-    """The artifacts in a team's repos that credit a student during a reporting week.
+def student_artifacts(user: User, team: Team, first_day: date, last_day: date) -> list[Artifact]:
+    """The artifacts in a team's repos that credit a student from first_day through last_day.
 
     A student is credited as an artifact's author, co-author or reviewer (a review's
-    author_login is its reviewer). Logins are compared ignoring case. The range runs from
-    week_start through last_day, inclusive, in the reporting time zone. Without last_day it
-    is the seven days of a reporting week.
+    author_login is its reviewer). Logins are compared ignoring case. Both days are inclusive,
+    in the reporting time zone.
     """
-    start, end = _week_bounds(week_start, last_day)
+    start, end = _day_bounds(first_day, last_day)
     artifacts = Artifact.objects.filter(
         repo__team=team, timestamp__gte=start, timestamp__lt=end
     ).order_by("timestamp", "pk")
@@ -350,15 +350,10 @@ def student_week_artifacts(
     ]
 
 
-def unattributed_commits(
-    repo: Repo, week_start: date, last_day: date | None = None
-) -> list[Artifact]:
-    """A repo's commits in a reporting week whose author matches no one on its team.
-
-    The range runs from week_start through last_day, inclusive, in the reporting time zone;
-    without last_day it is seven days.
-    """
-    start, end = _week_bounds(week_start, last_day)
+def unattributed_commits(repo: Repo, first_day: date, last_day: date) -> list[Artifact]:
+    """A repo's commits from first_day through last_day whose author matches no one on its
+    team. Both days are inclusive, in the reporting time zone."""
+    start, end = _day_bounds(first_day, last_day)
     artifacts = Artifact.objects.filter(repo=repo, timestamp__gte=start, timestamp__lt=end)
     return list(only_unattributed_commits(artifacts).order_by("timestamp", "pk"))
 
@@ -375,10 +370,9 @@ def only_unattributed_commits(artifacts: QuerySet[Artifact]) -> QuerySet[Artifac
     return artifacts.filter(~Exists(on_team), type=Artifact.Type.COMMIT)
 
 
-def _week_bounds(first_day: date, last_day: date | None = None) -> tuple[datetime, datetime]:
-    """The start and end, exclusive, of first_day through last_day (default: seven days)."""
-    # Built from dates, because a week with a clock change isn't exactly 168 hours long.
-    day_after = first_day + timedelta(days=7) if last_day is None else last_day + timedelta(days=1)
+def _day_bounds(first_day: date, last_day: date) -> tuple[datetime, datetime]:
+    """The start and end, exclusive, of first_day through last_day."""
+    # Built from dates, because a day with a clock change isn't exactly 24 hours long.
     start = datetime.combine(first_day, time.min, tzinfo=REPORTING_TIME_ZONE)
-    end = datetime.combine(day_after, time.min, tzinfo=REPORTING_TIME_ZONE)
+    end = datetime.combine(last_day + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE)
     return start, end

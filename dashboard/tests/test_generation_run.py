@@ -1,6 +1,6 @@
 """Tests for US-28: see that summaries are generating after I leave and come back.
 
-`ingest` and `generate_summary` are mocked, so no test makes a network or LLM call. The
+`ingest` and `generate_sprint_summary` are mocked, so no test makes a network or LLM call. The
 clock is fixed at Monday Nov 2, 2026, noon in New York.
 
 The model and URLs are reached per test rather than at module level, so each criterion
@@ -23,7 +23,6 @@ from ingest import services as ingest_services
 
 from .test_course_overview import enroll, make_user, overview_url
 from .test_generate_summary import (
-    LAST_WEEK,
     NOW,
     TeamGenerationFixture,
     generate_url,
@@ -51,7 +50,7 @@ class GenerationRunFixture(TeamGenerationFixture):
     def click_generate(self, team=None, client=None):
         return (client or self.client).post(
             generate_url((team or self.team).id),
-            {"week_start": LAST_WEEK.isoformat()},
+            {"sprint": str(self.sprint.id)},
             follow=True,
         )
 
@@ -112,7 +111,7 @@ class OneRunAtATimeTests(GenerationRunFixture):
         before = Session.objects.get().session_data
 
         with mock.patch.object(Session, "save") as save:
-            self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+            self.client.post(generate_url(self.team.id), {"sprint": str(self.sprint.id)})
 
         save.assert_not_called()
         self.assertEqual(Session.objects.get().session_data, before)
@@ -323,7 +322,7 @@ class ComingBackTests(GenerationRunFixture):
     def test_the_result_message_survives_leaving_before_it_finished(self):
         """A browser that has left never receives the response or any cookie set on it."""
         session_cookie = self.client.cookies["sessionid"].value
-        self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+        self.client.post(generate_url(self.team.id), {"sprint": str(self.sprint.id)})
 
         came_back = Client()
         came_back.cookies["sessionid"] = session_cookie
@@ -345,13 +344,13 @@ class ComingBackTests(GenerationRunFixture):
             if not started:
                 started.append(repo)
                 self.client.post(
-                    generate_url(self.empty_team.id), {"week_start": LAST_WEEK.isoformat()}
+                    generate_url(self.empty_team.id), {"sprint": str(self.sprint.id)}
                 )
             return []
 
         self.ingest.side_effect = the_other_team_runs_meanwhile
 
-        self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+        self.client.post(generate_url(self.team.id), {"sprint": str(self.sprint.id)})
         response = self.client.get(overview_url(self.course.id))
 
         self.assertIn("Team Alpha", page_messages(response))
@@ -360,7 +359,7 @@ class ComingBackTests(GenerationRunFixture):
     def test_a_failed_run_reports_as_an_error_after_coming_back(self):
         self.fail_for(self.ada)
 
-        self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+        self.client.post(generate_url(self.team.id), {"sprint": str(self.sprint.id)})
         response = self.client.get(overview_url(self.course.id))
 
         levels = [message.level_tag for message in response.context["messages"]]

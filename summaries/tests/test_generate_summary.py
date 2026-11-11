@@ -1,6 +1,8 @@
-"""Tests for US-12 (#37): generate_summary, the weekly summary of a student's work.
+"""Tests for US-12 (#37): the summary of a student's work, written as a sprint summary.
 
-generate_summary is imported inside each test rather than at the top of the file, so
+These were written around a Monday-Sunday week. A week is a sprint of seven days, so they run
+through generate_sprint_summary with the sprint made for that week (see week_shim). The helper is
+imported inside each test rather than at the top of the file, so
 each criterion passes or fails on its own instead of the whole module failing to import.
 
 The LLM is replaced by a mock, so nothing here makes a network call: tests choose which
@@ -8,7 +10,7 @@ claims it "returns" and check what it was sent. The artifacts come from the samp
 fixture, which the validator tests use too.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -22,6 +24,7 @@ from summaries.llm import LLMError
 from summaries.models import Claim as ClaimRow
 from summaries.models import Summary
 from summaries.schemas import Claim
+from summaries.tests.week_shim import sprint_for_week
 
 NEW_YORK = ZoneInfo("America/New_York")
 WEEK_START = date(2026, 10, 26)  # A Monday. The week ends Sunday Nov 1.
@@ -49,10 +52,14 @@ NOT_STUDENT_A = [STUDENT_B_PR, UNATTRIBUTED, BEFORE_WEEK, TEAM_B_COMMIT]
 DIFF_CAP = 4000
 
 
-def generate_summary(*args, **kwargs):
-    from summaries.services import generate_summary
+def generate_summary(user, team, week_start):
+    """Write the summary for the sprint that starts on `week_start`, as if after it ended."""
+    from summaries.services import generate_sprint_summary
 
-    return generate_summary(*args, **kwargs)
+    sprint = sprint_for_week(team.project, week_start)
+    after = datetime.combine(sprint.end_date + timedelta(days=1), time(12), tzinfo=NEW_YORK)
+    with mock.patch("django.utils.timezone.now", return_value=after):
+        return generate_sprint_summary(user, team, sprint)
 
 
 def make_claim(*artifact_ids, text="Added the task form.", category="feature", significance="minor"):
@@ -73,6 +80,7 @@ class GenerateSummaryTestCase(TestCase):
         self.student = users.get(github_login="sample-student-a")
         self.student_b = users.get(github_login="sample-student-b")
         self.student_c = users.get(github_login="sample-student-c")  # On team B, not team A.
+        self.sprint = sprint_for_week(self.team.project, WEEK_START)
 
         patcher = mock.patch("summaries.services.generate_claims")
         self.llm = patcher.start()
@@ -115,7 +123,7 @@ class SavedSummaryTests(GenerateSummaryTestCase):
         self.assertEqual(Summary.objects.get(pk=summary.pk), summary)
         self.assertEqual(summary.team, self.team)
         self.assertEqual(summary.user, self.student)
-        self.assertEqual(summary.week_start, WEEK_START)
+        self.assertEqual(summary.sprint.start_date, WEEK_START)
 
     def test_records_how_many_artifacts_the_student_had_that_week(self):
         self.assertEqual(self.run_summary().artifact_count, 5)
@@ -333,13 +341,6 @@ class NoActivityTests(GenerateSummaryTestCase):
 
 
 class RejectedInputTests(GenerateSummaryTestCase):
-    def test_a_week_start_that_is_not_a_monday_is_rejected(self):
-        with self.assertRaisesMessage(ValueError, "Monday"):
-            self.run_summary(week_start=date(2026, 10, 28))
-
-        self.llm.assert_not_called()
-        self.assertEqual(Summary.objects.count(), 0)
-
     def test_a_student_who_is_not_on_the_team_is_rejected(self):
         with self.assertRaisesMessage(ValueError, "team"):
             self.run_summary(user=self.student_c)
@@ -406,7 +407,7 @@ class RegenerationTests(GenerateSummaryTestCase):
 class RequirementIdsTests(GenerateSummaryTestCase):
     """Requirement numbers are checked by the validator, so verified claims keep them.
 
-    The sample fixture's project has requirements 1 and 2.
+    The sample fixture's sprint has requirements 1 and 2.
     """
 
     def claim_with_requirements(self, artifact_id, requirement_ids):
@@ -449,8 +450,8 @@ class RequirementIdsTests(GenerateSummaryTestCase):
 
         self.assertEqual(self.run_summary().claims.get().requirement_ids, [1, 99])
 
-    def test_a_project_with_no_requirements_still_gets_summaries(self):
-        Requirement.objects.filter(project=self.team.project).delete()
+    def test_a_sprint_with_no_requirements_still_gets_summaries(self):
+        Requirement.objects.filter(sprint=self.sprint).delete()
         self.llm.return_value = [self.claim_with_requirements(PR, [])]
 
         summary = self.run_summary()
@@ -521,16 +522,16 @@ class PromptSizeTests(GenerateSummaryTestCase):
         # Reviews, issues and PRs have no diff, so a week can have none.
         no_diffs = Artifact.objects.filter(artifact_id__in=[PR, REVIEW, ISSUE])
 
-        prompt = prompts().build_prompt(no_diffs)
+        prompt = prompts().build_prompt(no_diffs, [], "Sprint 1 (2026-10-26 to 2026-11-01)", "Sprint 1")
 
         for artifact_id in [PR, REVIEW, ISSUE]:
             self.assertIn(artifact_id, prompt)
         self.assertNotIn("diff:", prompt)
 
     def test_a_prompt_with_no_artifacts_has_the_heading_and_no_artifact_blocks(self):
-        prompt = prompts().build_prompt([])
+        prompt = prompts().build_prompt([], [], "Sprint 1 (2026-10-26 to 2026-11-01)", "Sprint 1")
 
-        self.assertIn("This student's artifacts for the week:", prompt)
+        self.assertIn("This student's artifacts for Sprint 1 (2026-10-26 to 2026-11-01):", prompt)
         self.assertNotIn("artifact ID:", prompt)
 
     def test_a_few_artifacts_still_get_the_full_diff_cap(self):
@@ -542,16 +543,18 @@ class PromptSizeTests(GenerateSummaryTestCase):
 
 
 class RequirementPromptTests(GenerateSummaryTestCase):
-    """The prompt lists the project's requirements, so the LLM can tie claims to them."""
+    """The prompt lists the sprint's requirements, so the LLM can tie claims to them."""
 
-    def test_the_prompt_lists_the_projects_requirements_by_number(self):
+    def test_the_prompt_lists_the_sprints_requirements_by_number(self):
         self.run_summary()
 
         self.assertIn("1. Users can add a task to a shared list.", self.prompt)
         self.assertIn("2. Users can mark a task as done.", self.prompt)
 
     def test_requirements_are_listed_in_number_order(self):
-        Requirement.objects.create(project=self.team.project, number=3, text="Third one.")
+        Requirement.objects.create(
+            project=self.team.project, sprint=self.sprint, number=3, text="Third one."
+        )
 
         self.run_summary()
 
@@ -566,20 +569,22 @@ class RequirementPromptTests(GenerateSummaryTestCase):
 
         self.assertNotIn("OTHER-PROJECT-REQUIREMENT", self.prompt)
 
-    def test_a_project_with_no_requirements_says_so(self):
-        Requirement.objects.filter(project=self.team.project).delete()
+    def test_a_sprint_with_no_requirements_says_so(self):
+        Requirement.objects.filter(sprint=self.sprint).delete()
 
         self.run_summary()
 
-        self.assertIn("has no requirements", self.prompt)
+        self.assertIn("Sprint 1 has no requirements", self.prompt)
 
-    def test_a_project_with_requirements_does_not_say_it_has_none(self):
+    def test_a_sprint_with_requirements_does_not_say_it_has_none(self):
         self.run_summary()
 
         self.assertNotIn("has no requirements", self.prompt)
 
     def test_a_long_requirement_is_cut_to_the_cap_and_marked(self):
-        Requirement.objects.create(project=self.team.project, number=3, text="R" * 1500)
+        Requirement.objects.create(
+            project=self.team.project, sprint=self.sprint, number=3, text="R" * 1500
+        )
 
         self.run_summary()
 

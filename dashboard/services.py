@@ -38,13 +38,12 @@ from . import flags
 from .models import Flag, FlagDispute, GenerationRun
 
 STAFF_ROLES = [Enrollment.Role.INSTRUCTOR, Enrollment.Role.TA]
-MONDAY = 0  # date.weekday() counts from Monday.
 # How long a run may hold its team: the GitHub pull, plus up to 3 LLM calls of 2 minutes each
 # for each student. A run that dies is cleared after this.
 RUN_MINUTES_FOR_PULL = 10
 RUN_MINUTES_PER_STUDENT = 6
 RESULTS_SESSION_KEY = "run_results"
-RETRY_SESSION_KEY = "failed_summaries"  # {team ID: {"week_start": ..., "student_ids": [...]}}
+RETRY_SESSION_KEY = "failed_summaries"  # {team ID: {"sprint_id": ..., "student_ids": [...]}}
 
 
 def _withdrawn():
@@ -536,16 +535,12 @@ def get_summary_for_staff(user, summary_id):
     return summary
 
 
-def week_end(week_start):
-    """The Sunday that ends the Monday-Sunday reporting week."""
-    return week_start + timedelta(days=6)
-
-
 def summary_period(summary):
     """The first and last day a summary's period spans: its sprint's, or its reporting week."""
     if summary.sprint_id is not None:
         return summary.sprint.start_date, summary.sprint.end_date
-    return summary.week_start, week_end(summary.week_start)
+    # A weekly summary from the alpha: its Monday-Sunday week.
+    return summary.week_start, summary.week_start + timedelta(days=6)
 
 
 # Sprint summaries first, newest sprint first, then any weekly ones from before sprints.
@@ -1054,33 +1049,6 @@ def reporting_today(now=None):
     return (now or timezone.now()).astimezone(ingest_services.REPORTING_TIME_ZONE).date()
 
 
-def current_week_start(now=None):
-    """The Monday of the Monday-Sunday week happening now."""
-    today = reporting_today(now)
-    return today - timedelta(days=today.weekday())
-
-
-def last_completed_week_start(now=None):
-    """The Monday of the most recent Monday-Sunday week that has fully ended."""
-    return current_week_start(now) - timedelta(days=7)
-
-
-def parse_week_start(value, now=None):
-    """The Monday that starts a reporting week that has started, from a YYYY-MM-DD string.
-
-    Raises GenerationError, with a message for the user, for anything else.
-    """
-    try:
-        week_start = date.fromisoformat(value)
-    except (TypeError, ValueError):
-        raise GenerationError("Pick a week to generate.") from None
-    if week_start.weekday() != MONDAY:
-        raise GenerationError("The week must start on a Monday.")
-    if week_start > current_week_start(now):
-        raise GenerationError("That week hasn't started yet. Pick this week or an earlier one.")
-    return week_start
-
-
 def started_sprints(project, now=None):
     """The project's sprints that have started, in date order. A sprint that starts today
     has started. Uses prefetched sprints when there are some."""
@@ -1130,14 +1098,13 @@ class SummaryFailure:
 
 @dataclass(frozen=True)
 class TeamGeneration:
-    """How one run of writing a team's summaries went."""
+    """How one run of writing a team's summaries for a sprint went."""
 
     team: Team
-    week_start: date | None
+    sprint: Sprint
     attempted: int
     failures: list[SummaryFailure]
-    sprint: Sprint | None = None
-    covered_through: date | None = None  # For a sprint: the last day its summaries cover.
+    covered_through: date  # The last day its summaries cover.
 
     @property
     def succeeded(self):
@@ -1145,33 +1112,6 @@ class TeamGeneration:
 
     @property
     def message(self):
-        if self.sprint is not None:
-            return self._sprint_message()
-        week = f"the week of {self.week_start:%b} {self.week_start.day}, {self.week_start.year}"
-        if not self.attempted:
-            return (
-                f"Nobody left to retry on {self.team.name} for {week}: the students whose "
-                "summaries failed have left the team."
-            )
-        if self.succeeded:
-            students = "1 student" if self.attempted == 1 else f"{self.attempted} students"
-            message = f"Generated summaries for {students} on {self.team.name} for {week}."
-            if self.week_start > last_completed_week_start():
-                message += (
-                    " This week is still in progress, so these summaries are partial and don't "
-                    "count toward flags until you generate the week again after it ends."
-                )
-            return message
-        done = self.attempted - len(self.failures)
-        failed = "; ".join(
-            f"{student_name(failure.student)} ({failure.reason})" for failure in self.failures
-        )
-        return (
-            f"Generated {done} of {self.attempted} summaries for {self.team.name} for {week}. "
-            f"Couldn't generate: {failed}. Flags weren't updated."
-        )
-
-    def _sprint_message(self):
         period = sprint_label(self.sprint)
         if not self.attempted:
             return (
@@ -1183,7 +1123,7 @@ class TeamGeneration:
             message = f"Generated summaries for {students} on {self.team.name} for {period}."
             if self.covered_through < self.sprint.end_date:
                 message += (
-                    f" This sprint is still in progress, so these summaries are partial: they cover "
+                    " This sprint is still in progress, so these summaries are partial: they cover "
                     f"activity up to {short_date(self.covered_through)}. Generate the sprint again "
                     "after it ends to count it toward flags."
                 )
@@ -1208,19 +1148,13 @@ def _team_students(team, only_ids=None):
     return [membership.user for membership in memberships]
 
 
-def _ingest_team_week(team, week_start):
-    """Ingest each of the team's repos for the week. See _ingest_team_range."""
-    _ingest_team_range(team, week_start, week_end(week_start))
-
-
 def _ingest_team_range(team, first_day, last_day):
     """Ingest each of the team's repos for first_day through last_day, or raise GenerationError
     naming the repo. It's all-or-nothing, so a failure on one repo leaves the others as they were."""
-    week_start, end = first_day, last_day
     with transaction.atomic():
         for repo in team_repos(team):
             try:
-                ingest_services.ingest(repo, week_start, end)
+                ingest_services.ingest(repo, first_day, last_day)
             except ingest_services.IngestError as error:
                 # IngestError messages are written for users and never hold the token.
                 raise GenerationError(
@@ -1234,30 +1168,6 @@ def _ingest_team_range(team, first_day, last_day):
                     f"Couldn't pull GitHub activity for {repo.full_name}. "
                     "No summaries were generated."
                 ) from None
-
-
-def _write_summaries(team, students, week_start):
-    """Write each student's summary, carrying on past a failure, and recompute the team's
-    flags only if none failed.
-
-    A partial run could leave a failed student's old summary next to everyone's new one, so
-    flags wait until every student has succeeded.
-    """
-    failures = []
-    for student in students:
-        try:
-            summaries_services.generate_summary(student, team, week_start)
-        except LLMError as error:
-            # LLMError messages never hold student work, so they are safe to show.
-            failures.append(SummaryFailure(student, str(error)))
-        except Exception:
-            # Anything else is unexpected. Its error isn't shown, so no student work can
-            # reach the page.
-            failures.append(SummaryFailure(student, "an unexpected error"))
-        _record_progress(team, student, failures[-1] if failures and failures[-1].student == student else None)
-    if not failures:
-        flags.compute_flags(team)
-    return TeamGeneration(team, week_start, len(students), failures)
 
 
 def _record_progress(team, student, failure):
@@ -1303,7 +1213,7 @@ def _write_sprint_summaries(team, students, sprint):
     if not failures:
         flags.compute_flags(team)
     covered = sprint.covered_through(reporting_today())
-    return TeamGeneration(team, None, len(students), failures, sprint, covered)
+    return TeamGeneration(team, sprint, len(students), failures, covered)
 
 
 def generating_team_ids(course):
@@ -1399,24 +1309,6 @@ def _reread(session):
     session._session_cache = session.load()
 
 
-def generate_team_summaries(team, week_start):
-    """Ingest the team's repos once, then write a summary for each student on the team.
-
-    Raises GenerationError, with nothing run, for a team with no students or no repo, and
-    for a failed ingest, with no LLM calls made. Otherwise returns a TeamGeneration, which
-    lists any students whose summaries failed. They keep any earlier summary for the week.
-    """
-    students = _team_students(team)
-    if not students:
-        raise GenerationError("This team has no students yet, so nothing was generated.")
-    # Otherwise every student would get a "No activity" summary, which reads like a finding.
-    if not team.repos.exists():
-        raise GenerationError("This team has no repo yet, so nothing was generated.")
-    with _team_run(team, len(students)):
-        _ingest_team_week(team, week_start)
-        return _write_summaries(team, students, week_start)
-
-
 def generate_team_sprint_summaries(team, sprint):
     """Ingest the team's repos once for the sprint, from its first day through today (or its
     last day, once it has ended), then write a summary for each student on the team.
@@ -1439,21 +1331,24 @@ def retry_failed_summaries(team, session):
     """Write summaries again for only the students whose summaries failed, or return None
     if the session has nothing to retry for this team.
 
-    Ingest doesn't run again, so every student's summary for the week uses the same GitHub
-    data. Anyone who has left the team since is skipped.
+    Ingest doesn't run again, so every student's summary for the sprint uses the same GitHub
+    data. Anyone who has left the team since is skipped. A retry remembered by the weekly
+    flow, with no sprint, has nothing to retry, so it's cleared.
     """
-    retry = session.get(RETRY_SESSION_KEY, {}).get(str(team.id))
+    retries = session.get(RETRY_SESSION_KEY, {})
+    retry = retries.get(str(team.id))
     if retry is None:
         return None
+    if "sprint_id" not in retry:
+        retries.pop(str(team.id))
+        session[RETRY_SESSION_KEY] = retries
+        return None
     students = _team_students(team, only_ids=retry["student_ids"])
-    if "sprint_id" in retry:
-        sprint = Sprint.objects.filter(pk=retry["sprint_id"], project_id=team.project_id).first()
-        if sprint is None:
-            raise GenerationError("That sprint no longer exists, so nothing was retried.")
-        with _team_run(team, len(students)):
-            return _write_sprint_summaries(team, students, sprint)
+    sprint = Sprint.objects.filter(pk=retry["sprint_id"], project_id=team.project_id).first()
+    if sprint is None:
+        raise GenerationError("That sprint no longer exists, so nothing was retried.")
     with _team_run(team, len(students)):
-        return _write_summaries(team, students, date.fromisoformat(retry["week_start"]))
+        return _write_sprint_summaries(team, students, sprint)
 
 
 def remember_retry(session, generation):
@@ -1462,18 +1357,18 @@ def remember_retry(session, generation):
     retries = session.get(RETRY_SESSION_KEY, {})
     key = str(generation.team.id)
     if generation.failures:
-        # A sprint run is retried for the same sprint, and a weekly one for the same week.
-        when = (
-            {"sprint_id": generation.sprint.id}
-            if generation.sprint is not None
-            else {"week_start": generation.week_start.isoformat()}
-        )
-        retries[key] = {**when, "student_ids": [failure.student.id for failure in generation.failures]}
+        # Retried for the same sprint.
+        retries[key] = {
+            "sprint_id": generation.sprint.id,
+            "student_ids": [failure.student.id for failure in generation.failures],
+        }
     else:
         retries.pop(key, None)
     session[RETRY_SESSION_KEY] = retries
 
 
 def team_ids_to_retry(session):
-    """The IDs of the teams with failed summaries to retry in this session."""
-    return {int(team_id) for team_id in session.get(RETRY_SESSION_KEY, {})}
+    """The IDs of the teams with failed summaries to retry in this session. A retry remembered
+    by the weekly flow can't run, so it doesn't count."""
+    retries = session.get(RETRY_SESSION_KEY, {})
+    return {int(team_id) for team_id, retry in retries.items() if "sprint_id" in retry}

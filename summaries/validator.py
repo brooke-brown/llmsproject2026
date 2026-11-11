@@ -2,11 +2,11 @@
 
 Plain Python with no LLM calls. For each artifact a claim cites it checks that the ID is
 well formed, that the artifact is in one of the team's repos, that it falls inside the
-reporting week, and that the student is its author or co-author (for a review, the
+sprint's dates, and that the student is its author or co-author (for a review, the
 author is the reviewer). A claim fails if any citation fails, and every problem is
 reported so the LLM can fix them all in one retry.
 
-It also checks that every requirement number a claim cites exists in the team's project
+It also checks that every requirement number a claim cites exists in the sprint
 (Requirement.number, not the database ID).
 """
 
@@ -19,11 +19,10 @@ from core.models import Requirement
 from ingest.models import ARTIFACT_ID_PATTERN, Artifact
 
 REPORTING_TIME_ZONE = ZoneInfo("America/New_York")
-MONDAY = 0  # date.weekday() counts from Monday.
 
 MALFORMED_ID = "malformed_id"
 ARTIFACT_NOT_FOUND = "artifact_not_found"
-OUTSIDE_WEEK = "outside_week"
+OUTSIDE_DATES = "outside_dates"
 NOT_CONTRIBUTOR = "not_contributor"
 UNKNOWN_REQUIREMENT = "unknown_requirement"
 NOT_IN_SOURCE = "not_in_source"
@@ -64,19 +63,6 @@ class ClaimResult:
         return not self.errors
 
 
-def validate_claims(claims, user, team, week_start: date) -> list[ClaimResult]:
-    """Check each claim for `user` and `team` in the week starting on `week_start`.
-
-    Returns one result per claim, in order. Raises ValueError if `week_start` isn't a
-    Monday, because the week would otherwise quietly cover the wrong seven days.
-    """
-    if week_start.weekday() != MONDAY:
-        raise ValueError(f"The reporting week must start on a Monday, not {week_start.isoformat()}.")
-    week = _Week(week_start)
-    requirements = Requirement.objects.filter(project=team.project_id)
-    return _validate_all(claims, user, team, week, requirements)
-
-
 def validate_sprint_claims(
     claims, user, team, sprint, last_day: date, *, first_day: date | None = None,
     allowed_artifact_ids=None,
@@ -85,18 +71,18 @@ def validate_sprint_claims(
     `last_day`, inclusive.
 
     `last_day` is the sprint's covered_through, so a running sprint stops at today. A chunk
-    passes its own first and last day. It needn't start on a Monday, and requirement numbers
-    are looked up in the sprint alone. If `allowed_artifact_ids` is given, a claim may cite
-    only those artifacts, as a merged claim may cite only the ones it was merged from.
+    passes its own first and last day. Requirement numbers are looked up in the sprint alone.
+    If `allowed_artifact_ids` is given, a claim may cite only those artifacts, as a merged
+    claim may cite only the ones it was merged from.
     """
-    window = _Week(first_day or sprint.start_date, last_day, sprint_name=sprint.name)
+    window = _DateRange(first_day or sprint.start_date, last_day, sprint.name)
     return _validate_all(
         claims, user, team, window, Requirement.objects.filter(sprint=sprint),
         allowed_artifact_ids,
     )
 
 
-def _validate_all(claims, user, team, week, requirements, allowed_artifact_ids=None):
+def _validate_all(claims, user, team, window, requirements, allowed_artifact_ids=None):
     login = user.github_login.lower()
     # Looked up once for the whole list.
     requirement_numbers = set(requirements.values_list("number", flat=True))
@@ -104,48 +90,41 @@ def _validate_all(claims, user, team, week, requirements, allowed_artifact_ids=N
         ClaimResult(
             index,
             _validate_claim(
-                index, claim, team, login, week, requirement_numbers, allowed_artifact_ids
+                index, claim, team, login, window, requirement_numbers, allowed_artifact_ids
             ),
         )
         for index, claim in enumerate(claims)
     ]
 
 
-class _Week:
+class _DateRange:
     """The first day at 00:00 to the day after the last at 00:00 in New York, so the last
-    night is included. A reporting week is Monday-Sunday; a sprint's range is any days.
+    night is included. Errors are worded for the sprint, since they go back to the LLM: its
+    dates and requirements are the sprint's."""
 
-    `sprint_name` words the errors for a sprint, since they go back to the LLM: its dates and
-    requirements are the sprint's, not a reporting week's or the project's."""
-
-    def __init__(self, first_day: date, last_day: date | None = None, sprint_name: str | None = None):
+    def __init__(self, first_day: date, last_day: date, sprint_name: str):
         self.first_day = first_day
-        self.last_day = last_day or first_day + timedelta(days=6)
+        self.last_day = last_day
         self.sprint_name = sprint_name
         self.start = datetime.combine(first_day, time.min, tzinfo=REPORTING_TIME_ZONE)
         self.end = datetime.combine(
-            self.last_day + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE
+            last_day + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE
         )
 
     def contains(self, moment: datetime) -> bool:
         return self.start <= moment < self.end
 
     def describe(self) -> str:
-        dates = f"{self.first_day.isoformat()} to {self.last_day.isoformat()}"
-        if self.sprint_name:
-            return f"{self.sprint_name} ({dates})"
-        return f"the reporting week {dates}"
+        return f"{self.sprint_name} ({self.first_day.isoformat()} to {self.last_day.isoformat()})"
 
     def unknown_requirement(self, number) -> str:
-        if self.sprint_name:
-            return f"Requirement {number} isn't one of {self.sprint_name}'s requirements."
-        return f"Requirement {number} doesn't exist in this project."
+        return f"Requirement {number} isn't one of {self.sprint_name}'s requirements."
 
 
-def _validate_claim(index, claim, team, login, week, requirement_numbers, allowed=None):
+def _validate_claim(index, claim, team, login, window, requirement_numbers, allowed=None):
     errors = []
     for artifact_id in claim.artifact_ids:
-        errors.extend(_validate_citation(index, artifact_id, team, login, week, allowed))
+        errors.extend(_validate_citation(index, artifact_id, team, login, window, allowed))
     # Each unknown number once, even if the claim repeats it.
     for number in dict.fromkeys(claim.requirement_ids):
         if number not in requirement_numbers:
@@ -154,14 +133,14 @@ def _validate_claim(index, claim, team, login, week, requirement_numbers, allowe
                     index,
                     "",
                     UNKNOWN_REQUIREMENT,
-                    week.unknown_requirement(number),
+                    window.unknown_requirement(number),
                     requirement_id=number,
                 )
             )
     return errors
 
 
-def _validate_citation(index, artifact_id, team, login, week, allowed=None):
+def _validate_citation(index, artifact_id, team, login, window, allowed=None):
     def error(check, message):
         return ClaimError(index, artifact_id, check, message)
 
@@ -182,11 +161,11 @@ def _validate_citation(index, artifact_id, team, login, week, allowed=None):
             )
         )
     when = artifact.timestamp.astimezone(REPORTING_TIME_ZONE)
-    if not week.contains(when):
+    if not window.contains(when):
         errors.append(
             error(
-                OUTSIDE_WEEK,
-                f"{artifact_id} is dated {when.date().isoformat()}, outside {week.describe()}.",
+                OUTSIDE_DATES,
+                f"{artifact_id} is dated {when.date().isoformat()}, outside {window.describe()}.",
             )
         )
     credited = {artifact.author_login.lower(), *(c.lower() for c in artifact.co_author_logins)}

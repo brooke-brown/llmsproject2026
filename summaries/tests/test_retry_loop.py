@@ -1,13 +1,13 @@
 """Tests for US-13 (#38): retrying the claims that fail validation.
 
-generate_summary asks the LLM for claims, validates them, and sends only the failing ones
+Generating a summary asks the LLM for claims, validates them, and sends only the failing ones
 back for up to 2 retries (3 attempts in all). A claim that still fails afterwards is
 saved as couldn't verify. A retry that errors or comes back malformed counts as a failed
 attempt, not a crash.
 
 The LLM is a mock whose side_effect lists each attempt's reply in turn, so a reply can
 be a list of claims or an LLMError to raise. Nothing here makes a network call. The
-fixtures and helpers are the ones the generate_summary tests use.
+fixtures and helpers are the ones the summary generation tests use.
 """
 
 from summaries.llm import LLMError
@@ -278,7 +278,7 @@ class DroppedClaimTests(RetryTestCase):
         self.replies(
             [bad("Version 1.", STUDENT_B_PR)],
             [bad("Version 2.", TEAM_B_COMMIT)],  # artifact_not_found
-            [bad("Version 3.", BEFORE_WEEK)],  # outside_week
+            [bad("Version 3.", BEFORE_WEEK)],  # outside_dates
         )
 
         self.run_summary()
@@ -287,7 +287,7 @@ class DroppedClaimTests(RetryTestCase):
         self.assertEqual(claim.status, "couldnt_verify")
         self.assertEqual(claim.text, "Version 3.")
         self.assertEqual(claim.artifact_ids, [BEFORE_WEEK])
-        self.assertEqual([error["check"] for error in claim.validator_errors], ["outside_week"])
+        self.assertEqual([error["check"] for error in claim.validator_errors], ["outside_dates"])
 
     def test_a_dropped_claims_errors_carry_its_position_in_the_summary(self):
         self.replies([good(), bad()], [bad("Try 2.")], [bad("Try 3.")])
@@ -309,11 +309,20 @@ class AttemptStatsTests(RetryTestCase):
     """The loop reports what T-9 will log: retries used and claims valid on the first try."""
 
     def generate(self):
-        from ingest.services import student_week_artifacts
-        from summaries.services import generate_validated_claims
+        from ingest.services import student_artifacts
+        from summaries.services import _validated_claims
+        from summaries.validator import validate_sprint_claims
 
-        artifacts = student_week_artifacts(self.student, self.team, WEEK_START)
-        return generate_validated_claims(self.student, self.team, WEEK_START, artifacts)
+        artifacts = student_artifacts(self.student, self.team, WEEK_START, self.sprint.end_date)
+        return _validated_claims(
+            artifacts,
+            list(self.sprint.requirements.order_by("number")),
+            lambda claims: validate_sprint_claims(
+                claims, self.student, self.team, self.sprint, self.sprint.end_date
+            ),
+            "Sprint 1 (2026-10-26 to 2026-11-01)",
+            "Sprint 1",
+        )
 
     def test_a_clean_run_used_no_retries_and_every_claim_was_valid_first_time(self):
         self.replies([good(), good(GOOD_2, COMMIT)])
@@ -366,16 +375,18 @@ class AttemptStatsTests(RetryTestCase):
 class RetryPromptSizeTests(RetryTestCase):
     """A retry prompt repeats the artifact list, so it's held to the same size budget."""
 
-    def test_a_retry_prompt_for_a_week_with_many_artifacts_stays_near_the_budget(self):
+    def test_a_retry_prompt_for_a_sprint_with_many_artifacts_stays_near_the_budget(self):
         import summaries.prompts as prompts
-        from ingest.services import student_week_artifacts
+        from ingest.services import student_artifacts
 
         for number in range(150):
             self.add_artifact(f"bulk{number:03d}", diff=f"{number:03d}" + "x" * 5000)
-        artifacts = student_week_artifacts(self.student, self.team, WEEK_START)
+        artifacts = student_artifacts(self.student, self.team, WEEK_START, self.sprint.end_date)
         failing = [(bad(), [])]
 
-        prompt = prompts.build_retry_prompt(artifacts, failing)
+        prompt = prompts.build_retry_prompt(
+            artifacts, failing, [], "Sprint 1 (2026-10-26 to 2026-11-01)", "Sprint 1"
+        )
 
         # The failing claims are short, so they add little beyond the artifact list.
         self.assertLessEqual(len(prompt), prompts.PROMPT_BUDGET + 2000)

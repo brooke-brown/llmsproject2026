@@ -27,7 +27,7 @@ from ingest.tests.test_ingest_commits import (
     fake_file,
     sha,
 )
-from ingest.tests.test_student_week_artifacts import ONE_MICROSECOND, make_user
+from ingest.tests.test_student_artifacts import ONE_MICROSECOND, make_user
 
 LAST_WEEK = MID_WEEK - timedelta(days=7)
 NEXT_WEEK_MID = MID_WEEK + timedelta(days=7)
@@ -406,13 +406,13 @@ class DeletedAccountTests(ActivityTestCase):
         self.assert_collected_without_credit(issue_id(1), artifacts)
 
     def test_deleted_accounts_activity_isnt_credited_to_a_student(self):
-        from ingest.services import student_week_artifacts
+        from ingest.services import student_artifacts
 
         self.ingest_activity(
             pulls=[fake_pull(1, login=None), fake_pull(2, login="ghost"), fake_pull(CONTROL)],
             issues=[fake_issue(3, login=None), fake_issue(4, login="ghost")],
         )
-        credited = student_week_artifacts(make_user(STUDENT), self.team, WEEK_START)
+        credited = student_artifacts(make_user(STUDENT), self.team, WEEK_START, WEEK_START + timedelta(days=6))
         self.assert_ids(credited, pr_id(CONTROL))
 
 

@@ -1,4 +1,4 @@
-"""Tests for T-4 (#15): the student-week artifact lookup.
+"""Tests for T-4 (#15): the student artifact lookup, which takes a first and last day.
 
 The lookup is imported per test rather than at module level, so each criterion
 passes or fails on its own instead of the whole module failing on one ImportError.
@@ -33,9 +33,10 @@ MID_WEEK = datetime(2026, 10, 21, 12, 0, tzinfo=NEW_YORK)
 
 
 def lookup(user, team, week_start=WEEK_START):
-    from ingest.services import student_week_artifacts
+    """The lookup for the seven days from `week_start`, which these tests are written around."""
+    from ingest.services import student_artifacts
 
-    return student_week_artifacts(user, team, week_start)
+    return student_artifacts(user, team, week_start, week_start + timedelta(days=6))
 
 
 def make_user(github_login):

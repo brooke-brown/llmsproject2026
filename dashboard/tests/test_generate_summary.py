@@ -1,9 +1,9 @@
-"""Tests for US-22 (#83): generate a team's weekly summaries with one click.
+"""Tests for US-22 (#83): generate a team's summaries with one click, now by sprint (US-40).
 
-`ingest` and `generate_summary` are mocked, so no test makes a network or LLM call. The
-end-to-end tests run the real `generate_summary` and mock only the LLM client call. The
-reporting clock is fixed at Monday Nov 2, 2026, noon in New York, which makes the week of
-Oct 26 the most recent completed week.
+`ingest` and `generate_sprint_summary` are mocked, so no test makes a network or LLM call. The
+end-to-end tests run the real `generate_sprint_summary` and mock only the LLM client call. The
+reporting clock is fixed at Monday Nov 2, 2026, noon in New York, so the fixture's Sprint 1
+(Oct 19 to Nov 15) is running and an earlier Sprint 0 has ended.
 
 URLs are reversed per test, and dashboard.services is reached through the module, so each
 criterion passes or fails on its own.
@@ -36,6 +36,8 @@ LAST_WEEK = date(2026, 10, 26)
 LAST_WEEK_END = date(2026, 11, 1)
 EARLIER_WEEK = date(2026, 10, 12)
 EARLIER_WEEK_END = date(2026, 10, 18)
+SPRINT_START = date(2026, 10, 19)  # The fixture's running sprint starts here, and today is Nov 2.
+TODAY = date(2026, 11, 2)
 GENERATE_LABEL = "Generate summaries"
 RETRY_LABEL = "Retry failed summaries"
 
@@ -85,6 +87,9 @@ class TeamGenerationFixture(TestCase):
         cls.sprint = Sprint.objects.create(
             project=cls.project, name="Sprint 1", start_date=date(2026, 10, 19), end_date=date(2026, 11, 15)
         )
+        cls.earlier = Sprint.objects.create(
+            project=cls.project, name="Sprint 0", start_date=EARLIER_WEEK, end_date=EARLIER_WEEK_END
+        )
 
     def setUp(self):
         clock = mock.patch("django.utils.timezone.now", return_value=NOW)
@@ -92,7 +97,7 @@ class TeamGenerationFixture(TestCase):
         self.addCleanup(clock.stop)
 
         self.ingest = self.patch("ingest.services.ingest", return_value=[])
-        self.generate = self.patch("summaries.services.generate_summary")
+        self.generate = self.patch("summaries.services.generate_sprint_summary")
         self.generate.side_effect = self.save_summary
 
     def patch(self, target, **kwargs):
@@ -101,24 +106,29 @@ class TeamGenerationFixture(TestCase):
         return patcher.start()
 
     @staticmethod
-    def save_summary(user, team, week_start):
-        summary, _ = Summary.objects.get_or_create(team=team, user=user, week_start=week_start)
+    def save_summary(user, team, sprint):
+        summary, _ = Summary.objects.get_or_create(team=team, user=user, sprint=sprint)
         return summary
 
     def fail_for(self, *students, error=None):
-        """generate_summary fails for these students and works for everyone else."""
+        """Writing the summary fails for these students and works for everyone else."""
         error = error or LLMError("The LLM request timed out.")
 
-        def generate(user, team, week_start):
+        def generate(user, team, sprint):
             if user in students:
                 raise error
-            return self.save_summary(user, team, week_start)
+            return self.save_summary(user, team, sprint)
 
         self.generate.side_effect = generate
 
-    def post(self, week_start=LAST_WEEK, user=None, team=None, **kwargs):
+    def post(self, sprint=None, user=None, team=None, **kwargs):
+        """Generate for `sprint` (default: the fixture's running sprint, or none if False)."""
         self.client.force_login(user or self.instructor)
-        data = {} if week_start is None else {"week_start": str(week_start)}
+        sprint = self.sprint if sprint is None else sprint
+        if sprint is False:
+            data = {}
+        else:
+            data = {"sprint": sprint if isinstance(sprint, str) else str(sprint.id)}
         return self.client.post(generate_url((team or self.team).id), data, **kwargs)
 
     def post_retry(self, user=None, team=None, **kwargs):
@@ -136,26 +146,6 @@ class TeamGenerationFixture(TestCase):
     def assert_nothing_ran(self):
         self.ingest.assert_not_called()
         self.generate.assert_not_called()
-
-
-class DefaultWeekTests(TestCase):
-    def week_start_at(self, *args):
-        return services.last_completed_week_start(datetime(*args, tzinfo=NEW_YORK))
-
-    def test_on_a_monday_is_the_week_that_ended_the_day_before(self):
-        self.assertEqual(self.week_start_at(2026, 11, 2, 0, 0), LAST_WEEK)
-
-    def test_midweek_is_the_previous_monday_to_sunday(self):
-        self.assertEqual(self.week_start_at(2026, 11, 5, 15, 0), LAST_WEEK)
-
-    def test_on_a_sunday_the_current_week_hasnt_ended(self):
-        self.assertEqual(self.week_start_at(2026, 11, 1, 23, 59), date(2026, 10, 19))
-
-    def test_uses_new_york_time_not_utc(self):
-        # 2am UTC on Monday is still 9pm Sunday in New York.
-        now = datetime(2026, 11, 2, 2, 0, tzinfo=dt_timezone.utc)
-
-        self.assertEqual(services.last_completed_week_start(now), date(2026, 10, 19))
 
 
 class GenerateButtonTests(TeamGenerationFixture):
@@ -254,15 +244,12 @@ class GenerateAccessTests(TeamGenerationFixture):
 
 
 class GenerateRunTests(TeamGenerationFixture):
-    def test_ingests_each_of_the_teams_repos_once_for_the_week(self):
+    def test_ingests_each_of_the_teams_repos_once_for_the_sprint(self):
         self.post()
 
         self.assertCountEqual(
             self.ingest.call_args_list,
-            [
-                mock.call(self.app, LAST_WEEK, LAST_WEEK_END),
-                mock.call(self.api, LAST_WEEK, LAST_WEEK_END),
-            ],
+            [mock.call(self.app, SPRINT_START, TODAY), mock.call(self.api, SPRINT_START, TODAY)],
         )
 
     def test_doesnt_ingest_another_teams_repos(self):
@@ -283,8 +270,8 @@ class GenerateRunTests(TeamGenerationFixture):
         self.assertCountEqual(
             self.generate.call_args_list,
             [
-                mock.call(self.ada, self.team, LAST_WEEK),
-                mock.call(self.grace, self.team, LAST_WEEK),
+                mock.call(self.ada, self.team, self.sprint),
+                mock.call(self.grace, self.team, self.sprint),
             ],
         )
 
@@ -307,43 +294,50 @@ class GenerateRunTests(TeamGenerationFixture):
 
         self.assertEqual(order, ["ingest", "ingest", "generate", "generate"])
 
-    def test_an_earlier_completed_week_can_be_picked(self):
-        self.post(week_start=EARLIER_WEEK)
+    def test_an_earlier_sprint_can_be_picked(self):
+        self.post(self.earlier)
 
         self.ingest.assert_any_call(self.app, EARLIER_WEEK, EARLIER_WEEK_END)
-        self.generate.assert_any_call(self.ada, self.team, EARLIER_WEEK)
-        self.generate.assert_any_call(self.grace, self.team, EARLIER_WEEK)
+        self.generate.assert_any_call(self.ada, self.team, self.earlier)
+        self.generate.assert_any_call(self.grace, self.team, self.earlier)
 
-    def test_success_returns_to_the_overview_with_the_team_week_and_student_count(self):
+    def test_success_returns_to_the_overview_with_the_team_sprint_and_student_count(self):
         response = self.post(follow=True)
 
         self.assertRedirects(response, overview_url(self.course.id))
         message = page_messages(response)
         self.assertIn("Team Alpha", message)
-        self.assertIn("Oct 26", message)
+        self.assertIn("Sprint 1 (Oct 19 – Nov 15)", message)
         self.assertIn("2 students", message)
 
 
 class GenerateValidationTests(TeamGenerationFixture):
-    def assert_rejected(self, week_start, message):
-        response = self.post(week_start=week_start, follow=True)
+    def assert_rejected(self, sprint, message):
+        response = self.post(sprint=sprint, follow=True)
 
         self.assertRedirects(response, overview_url(self.course.id))
         self.assertIn(message, page_messages(response))
         self.assert_nothing_ran()
         self.assertFalse(Summary.objects.exists())
 
-    def test_week_start_that_isnt_a_monday_is_rejected(self):
-        self.assert_rejected(date(2026, 10, 27), "The week must start on a Monday.")
+    def test_a_sprint_that_has_not_started_is_rejected(self):
+        future = Sprint.objects.create(
+            project=self.project, name="Sprint 9", start_date=date(2026, 11, 20), end_date=date(2026, 11, 26)
+        )
+        self.assert_rejected(future, "hasn't started yet")
 
-    def test_future_week_is_rejected(self):
-        self.assert_rejected(date(2026, 11, 9), "That week hasn't started yet.")
+    def test_a_missing_sprint_is_rejected(self):
+        self.assert_rejected(False, "Pick a sprint to generate.")
 
-    def test_missing_week_is_rejected(self):
-        self.assert_rejected(None, "Pick a week to generate.")
+    def test_an_unreadable_sprint_is_rejected(self):
+        self.assert_rejected("next tuesday", "Pick a sprint to generate.")
 
-    def test_unreadable_week_is_rejected(self):
-        self.assert_rejected("next tuesday", "Pick a week to generate.")
+    def test_another_projects_sprint_is_rejected(self):
+        other = Project.objects.create(course=self.course, name="Project Two")
+        elsewhere = Sprint.objects.create(
+            project=other, name="Sprint 1", start_date=SPRINT_START, end_date=date(2026, 11, 15)
+        )
+        self.assert_rejected(elsewhere, "isn't in this team's project")
 
     def test_team_with_no_students_shows_a_message_and_nothing_runs(self):
         response = self.post(team=self.empty_team, follow=True)
@@ -437,7 +431,7 @@ class PartialFailureTests(TeamGenerationFixture):
 
                 self.assertEqual(self.generate.call_count, 2)
                 self.assertTrue(
-                    Summary.objects.filter(team=self.team, user=other, week_start=LAST_WEEK).exists()
+                    Summary.objects.filter(team=self.team, user=other, sprint=self.sprint).exists()
                 )
                 Summary.objects.all().delete()
 
@@ -449,7 +443,7 @@ class PartialFailureTests(TeamGenerationFixture):
         self.assertRedirects(response, overview_url(self.course.id))
         message = page_messages(response)
         self.assertIn("Team Alpha", message)
-        self.assertIn("Oct 26", message)
+        self.assertIn("Sprint 1", message)
         self.assertIn("1 of 2", message)
         self.assertIn("Ada Sample", message)
         self.assertNotIn("Grace Example", message)
@@ -479,13 +473,13 @@ class PartialFailureTests(TeamGenerationFixture):
         self.assertNotContains(response, "sample-student-code")
         self.assertEqual(self.generate.call_count, 2)
 
-    def test_a_failed_student_keeps_their_earlier_summary_for_the_week(self):
-        earlier = Summary.objects.create(team=self.team, user=self.ada, week_start=LAST_WEEK)
+    def test_a_failed_student_keeps_their_earlier_summary_for_the_sprint(self):
+        earlier = Summary.objects.create(team=self.team, user=self.ada, sprint=self.sprint)
         self.fail_for(self.ada)
 
         self.post()
 
-        self.assertEqual(Summary.objects.get(user=self.ada, week_start=LAST_WEEK), earlier)
+        self.assertEqual(Summary.objects.get(user=self.ada, sprint=self.sprint), earlier)
 
     def test_when_everyone_fails_the_message_says_none_succeeded(self):
         self.fail_for(self.ada, self.grace)
@@ -509,7 +503,7 @@ class RegenerateTests(TeamGenerationFixture):
         self.assertEqual(self.generate.call_count, 2)
 
     def test_regenerating_shows_the_new_claims_on_the_summary_page(self):
-        summary = Summary.objects.create(team=self.team, user=self.ada, week_start=LAST_WEEK)
+        summary = Summary.objects.create(team=self.team, user=self.ada, sprint=self.sprint)
         Claim.objects.create(
             summary=summary,
             text="Old claim text",
@@ -520,9 +514,9 @@ class RegenerateTests(TeamGenerationFixture):
             status=Claim.Status.VERIFIED,
         )
 
-        def replace_claims(user, team, week_start):
+        def replace_claims(user, team, sprint):
             if user != self.ada:
-                return self.save_summary(user, team, week_start)
+                return self.save_summary(user, team, sprint)
             summary.claims.all().delete()
             Claim.objects.create(
                 summary=summary,
@@ -542,7 +536,7 @@ class RegenerateTests(TeamGenerationFixture):
         response = self.client.get(reverse("dashboard:summary", args=[summary.id]))
         self.assertContains(response, "New claim text")
         self.assertNotContains(response, "Old claim text")
-        self.assertEqual(Summary.objects.filter(user=self.ada, week_start=LAST_WEEK).count(), 1)
+        self.assertEqual(Summary.objects.filter(user=self.ada, sprint=self.sprint).count(), 1)
 
 
 class RetryButtonTests(TeamGenerationFixture):
@@ -576,7 +570,7 @@ class RetryButtonTests(TeamGenerationFixture):
         self.assertIn(RETRY_LABEL, self.get_overview())
         self.reset_calls()
         self.post_retry()
-        self.generate.assert_called_once_with(self.ada, self.team, LAST_WEEK)
+        self.generate.assert_called_once_with(self.ada, self.team, self.sprint)
 
     def test_button_goes_once_no_failed_summaries_remain(self):
         self.fail_for(self.ada)
@@ -598,9 +592,9 @@ class RetryButtonTests(TeamGenerationFixture):
 
 
 class RetryRunTests(TeamGenerationFixture):
-    def fail_then_reset(self, *students, week_start=LAST_WEEK):
+    def fail_then_reset(self, *students, sprint=None):
         self.fail_for(*students)
-        self.post(week_start=week_start)
+        self.post(sprint)
         self.fail_for()
         self.reset_calls()
 
@@ -609,14 +603,14 @@ class RetryRunTests(TeamGenerationFixture):
 
         self.post_retry()
 
-        self.generate.assert_called_once_with(self.ada, self.team, LAST_WEEK)
+        self.generate.assert_called_once_with(self.ada, self.team, self.sprint)
 
-    def test_uses_the_week_that_failed_not_the_default(self):
-        self.fail_then_reset(self.ada, week_start=EARLIER_WEEK)
+    def test_uses_the_sprint_that_failed_not_the_default(self):
+        self.fail_then_reset(self.ada, sprint=self.earlier)
 
         self.post_retry()
 
-        self.generate.assert_called_once_with(self.ada, self.team, EARLIER_WEEK)
+        self.generate.assert_called_once_with(self.ada, self.team, self.earlier)
 
     def test_doesnt_run_ingest_again(self):
         self.fail_then_reset(self.ada)
@@ -627,7 +621,7 @@ class RetryRunTests(TeamGenerationFixture):
 
     def test_doesnt_touch_summaries_that_succeeded(self):
         self.fail_then_reset(self.ada)
-        grace_summary = Summary.objects.get(user=self.grace, week_start=LAST_WEEK)
+        grace_summary = Summary.objects.get(user=self.grace, sprint=self.sprint)
         updated_at = list(Summary.objects.filter(pk=grace_summary.pk).values())
 
         self.post_retry()
@@ -639,7 +633,7 @@ class RetryRunTests(TeamGenerationFixture):
 
         self.post_retry()
 
-        self.assertTrue(Summary.objects.filter(user=self.ada, week_start=LAST_WEEK).exists())
+        self.assertTrue(Summary.objects.filter(user=self.ada, sprint=self.sprint).exists())
 
     def test_skips_anyone_no_longer_on_the_team(self):
         self.fail_then_reset(self.ada, self.grace)
@@ -647,9 +641,9 @@ class RetryRunTests(TeamGenerationFixture):
 
         self.post_retry()
 
-        self.generate.assert_called_once_with(self.ada, self.team, LAST_WEEK)
+        self.generate.assert_called_once_with(self.ada, self.team, self.sprint)
 
-    def test_returns_to_the_overview_with_a_message_naming_the_team_and_week(self):
+    def test_returns_to_the_overview_with_a_message_naming_the_team_and_sprint(self):
         self.fail_then_reset(self.ada)
 
         response = self.post_retry(follow=True)
@@ -657,7 +651,7 @@ class RetryRunTests(TeamGenerationFixture):
         self.assertRedirects(response, overview_url(self.course.id))
         message = page_messages(response)
         self.assertIn("Team Alpha", message)
-        self.assertIn("Oct 26", message)
+        self.assertIn("Sprint 1", message)
 
     def test_a_failed_retry_says_which_students_still_failed(self):
         self.fail_then_reset(self.ada)
@@ -676,7 +670,7 @@ class RetryRunTests(TeamGenerationFixture):
         self.assertNotContains(response, "sample-student-code")
 
     def test_a_new_partial_failure_replaces_the_students_to_retry(self):
-        self.fail_then_reset(self.ada, week_start=EARLIER_WEEK)
+        self.fail_then_reset(self.ada, sprint=self.earlier)
         self.fail_for(self.grace)
         self.post()
         self.fail_for()
@@ -684,7 +678,7 @@ class RetryRunTests(TeamGenerationFixture):
 
         self.post_retry()
 
-        self.generate.assert_called_once_with(self.grace, self.team, LAST_WEEK)
+        self.generate.assert_called_once_with(self.grace, self.team, self.sprint)
 
     def test_with_nothing_to_retry_nothing_runs(self):
         response = self.post_retry()
@@ -740,7 +734,7 @@ class RetryRequestTests(TeamGenerationFixture):
         response = self.post_retry(user=ta)
 
         self.assertEqual(response.status_code, 302)
-        self.generate.assert_called_once_with(self.ada, self.team, LAST_WEEK)
+        self.generate.assert_called_once_with(self.ada, self.team, self.sprint)
 
     def assert_forbidden(self, user):
         response = self.post_retry(user=user)
@@ -846,7 +840,7 @@ class GenerateFlagTests(TeamGenerationFixture):
 
 
 class OneClickEndToEndTests(TestCase):
-    """The real generate_summary, validator and flag rules. Only GitHub and the LLM are mocked."""
+    """The real generate_sprint_summary, validator and flag rules. Only GitHub and the LLM are mocked."""
 
     @classmethod
     def setUpTestData(cls):
@@ -854,7 +848,6 @@ class OneClickEndToEndTests(TestCase):
         cls.instructor = make_user("sample-instructor")
         enroll(cls.instructor, cls.course, Role.INSTRUCTOR)
         cls.project = Project.objects.create(course=cls.course, name="Project One")
-        Requirement.objects.create(project=cls.project, number=1, text="Sample requirement")
         cls.sprint = sprint_for(cls.project)
         Requirement.objects.create(
             project=cls.project, sprint=cls.sprint, number=1, text="Sample requirement"
@@ -902,14 +895,14 @@ class OneClickEndToEndTests(TestCase):
     def click_generate(self):
         self.client.force_login(self.instructor)
         return self.client.post(
-            generate_url(self.team.id), {"week_start": str(LAST_WEEK)}, follow=True
+            generate_url(self.team.id), {"sprint": str(self.sprint.id)}, follow=True
         )
 
     def test_a_student_with_no_activity_gets_a_summary_with_no_llm_call(self):
         self.click_generate()
 
         self.generate_claims.assert_called_once()
-        summary = Summary.objects.get(team=self.team, user=self.grace, week_start=LAST_WEEK)
+        summary = Summary.objects.get(team=self.team, user=self.grace, sprint=self.sprint)
         self.assertFalse(summary.claims.exists())
 
     def test_one_click_flags_a_team_with_no_earlier_summaries(self):
@@ -953,7 +946,7 @@ class GeneratingIndicatorTests(TeamGenerationFixture):
 
     def test_a_retry_form_is_marked_too_since_it_also_takes_a_while(self):
         self.fail_for(self.ada)
-        self.client.post(generate_url(self.team.id), {"week_start": LAST_WEEK.isoformat()})
+        self.client.post(generate_url(self.team.id), {"sprint": str(self.sprint.id)})
 
         tag = self.form_tag(self.page(), retry_url(self.team.id))
 
