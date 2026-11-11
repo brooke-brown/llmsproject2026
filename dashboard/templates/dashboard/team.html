@@ -37,6 +37,7 @@
     {% for choice in sprints %}<option value="{{ choice.id }}"{% if choice.id == sprint.id %} selected{% endif %}>{{ choice.name }} ({{ choice.start_date|date:"M j" }} – {{ choice.end_date|date:"M j" }})</option>
     {% endfor %}
   </select>
+  {% if request.GET.evaluation and peer_evaluation %}<input type="hidden" name="evaluation" value="{{ peer_evaluation.id }}">{% endif %}
   <button type="submit">Show</button>
 </form>
 {% elif has_sprints %}
@@ -148,6 +149,69 @@
       <p class="equal-note">An equal share is {{ equal_share }}% ({{ memberships|length }} student{{ memberships|length|pluralize }}).</p>
     </div>
   </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if memberships %}
+<section class="chart peer-panel" aria-labelledby="peer-title">
+  <h2 id="peer-title">Peer evaluation{% if peer_evaluation %}, {{ peer_evaluation.name }}{% endif %}</h2>
+  {% if peer_evaluation %}
+  <p class="why">Teammates' opinions, from their 1–5 ratings. They're not verified against GitHub, and they never change contribution shares, the chart or flags. Students never see them.</p>
+  {% if peer_evaluations|length > 1 %}
+  <form class="compact sprint-pick" method="get" action="{% url 'dashboard:team' team.id %}">
+    {% if sprint %}<input type="hidden" name="sprint" value="{{ sprint.id }}">{% endif %}
+    <label for="evaluation-menu">Evaluation</label>
+    <select name="evaluation" id="evaluation-menu">
+      {% for choice in peer_evaluations %}<option value="{{ choice.id }}"{% if choice.id == peer_evaluation.id %} selected{% endif %}>{{ choice.name }} ({% if choice.is_open %}open, closes {% else %}closed {% endif %}{{ choice.closes_at|date:"M j" }})</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Show</button>
+  </form>
+  {% endif %}
+  {% if peer_evaluation.is_open %}
+  {% if peer_still_rating %}
+  <p class="keynote peer-status">Open until {{ peer_evaluation.closes_at|date:"M j, g:i A" }}. Still rating teammates: {% for row in peer_still_rating %}{{ row.user.display_name }} ({{ row.rated_count }} of {{ row.teammate_count }} rated){% if not forloop.last %}, {% endif %}{% endfor %}.</p>
+  {% else %}
+  <p class="keynote peer-status">Open until {{ peer_evaluation.closes_at|date:"M j, g:i A" }}. Every student has rated all their teammates.</p>
+  {% endif %}
+  {% endif %}
+  <div class="weeks peer-students">
+    {% for row in peer_results %}
+    <article class="card">
+      <header class="row">
+        <strong>{{ row.user.display_name }}</strong>
+        {% if row.ratings %}<span class="count">{{ row.rater_count }} of {{ row.teammate_count }} teammate{{ row.teammate_count|pluralize }}</span>{% endif %}
+      </header>
+      {% if row.ratings %}
+      <table class="peer-scores">
+        <thead><tr><th scope="col">Question</th><th scope="col">Average</th></tr></thead>
+        <tbody>
+          {% for item in row.averages %}<tr><th scope="row">{{ item.question.text }}</th><td class="val">{% if item.average is None %}—{% else %}{{ item.average }}{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <details>
+        <summary>Each teammate's ratings</summary>
+        {% for rating in row.ratings %}
+        <div class="peer-rating">
+          <strong>{{ rating.rater.display_name }}</strong>
+          <ul>
+            {% for question, score in rating.scores %}<li>{{ question.text }}: <span class="val">{% if score is None %}—{% else %}{{ score }}{% endif %}</span></li>
+            {% endfor %}
+          </ul>
+          {% if rating.comment %}<p class="peer-comment">{{ rating.comment|linebreaksbr }}</p>{% else %}<p class="keynote">No comment.</p>{% endif %}
+        </div>
+        {% endfor %}
+      </details>
+      {% else %}
+      <p class="keynote">No ratings yet</p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="why">No peer evaluations yet.{% if can_set_up %} Open one on the <a href="{% url 'dashboard:project_setup' team.project_id %}">project's page</a>.{% endif %}</p>
   {% endif %}
 </section>
 {% endif %}
