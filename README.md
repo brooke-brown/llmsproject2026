@@ -2,9 +2,9 @@
 
 Evidence-based contribution reports for team software projects. Built for **CS 4501** (Fall 2026).
 
-STRIVE pulls a student team's GitHub activity, has an LLM write a weekly summary for each student, checks every claim against the real GitHub data, and flags imbalanced teams for instructors. **Every claim links to a specific commit, PR, review or issue**, so staff can check the evidence themselves.
+STRIVE pulls a student team's GitHub activity, has an LLM write a summary of each student's work in a sprint, checks every claim against the real GitHub data, and flags imbalanced teams for instructors. **Every claim links to a specific commit, PR, review or issue**, so staff can check the evidence themselves.
 
-**Status:** the alpha is built, and the beta is in progress. This README describes what's on `main`, which still reports by week. [Planned for the beta](#planned-for-the-beta) covers what's changing, and [`CLAUDE.md`](CLAUDE.md#beta-scope) has the scope. The reasoning behind the product is in the [STRIVE pitch](docs/readme-startupSelected.md).
+**Status:** the beta is built and in testing. Instructors set up sprints, teams and students; generate evidence-linked summaries per sprint; see flags and disputes; and students log in to dispute flags, record offline work and rate teammates. [What's in the beta](#whats-in-the-beta) lists it all, and [`CLAUDE.md`](CLAUDE.md#beta-scope) has the scope. The reasoning behind the product is in the [STRIVE pitch](docs/readme-startupSelected.md).
 
 ## Contents
 
@@ -18,14 +18,14 @@ STRIVE pulls a student team's GitHub activity, has an LLM write a weekly summary
 - [Project layout](#project-layout)
 - [Testing](#testing)
 - [Contributing](#contributing)
-- [Planned for the beta](#planned-for-the-beta)
-- [Known limits of the alpha](#known-limits-of-the-alpha)
+- [What's in the beta](#whats-in-the-beta)
+- [Known limits](#known-limits)
 - [Student data](#student-data)
 - [Team](#team)
 
 ## How it works
 
-Clicking **Generate summaries** for a team and week ingests the team's repos once, then writes a summary for each student. For each student, it runs this pipeline:
+Clicking **Generate summaries** for a team and a sprint ingests the team's repos once, then writes a summary of the sprint for each student. For each student, it runs this pipeline:
 
 ```
 Generate summaries
@@ -34,7 +34,8 @@ Generate summaries
 ingest               pull commits, PRs, reviews and issues from each of the team's repos
   │
   ▼
-generate claims      the LLM reads the student's artifacts and the project's requirements
+generate claims      the LLM reads the student's artifacts and the sprint's requirements,
+                     a chunk of up to 10 days at a time, then merges the chunks' claims
   │
   ▼
 validate             plain Python checks each claim against the stored GitHub data
@@ -52,20 +53,20 @@ validate             plain Python checks each claim against the stored GitHub da
                                      recompute the team's flags, once every student has succeeded
 ```
 
-Staff then browse **course overview → team → summary**. The overview shows which teams are flagged, and the team page shows which student a flag is about. The summary page shows verified claims with their GitHub links, plus an "N couldn't be verified" note if any were dropped.
+Staff then browse **course overview → team → summary**. The overview shows which teams are flagged for a sprint, and the team page shows which student a flag is about. The summary page shows verified claims with their GitHub links, plus an "N couldn't be verified" note if any were dropped, and the student's self-reported offline work, kept apart from the claims.
 
 ### What's collected
 
-| Artifact | Date that places it in a week | Credited to |
+| Artifact | Date that places it in a sprint | Credited to |
 |---|---|---|
 | Commit (every branch, no merge commits) | Author date | The author and any `Co-authored-by:` students |
 | Pull request | Merged date, or created date if unmerged | The author |
 | Review (not pending, and not by the PR's author) | Submitted date | The reviewer |
 | Issue | Created date | The author |
 
-A reporting week runs Monday to Sunday inclusive, in `America/New_York`.
+A sprint's dates are inclusive days in `America/New_York`. A summary covers the sprint's first day through today, or through its last day once it has ended.
 
-Ingesting a week again refreshes it. Stored artifacts pick up changes from GitHub and stay one row each, so existing claims keep their links. A failed run leaves the stored data as it was.
+Ingesting a range again refreshes it. Stored artifacts pick up changes from GitHub and stay one row each, so existing claims keep their links. A failed run leaves the stored data as it was.
 
 ## Quick start
 
@@ -105,12 +106,12 @@ Open <http://127.0.0.1:8000/> and log in as `sample-instructor`, using your `SEE
 
 | Created | Details |
 |---|---|
-| Course and project | `CS 4501, Fall 2026` with `Project 1` and two sample requirements |
+| Course, project and sprint | `CS 4501, Fall 2026` with `Project 1`, a seven-day `Sprint 1` starting today, and two sample requirements |
 | Staff | `sample-instructor` and `sample-ta`, who log in with `SEED_PASSWORD` |
 | `Team Live` | This repo (`brooke-brown/llmsproject2026`) with the group's three GitHub logins. Summaries work here if `GITHUB_TOKEN` can read the repo. |
 | `Team Sample` | An invented repo and students. **Its repo doesn't exist on GitHub, so Generate summaries fails here** with a "couldn't find" message. |
 
-Students get no password. To log in as one, set a temporary password on the team page.
+Students get no password. To log in as one, set a temporary password on the team page, or generate them for the whole project (see [Student logins](#student-logins)). The seeded sprint is still running, so there are no flags to see until a sprint has ended and been generated.
 
 ### Which account to use
 
@@ -137,34 +138,45 @@ Documented in [`.env.example`](.env.example). Keep real values in `.env`, which 
 
 ### Setting up a course
 
-Do these in this order. Steps 2 to 6 are on the dashboard for any instructor enrolled in the course, with no need for `/admin/`. Step 1 happens in the admin.
+Do these in this order. Steps 2 to 7 are on the dashboard for any instructor enrolled in the course, with no need for `/admin/`. Step 1 happens in the admin. To add many teams and students at once, skip steps 4 to 6 and use [Importing teams from a CSV](#importing-teams-from-a-csv).
 
 1. **Course, instructors and TAs (admin):** add the course, then a user with a `github_login` and an Enrollment for each instructor and TA.
 2. **Project (dashboard):** on the course overview, click **New project** and enter a name, which opens the project's edit page for its requirements and teams. Click **Edit project** on the overview to return to that page, where **edit** beside the name changes it. Names must be unique within a course, ignoring case.
-3. **Sprints and their requirements (dashboard):** on the project's edit page, click **New sprint** and enter a name, a start date and an end date. The dates default to seven days from today, or from the latest sprint's last day, and can be any range starting on any day. A sprint can start on the day the previous one ends, but two sprints can't start on the same day. Open a sprint to give it requirements: upload a PDF or paste text and the LLM splits it, or, while the sprint has none, **Copy requirements from an earlier sprint** to keep their numbers. You can then edit, add and delete requirements on the sprint's page. **edit** beside a sprint's name renames it, and changes its dates until it has summaries. Deleting a sprint deletes its requirements, summaries and flags. (The project-level requirements page stays until T-21 removes it.)
+3. **Sprints and their requirements (dashboard):** on the project's edit page, click **New sprint** and enter a name, a start date and an end date. The dates default to seven days from today, or from the latest sprint's last day, and can be any range starting on any day. A sprint can start on the day the previous one ends, but two sprints can't start on the same day. Open a sprint to give it requirements: upload a PDF or paste text and the LLM splits it, or, while the sprint has none, **Copy requirements from an earlier sprint** to keep their numbers. You can then edit, add and delete requirements on the sprint's page. **edit** beside a sprint's name renames it, and changes its dates until it has summaries. Deleting a sprint deletes its requirements, summaries and flags.
 4. **Team (dashboard):** on the project's edit page or the course overview, enter a name and click **Add team**. Open the team to rename it, with **edit** beside its name, or delete it. Names must be unique within a project, ignoring case.
 5. **Students (dashboard):** on the team page, enter each student's full name and GitHub username, plus the email they use in `Co-authored-by:` trailers if you have it (see below). This creates their account and course enrollment if they don't have them. New accounts can't log in until you give them a temporary password (see [Student logins](#student-logins)).
 6. **Repo (dashboard):** on the team page, enter the team's repo URL, such as `https://github.com/owner/repo`. A team has one repo: to use another, click **change**, which asks you to confirm. Once activity has been pulled from a repo, it can't be changed or removed. STRIVE checks that it can read the repo, using `GITHUB_TOKEN` rather than your own GitHub access, so the account behind that token needs access to private repos.
+7. **Peer evaluation, optional (dashboard):** see [Peer evaluations](#peer-evaluations).
 
 Good to know:
 
-- **Import only works while a project has no requirements.** Claims refer to requirements by number, so a project that already has requirements is refused. That includes the seeded `Project 1`.
+- **Import only works while a sprint has no requirements.** Claims refer to requirements by number, so a sprint that already has requirements is refused. That includes the seeded `Sprint 1`.
 - **The import rejects** scanned PDFs with no text, password-protected PDFs, and any split containing a requirement that isn't word for word in the source.
-- **Requirement numbers don't change.** You can edit a requirement's text but not its number, and deleting one never renumbers the others. A new requirement takes the next number after the project's highest, so a gap stays a gap. If you delete the highest-numbered requirement, the next one you add reuses its number.
-- **A requirement a claim cites can't be deleted** on the dashboard, including one cited only by a claim that couldn't be verified. The admin doesn't enforce this, so don't delete requirements there.
+- **Requirement numbers don't change.** You can edit a requirement's text but not its number, and deleting one never renumbers the others. A new requirement takes the next number after the sprint's highest, so a gap stays a gap. If you delete the highest-numbered requirement, the next one you add reuses its number. A number only has meaning within its sprint, and **Copy requirements from an earlier sprint** keeps the numbers.
+- **A requirement a claim in its sprint cites can't be deleted** on the dashboard, including one cited only by a claim that couldn't be verified. The admin doesn't enforce this, so don't delete requirements there.
 - **Each student can be on one team per project,** and must be enrolled in the course as a student. A course's instructors and TAs can't be added to a team.
 - **An existing account is reused as it is.** A GitHub username that already has an account, ignoring case, keeps its name and email.
 - **On the team page, only a student's name and temporary password can be edited.** Their GitHub username shows below their name, and it and their email change in the admin. An account that's an instructor or TA in another course, or a staff account, can only be edited in the admin.
-- **Deleting is permanent, and each confirmation says what goes with it.** Deleting a project or team also deletes its summaries, and removing a student deletes their summaries on that team, and the team's flags are recomputed. Accounts and enrollments stay.
+- **Deleting is permanent, and each confirmation says what goes with it.** Deleting a project or team also deletes its summaries, and removing a student deletes their summaries and offline contributions on that team, and the team's flags are recomputed. Deleting a sprint deletes its requirements, summaries and flags. Accounts and enrollments stay.
 - **Two things can't be deleted while claims depend on them.** A repo whose activity a claim cites, because the claim would lose its GitHub link, and a requirement a claim cites, because its number could be reused.
 - **Co-author credit matches on email, never on name.** A trailer counts if it uses the student's GitHub noreply address or the email on their `User`. Seeded students have no email, so only noreply trailers match until you add one.
 - **Commits that match no one on the team** are listed in admin: under **Artifacts**, use the **Unattributed commits** filter.
+
+### Importing teams from a CSV
+
+On the project's edit page, **Import from CSV** adds many teams and students at once. Nothing is saved until you confirm a preview.
+
+1. **Upload:** the file has the columns `team`, `name`, `github_login`, optionally `email` and `repo_url`, in any order with headers in any case. A template downloads from the upload page. Files exported from Excel work, with or without a byte order mark, and the file can be up to 1 MB.
+2. **Preview:** each team is listed with its students and repo, marked new or already there. Every problem names its row: an invalid GitHub username, a student listed twice or already on another team in the project, an instructor or TA in the course, a team whose rows disagree about its repo, or a repo STRIVE can't read. **Confirm import** stays disabled while any row has a problem.
+3. **Confirm:** everything is imported or nothing is, and the file is checked again first. Importing the same file twice changes nothing and says so. A team name already in the project, ignoring case, adds students to that team.
+
+A row that matches an existing account uses that account as it is, and the preview notes it if the name differs. The CSV text travels in the confirm form and is never stored on the server.
 
 ### Student logins
 
 An instructor gives each student a temporary password, and shares it with them directly, such as in class. STRIVE sends no email.
 
-1. **Set it (dashboard):** on the team page, fill in **Temporary password** when adding a student, or click **edit** beside a student. Leaving the field blank keeps their current password. Only the course's instructors can do this.
+1. **Set it (dashboard):** on the team page, fill in **Temporary password** when adding a student, or click **edit** beside a student. Leaving the field blank keeps their current password. Only the course's instructors can do this. To do a whole project at once, use **Generate student passwords** on its edit page: it gives every student who can't log in yet, or hasn't changed a temporary password, a random one, and downloads them once as a CSV (`team`, `name`, `github_login`, `email`, `temporary_password`, `note`). Passwords are never stored or shown again, so share the file privately and delete it. Accounts that can only be changed in the admin appear with a blank password and a note. Hashing is slow, so a very large class can hit the server's request time limit.
 2. **Log in:** the student logs in with their GitHub username and the temporary password. An older account can have a different username. If so, the message after saving and the edit form name the one to share.
 3. **Choose a new one:** until they do, every page except logout sends them back to the password change page. They then land on the student home.
 
@@ -185,28 +197,45 @@ On the course overview, pick a sprint for a team and click **Generate summaries*
 
 - **The menu lists the project's started sprints,** such as "Sprint 2 (Oct 30 – Nov 5)". Sprints that haven't started aren't offered, and a project with none shows a message instead. It defaults to the current sprint, or on a day shared by two sprints the one that just started, or else the most recently ended. Generating ingests each repo from the sprint's first day through today (or its last day once it has ended), then writes one summary per student. A sprint still running is labelled **in progress**, with the date it covers through, and generating it again after it ends covers all of it. Flags are raised per sprint, once it has ended and every student has a complete summary.
 - **Retrying works by sprint.** A failed student is retried for the same sprint, without another ingest.
-
 - **Only one run per team at a time.** While a team is generating, its button shows a spinner on every fresh load of the overview, a second run is refused, and the page reloads itself when the run finishes. While a run is going, the course overview and that team's page show **Starting** until the first student is done, then **N of M students done** with a progress bar, and name any student whose summary has failed so far with the reason. The overview updates the progress in place every 5 seconds, so text typed into a form on it is kept until the run ends and the page reloads. The team page reloads itself every 5 seconds until the run ends. You can leave and come back: the run keeps going, and its result message appears the next time you open the course overview.
 - **A stuck run clears by itself.** If the server dies mid-run, the team is blocked until a time limit of 10 minutes plus 6 per student, which the refusal message shows. To clear it sooner, delete it under **Generation runs** in the admin.
-- Each click runs inside the web request, ingesting all of the team's repos once and then writing each student's summary in turn, so it can take a while. Each LLM call can take up to 2 minutes, and a summary can make several of them: up to 3 attempts per chunk of the sprint, plus a merge.
+- Each click runs inside the web request, ingesting all of the team's repos once and then writing each student's summary in turn, so it can take a while. Each LLM call can take up to 2 minutes, and a summary can make several of them: up to 3 attempts per chunk of the sprint, plus a merge. A sprint is split into 7-day chunks, with a leftover of 3 days or fewer joining the previous chunk, and a sprint of up to 10 days is one chunk.
 - Generating the same sprint again regenerates the whole team's summaries, using fresh GitHub data.
 - A student with no activity gets a "No activity in this sprint" summary, with no LLM call.
 - If ingest fails, the message names the repo, nothing changes and no LLM calls are made.
 - If a student's summary fails, the other students are still processed, and the failed student keeps any earlier summary for the sprint. The message names who failed, and the team gets a **Retry failed summaries** button that writes only those summaries again, without another ingest. This is separate from the automatic retries of claims that fail the validator.
 
+### Peer evaluations
+
+Instructors open a peer evaluation in the **Peer evaluations** panel on a project's edit page: a name and a closing date and time in New York time. It's open until that time. Only one can be open per project. While it's open an instructor can change its closing time or close it now, but a closed one can't be reopened, and one with ratings can't be deleted.
+
+Every evaluation asks the same five questions, each answered from 1 to 5: communication, getting work done on time, effort, quality of work, and working well with teammates. A student rates each teammate (never themselves) from a link on their project card, with an optional comment of up to 1,000 characters, and can change a rating until the evaluation closes. **Students never see any scores or comments**, not even their own. Instructors can't read the ratings yet: that is still to come (US-38).
+
+### For students
+
+Students log in with a temporary password and choose their own (see [Student logins](#student-logins)). Their home page lists each project and team they're on, with their teammates, and has everything below.
+
+- **Flags and disputes:** a flag or warning about a student is shown with its reason and the sprint it's for. They can **dispute** it with a written explanation, and edit it until an instructor decides. A decided dispute stays readable even after its flag is no longer raised.
+- **Offline contributions:** work that isn't in GitHub, such as a meeting, design, user research, documentation or planning. Under **My offline contributions** a student records the date, a category, a description of up to 1,000 characters and, optionally, hours from 0.25 to 24. They can edit or delete it until a teammate confirms it. Under **Team's offline contributions**, a student can confirm a teammate's work they saw or took part in, which locks the original text. A confirmation is refused if the work was edited after the page loaded. Students see how many teammates confirmed, never who. Offline work is self-reported: it never counts toward shares or flags.
+- **Peer evaluation:** a link to the open evaluation, if there is one.
+
+Students never see summaries, claims or other people's flags.
+
 ### Pages
 
 | URL | Page |
 |---|---|
-| `/accounts/login/`, `/accounts/logout/` | Log in and out |
-| `/` | Your courses. Goes straight to the course if you only have one. |
-| `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, then teams with an open dispute, a Flag, Warning or Dispute open label, and the Generate summaries button. Instructors also get New project, and Edit project and requirements links for each project. |
-| `/teams/<id>/` | Repos, flags with their reasons and any disputes, and students, whose names link to their newest summary, with all their summaries. Instructors can keep or withdraw a disputed flag. |
-| `/summaries/<id>/` | Verified claims with GitHub links, and the "couldn't be verified" note |
-| `/projects/<id>/requirements/` | Import, edit, add and delete a project's requirements. Instructors only. |
+| `/accounts/login/`, `/accounts/logout/`, `/accounts/password_change/` | Log in, out and choose a password |
+| `/` | Your courses. Goes straight to the course if you only have one, or to the student home if you're only a student. |
+| `/courses/<id>/` | Each project's teams, with a sprint menu per project, labelled and ordered by that sprint's flags: flagged first, then warned, then teams with an open dispute, then the rest. The Generate summaries control, with its sprint menu, is on each team card. Instructors also get New project and Edit project. |
+| `/teams/<id>/` | A sprint menu, then repos, the sprint's flags with their reasons and disputes, a pie chart of each student's share, and students with all their summaries. Instructors can keep or withdraw a disputed flag. |
+| `/summaries/<id>/` | Verified claims with GitHub links, the "couldn't be verified" note, and in-progress labels |
+| `/projects/<id>/setup/` | Edit project: sprints, teams (with CSV import and bulk passwords), peer evaluations and deleting the project. Instructors only. |
+| `/sprints/<id>/` | A sprint's name and dates and its requirements. Instructors only. |
+| `/student/` | The student home |
 | `/admin/` | Users, courses, enrollments, teams and repos, plus read-only views of artifacts, summaries, claims, validation runs and flags |
 
-Only instructors and TAs of a course can see its pages. Only instructors can create or rename projects and change requirements: TAs don't see these actions and get a 403.
+Only instructors and TAs of a course can see its course, team and summary pages. Only instructors can change anything: TAs don't see those actions and get a 403. Students can see only their own pages. A page that doesn't exist, or that you may not open, shows a plain 404 or 403 page, and empty lists say what is missing and what to do next.
 
 ## Validation
 
@@ -218,7 +247,8 @@ Only instructors and TAs of a course can see its pages. Only instructors can cre
 | `artifact_not_found` | A cited artifact isn't in one of this team's repos |
 | `outside_dates` | A cited artifact is dated outside the sprint's dates |
 | `not_contributor` | The student isn't the author, co-author or reviewer of a cited artifact |
-| `unknown_requirement` | A requirement number doesn't exist in the project |
+| `not_in_source` | A merged claim cites an artifact that wasn't in the claims being merged |
+| `unknown_requirement` | A requirement number isn't one of the sprint's requirements |
 
 Failing claims go back to the LLM with their errors, for up to **2 retries (3 attempts in all)**. Claims that passed are never changed. A claim that still fails is saved as "couldn't verify" with its last errors. The dashboard doesn't show it and only counts it in the note. Admin users can read it for debugging.
 
@@ -249,7 +279,7 @@ Defined in [`summaries/schemas.py`](summaries/schemas.py). This is a [shared con
 
 ## Flags
 
-Flags are recomputed once every student's summary has succeeded, and replace the team's earlier flags. After a partial failure they stay as they were until a retry or a full run succeeds. There's one rule so far, `low-requirement-share` in [`dashboard/flags.py`](dashboard/flags.py).
+Flags are raised **per sprint**, and only once the sprint has ended and every student on the team has a complete summary for it. They are recomputed once every student's summary has succeeded in a run, and replace the team's earlier flags. After a partial failure they stay as they were until a retry or a full run succeeds. There's one rule so far, `low-requirement-share` in [`dashboard/flags.py`](dashboard/flags.py).
 
 Each student's score is the sum of their verified, requirement-tied claims, weighted **minor 1, moderate 2, major 3**. Their share of the team's total is then compared with an equal share:
 
@@ -259,15 +289,15 @@ Each student's score is the sum of their verified, requirement-tied claims, weig
 | 50% to below 75% | **Warning** | About 17% to below 25% |
 | 75% or more | Nothing | 25% or more |
 
-The rule only looks at the latest week in which **every student on the team has a summary**, so a missing summary never raises a flag. No flag is raised if a team has fewer than two students or no requirement-tied work that week.
+A summary written before its sprint ended is partial, so it never counts toward a flag until the sprint is generated again, and a missing summary never raises one. A running sprint shows shares on the team page but raises no flags or warnings. No flag is raised if a team has fewer than two students or no requirement-tied work in the sprint. A flag's reason names its sprint.
 
 Flags describe observable activity, not character.
 
 ### Disputes
 
-A student can dispute a flag or warning about them with a written explanation. A dispute is matched to its flag by team, student, rule and week, so it carries over when flags are recomputed, even if the flag's wording or severity changes.
+A student can dispute a flag or warning about them with a written explanation. A dispute is matched to its flag by team, student, rule and sprint, so it carries over when flags are recomputed, even if the flag's wording or severity changes.
 
-- The course overview labels a team with an open dispute **Dispute open**, and lists those teams right after flagged and warned teams.
+- The course overview labels a team with an open dispute **Dispute open**, and lists those teams right after flagged and warned teams. An open dispute from an earlier sprint still counts, and the label names its sprint.
 - The team page shows each dispute under its flag, with the student's explanation. If a later run no longer raises the flag, the dispute stays, marked **Flag no longer raised**.
 - An instructor can **Keep flag** or **Withdraw flag**, with an optional note to the student, and can change the decision later. TAs can read disputes but not decide them.
 - A withdrawn flag shows as **Withdrawn after dispute** without its reason. It no longer makes the team flagged or colours the pie chart, and stays withdrawn after flags are recomputed. Contribution shares don't change.
@@ -277,32 +307,42 @@ A student can dispute a flag or warning about them with a written explanation. A
 ```
 Course                     e.g. "CS 4501, Fall 2026"
  ├── Enrollment            User ↔ Course, with role: instructor | ta | student
- └── Project               has Requirement rows (project, number, text)
+ └── Project
+      ├── Sprint           name, start and end date; a project has zero or more
+      │    └── Requirement numbered per sprint (project, sprint, number, text)
+      ├── PeerEvaluation   name and closing time; one open at a time
+      │    └── PeerRating  one student's scores and comment about a teammate
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
+           ├── Contribution     a student's self-reported offline work
+           │    └── Corroboration   a teammate's confirmation of it
            └── Repo             the team's GitHub repo
                 └── Artifact    a commit, PR, review or issue
 
-Summary          → Team + User + reporting week
+Summary          → Team + User + Sprint
   └── Claim      → the claim schema + status (verified / couldn't verify)
 ValidationRun    → Summary: counts for one generation
-Flag             → Team, and optionally one student
-FlagDispute      → Team + student: finds its flag by rule and week, so it survives flags being recomputed
-GenerationRun    → Team: exists only while its summaries are generating
+Flag             → Team + Sprint, and optionally one student
+FlagDispute      → Team + student + rule + Sprint: finds its flag by those, so it survives flags being recomputed
+GenerationRun    → Team: exists only while its summaries are generating, with its progress
 ```
 
 - **Teams belong to a project, not the course,** so a class that reshuffles teams gets new teams per project.
 - **Roles live on `Enrollment`, not `User`,** so someone can be a TA in one course and a student in another.
 - **`Artifact.artifact_id` is unique per `Repo`, not globally,** so look IDs up within the team: `Artifact.objects.filter(repo__team=team, artifact_id=...)`.
+- **Requirement numbers are per sprint.** `requirement_ids` on a claim means numbers in that summary's sprint.
+- **Alpha leftovers:** summaries from the alpha were written for a Monday-Sunday week, so they have `week_start` and no sprint. They still display, and the weekly flow can't create new ones. Removing them is the second half of T-21 (#125), a data migration that needs a database backup first.
 
 ## Project layout
 
 | Path | Contents |
 |---|---|
-| [`core/`](core/) | Users, courses, enrollments, projects, teams, repos, requirements, PDF import, project, requirement, team, student and repo setup logic, setup admin, `seed` command |
+| [`core/`](core/) | Users, courses, enrollments, projects, sprints, teams, repos, requirements, PDF import, setup logic (projects, sprints, requirements, teams, students, repos, CSV import, bulk passwords), setup admin, `seed` command |
 | [`ingest/`](ingest/) | `Artifact` model, GitHub ingest, co-author parsing, unattributed commits, sample fixture |
-| [`summaries/`](summaries/) | `Summary`, `Claim`, `ValidationRun`, LLM client, prompts, claim schema, validator, retry loop |
-| [`dashboard/`](dashboard/) | Views, templates, `Flag` and `FlagDispute` models, flag rules, Generate summaries button, instructor setup pages |
+| [`summaries/`](summaries/) | `Summary`, `Claim`, `ValidationRun`, LLM client, prompts, claim schema, validator, retry loop, chunking and merge |
+| [`dashboard/`](dashboard/) | Views, templates, `Flag`, `FlagDispute` and `GenerationRun` models, flag rules, Generate summaries, instructor setup pages, the student home |
+| [`contributions/`](contributions/) | Students' offline contributions and teammates' confirmations |
+| [`peereval/`](peereval/) | Peer evaluations, their five questions, and ratings |
 | [`strive/`](strive/) | Django settings and root URLs |
 | [`docs/`](docs/) | The [STRIVE pitch](docs/readme-startupSelected.md) |
 | [`directions/`](directions/) | Archive of the startup ideas we considered and didn't pick. Kept for documentation only. |
@@ -310,8 +350,8 @@ GenerationRun    → Team: exists only while its summaries are generating
 Key entry points, which are also shared contracts:
 
 ```python
-ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]
-summaries.services.generate_summary(user: User, team: Team, week_start: date) -> Summary
+ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]  # any range of days
+summaries.services.generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary
 dashboard.flags.compute_flags(team: Team) -> list[Flag]
 ```
 
@@ -324,7 +364,7 @@ python manage.py test                 # everything
 python manage.py test summaries       # one app
 ```
 
-The tests don't need API keys or a `.env` file.
+The tests don't need API keys or a `.env` file, and the full suite takes a few minutes.
 
 To measure coverage:
 
@@ -357,22 +397,26 @@ Read `totals` in `coverage.json`. [`.coveragerc`](.coveragerc) sets what's measu
   - Branch coverage: <percent>% (<covered>/<total>)
   ```
 
-## Planned for the beta
+## What's in the beta
 
-None of this is built yet, except the `FlagDispute` model and [student logins](#student-logins). Each item is tracked as a GitHub issue.
+Each item was a GitHub issue. [`CLAUDE.md`](CLAUDE.md#beta-scope) has the detail.
 
-- **Sprints (#118–#125):** a project has zero or more sprints, each with its own dates and requirements, and sprints can start on any day and run any length.
-- **One report per sprint:** each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today. Ranges over 10 days are processed in weekly chunks and merged into that one report, which goes through the validator again.
-- **Flags per sprint:** flags are based on the whole sprint and only raised once it has ended. A running sprint shows shares but raises no flags.
-- **Setup at scale:** CSV import of teams and students (#126), and generating temporary passwords in bulk (#127).
-- **Student side:** a student home, flag disputes, offline contributions and peer evaluations (#104, #105 and #107–#115).
+- **Sprints:** a project has sprints with their own dates and requirements, any range starting on any day. Each student gets one summary per sprint. Long sprints are processed in weekly chunks and merged into that one report, which goes through the validator again.
+- **Flags per sprint:** raised once a sprint has ended with every student's summary complete, with disputes tied to the sprint.
+- **Course overview and team page by sprint:** a sprint menu on each, with labels, ordering, shares and the pie chart for the chosen sprint.
+- **Setup at scale:** CSV import of teams and students, and bulk temporary passwords.
+- **Student side:** logins, the student home, flag disputes, offline contributions with teammate confirmation, and peer evaluations that students can answer.
+- **Polish:** progress while summaries generate, role-aware navigation, and clear 403, 404 and empty pages.
 
-## Known limits of the alpha
+**Still to come in the beta:** instructors seeing students' offline contributions on the team and summary pages (US-35), instructors reading peer ratings (US-38), and removing the alpha's weekly summaries and code (T-21, #125).
 
-- **Local development settings only:** `strive/settings.py` has `DEBUG = True` and an empty `ALLOWED_HOSTS`, so it needs changes before it can be deployed.
+## Known limits
+
+- **Local development settings only:** `strive/settings.py` has `DEBUG = True`, an empty `ALLOWED_HOSTS`, an insecure fallback secret key and SQLite, so it needs changes before it can be deployed. The custom error pages only show when `DEBUG` is off.
 - **One shared GitHub token:** every repo is read with `GITHUB_TOKEN`, and there's no GitHub OAuth login yet.
-- **Summaries run inside the web request,** because there are no background jobs.
-- **Long diffs are cut:** up to 100,000 characters of a diff are stored and at most 4,000 go into the prompt, or fewer in a busy week. The LLM may judge large changes from only part of the diff.
+- **Summaries run inside the web request,** because there are no background jobs. A sprint of several weeks makes many LLM calls for each student, and generating a team can outlast a hosting request limit that is shorter than a few minutes. Bulk passwords have the same limit for very large classes.
+- **A student added mid-project has no summary for earlier sprints,** so those sprints stop counting as complete and their flags disappear. A `joined_at` on `TeamMembership` is the likely fix.
+- **Long diffs are cut:** up to 100,000 characters of a diff are stored and at most 4,000 go into the prompt, or fewer in a busy sprint. The LLM may judge large changes from only part of the diff.
 - **Dropped claims aren't queued for review.** The pitch describes a TA review queue, but for now they can only be read in admin.
 - **Later, with no issues yet:** a polished per-requirement progress view, checks on numbers in claims against the diff, GitHub OAuth login, consent, background jobs, and "paired with" detection.
 
