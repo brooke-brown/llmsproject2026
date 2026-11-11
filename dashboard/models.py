@@ -126,6 +126,12 @@ class GenerationRun(models.Model):
     team = models.OneToOneField(Team, on_delete=models.CASCADE, related_name="generation_run")
     started_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+    # Progress, for the overview and team page. Zero students means the run hasn't counted yet.
+    student_count = models.PositiveIntegerField(default=0)
+    done_count = models.PositiveIntegerField(default=0)
+    # Students whose summary failed so far, each {"name": ..., "reason": ...}. A reason is
+    # never student work, so it is safe to show.
+    failures = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return f"{self.team} generating since {self.started_at}"

@@ -1,5 +1,6 @@
 {% extends "dashboard/base.html" %}
 
+
 {% block title %}{{ course.name }} · STRIVE{% endblock %}
 
 {% block crumb %}<span class="crumb">{{ course.name }}</span>{% endblock %}
@@ -35,6 +36,7 @@
           </ul>
           {% if not team.repos.all %}<p class="missing">No repo yet.</p>{% endif %}
           <div class="latest">{% if team.latest_sprint %}Latest sprint: {{ team.latest_sprint.name }}{% if team.latest_sprint_note %} ({{ team.latest_sprint_note }}){% endif %}{% elif team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% if team.latest_week_note %} ({{ team.latest_week_note }}){% endif %}{% else %}No summaries yet{% endif %}</div>
+          {% if team.active_run %}<div data-progress-for="{{ team.id }}">{% include "dashboard/_generation_progress.html" with run=team.active_run %}</div>{% endif %}
           <div class="foot">
             <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post" class="generate-form">
               {% csrf_token %}
@@ -103,7 +105,8 @@
     clicked.setAttribute("aria-busy", "true");
     clicked.textContent = "Generating…";
   });
-  // A run started earlier is still going, so reload when one of them finishes to show the result.
+  // A run started earlier is still going: update its progress in place, and reload when one of
+  // them finishes to show the result.
   var watcher = document.querySelector("[data-generating-status]");
   if (watcher) {
     var watched = watcher.dataset.teamIds.split(",").map(Number);
@@ -113,7 +116,11 @@
         .then(function (status) {
           if (status.error === "password_change_required") { location.reload(); return; }
           var finished = watched.some(function (id) { return status.team_ids.indexOf(id) === -1; });
-          if (finished) location.reload();
+          if (finished) { location.reload(); return; }
+          watched.forEach(function (id) {
+            var slot = document.querySelector('[data-progress-for="' + id + '"]');
+            if (slot && status.progress[id]) slot.innerHTML = status.progress[id];
+          });
         })
         .catch(function () {});  // Try again next time.
     }, 5000);

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}STRIVE{% endblock %}</title>
+  {% block head_extra %}{% endblock %}
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.0.6/css/pico.min.css">
   <style>
     /* The design from docs/mockups/c-balance.html, on top of Pico's dark theme. Colours go
@@ -72,6 +73,9 @@
     .bar .brand i, article.login .brand i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
     .bar .nav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
     .bar .nav a { color: var(--ink); font-weight: 600; }
+    .progress-note { margin: 10px 0 4px; }
+    .progress-note progress { width: 100%; height: 8px; margin: 0 0 4px; }
+    .progress-note .keynote { margin: 2px 0; }
     .bar .crumb { color: var(--muted); }
     .bar .crumb a { color: var(--muted); }
     .bar .crumb a:hover { color: var(--ink); }

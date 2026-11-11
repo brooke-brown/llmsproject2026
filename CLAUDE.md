@@ -85,7 +85,7 @@ Summary          → Team + User + reporting week
 ValidationRun    → per-run log: first-pass rate, retries, drop rate
 Flag             → Team + Sprint: each finished sprint keeps its own flags
 FlagDispute      → Team + student + rule + Sprint: finds its flag by these, so it survives flags being recomputed
-GenerationRun    → Team: exists only while its summaries are generating
+GenerationRun    → Team: exists only while its summaries are generating; holds progress (students, done, failures)
 ```
 
 Planned changes for sprints (#119–#125):
