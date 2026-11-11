@@ -30,7 +30,7 @@
             {% for membership in team.memberships.all %}
             <li>{{ membership.user.display_name }}</li>
             {% empty %}
-            <li>No students on this team yet.</li>
+            <li>No students on this team yet. {% if can_set_up %}Open the team to add them.{% else %}An instructor needs to add them.{% endif %}</li>
             {% endfor %}
           </ul>
           {% if not team.repos.all %}<p class="missing">No repo yet.</p>{% endif %}
@@ -60,7 +60,7 @@
         {% endfor %}
       </div>
       {% else %}
-      <p>No teams in this project yet.</p>
+      <p>No teams in this project yet. {% if can_set_up %}Add one below.{% else %}An instructor needs to add teams.{% endif %}</p>
       {% endif %}
       {% if can_set_up %}
       {% include "dashboard/_add_team.html" %}
@@ -79,7 +79,7 @@
         </tbody>
       </table>
       {% else %}
-      <p>No requirements for this project yet.</p>
+      <p>No requirements for this project yet.{% if not can_set_up %} An instructor can add them.{% endif %}</p>
       {% endif %}
       {% if can_set_up %}
       <p class="rail-action"><a href="{% url 'dashboard:project_requirements' project.id %}">{% if project.requirements.all %}Edit requirements{% else %}Add requirements{% endif %}</a></p>
@@ -88,7 +88,7 @@
   </div>
 </section>
 {% empty %}
-<p>No projects in this course yet.</p>
+<p>No projects in this course yet. {% if can_set_up %}Create one with New project.{% else %}An instructor needs to create one.{% endif %}</p>
 {% endfor %}
 {% if generating_team_ids %}<div hidden data-generating-status="{% url 'dashboard:course_generating_status' course.id %}" data-team-ids="{{ generating_team_ids|join:',' }}"></div>{% endif %}
 <script>
