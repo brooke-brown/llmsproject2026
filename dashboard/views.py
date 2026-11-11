@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordChangeView, RedirectURLMixin
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -110,7 +111,12 @@ def course_overview(request, course_id):
 @require_GET
 def course_generating_status(request, course_id):
     course = services.get_course_for_staff(request.user, course_id)
-    return JsonResponse({"team_ids": services.generating_team_ids(course)})
+    runs = services.active_generation_runs(course=course)
+    progress = {
+        team_id: render_to_string("dashboard/_generation_progress.html", {"run": run})
+        for team_id, run in runs.items()
+    }
+    return JsonResponse({"team_ids": sorted(runs), "progress": progress})
 
 
 @login_required
