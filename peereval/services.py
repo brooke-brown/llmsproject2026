@@ -3,16 +3,16 @@ Views call these and show the errors."""
 
 from datetime import datetime
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Count
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from contributions.services import get_team_for_project_student
+from contributions.services import get_student_team
 from core.models import Project, Team, User
-from dashboard.services import check_course_instructor
+from dashboard.services import check_course_instructor, teammates
 
 from .models import DUPLICATE_NAME_ERROR, PeerEvaluation, PeerRating
 
@@ -22,12 +22,12 @@ class EvaluationError(Exception):
 
 
 def is_open(evaluation: PeerEvaluation) -> bool:
-    return timezone.now() < evaluation.closes_at
+    return evaluation.is_open_now()
 
 
 def open_evaluation(project: Project) -> PeerEvaluation | None:
     """The project's open evaluation, if it has one. Only one can be open at a time."""
-    return project.peer_evaluations.filter(closes_at__gt=timezone.now()).first()
+    return project.peer_evaluations.open().first()
 
 
 def project_evaluations(project: Project) -> list[PeerEvaluation]:
@@ -113,16 +113,7 @@ def get_evaluation_for_student(user: User, evaluation_id: int) -> tuple[PeerEval
     evaluation = get_object_or_404(
         PeerEvaluation.objects.select_related("project__course"), pk=evaluation_id
     )
-    return evaluation, get_team_for_project_student(user, evaluation.project_id)
-
-
-def teammates(team: Team, user: User) -> list[User]:
-    """Everyone on the team but the user, by name, as the student home lists them."""
-    return list(
-        User.objects.filter(team_memberships__team=team)
-        .exclude(pk=user.pk)
-        .order_by("first_name", "last_name", "github_login")
-    )
+    return evaluation, get_student_team(user, evaluation.project)
 
 
 def get_teammate(team: Team, user: User, ratee_id: int) -> User:
@@ -171,7 +162,11 @@ def save_rating(
         )
         rating.scores = scores
         rating.comment = comment
-        rating.full_clean()
+        try:
+            # Such as the ratee leaving the team after get_teammate checked them.
+            rating.full_clean()
+        except ValidationError as error:
+            raise EvaluationError(" ".join(error.messages)) from error
         rating.save()
     return rating
 

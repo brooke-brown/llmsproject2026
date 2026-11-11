@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from django.core.exceptions import ValidationError
 from django.http import Http404
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -144,7 +143,8 @@ class StudentHomeLinkTests(RatingFixture):
 
 class EvaluationPageTests(RatingFixture):
     def test_lists_each_teammate_but_not_me(self):
-        page = self.evaluation_page()
+        # Only the list: the top bar shows the student's own name.
+        page = self.evaluation_page().split("<main", 1)[1]
         self.assertIn("Tara Teammate", page)
         self.assertIn("Quinn Second", page)
         self.assertNotIn("Sam Student", page)
@@ -392,7 +392,7 @@ class SaveRatingServiceTests(RatingFixture):
 
     def test_refuses_a_ratee_no_longer_on_the_team(self):
         TeamMembership.objects.filter(user=self.teammate).delete()
-        with self.assertRaises(ValidationError):
+        with self.assertRaisesMessage(services.EvaluationError, "aren't on the same team"):
             services.save_rating(self.evaluation, self.student, self.teammate, ALL_FOURS, "")
         self.assertFalse(PeerRating.objects.exists())
 

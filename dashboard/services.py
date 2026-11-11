@@ -347,6 +347,21 @@ def check_any_course_student(user):
         raise PermissionDenied
 
 
+def _members_by_name():
+    return TeamMembership.objects.select_related("user").order_by(
+        "user__first_name", "user__last_name", "user__github_login"
+    )
+
+
+def teammates(team: Team, user: User) -> list[User]:
+    """Everyone on the team but the user, by first name, last name, then GitHub login. Uses
+    the team's `all_memberships` when the student home has prefetched them."""
+    memberships = getattr(team, "all_memberships", None)
+    if memberships is None:
+        memberships = _members_by_name().filter(team=team)
+    return [membership.user for membership in memberships if membership.user_id != user.id]
+
+
 def student_home_courses(user):
     """What the student home shows: the courses the user is a student in that have a team
     they're on, by name. Each course has `memberships`, the user's own, by project name.
@@ -365,13 +380,7 @@ def student_home_courses(user):
         TeamMembership.objects.filter(user=user, team__project__course__in=student_course_ids)
         .select_related("team__project__course")
         .prefetch_related(
-            Prefetch(
-                "team__memberships",
-                queryset=TeamMembership.objects.select_related("user").order_by(
-                    "user__first_name", "user__last_name", "user__github_login"
-                ),
-                to_attr="all_memberships",
-            ),
+            Prefetch("team__memberships", queryset=_members_by_name(), to_attr="all_memberships"),
         )
         .order_by("team__project__course__name", "team__project__name", "team__name")
     )
@@ -391,20 +400,17 @@ def student_home_courses(user):
         .order_by("-sprint__start_date", "id")
     }
 
-    # Open means now is before closes_at, as in peereval.services.is_open.
     open_evaluations = {
         evaluation.project_id: evaluation
-        for evaluation in PeerEvaluation.objects.filter(
-            project__teams__memberships__user=user, closes_at__gt=timezone.now()
+        for evaluation in PeerEvaluation.objects.open().filter(
+            project__teams__memberships__user=user
         )
     }
 
     courses = {}
     for membership in memberships:
         membership.open_evaluation = open_evaluations.get(membership.team.project_id)
-        membership.teammates = [
-            other.user for other in membership.team.all_memberships if other.user_id != user.id
-        ]
+        membership.teammates = teammates(membership.team, user)
         membership.my_flags = flags_by_team.get(membership.team_id, [])
         for flag in membership.my_flags:
             flag.dispute = disputes.pop((flag.team_id, flag.rule, flag.sprint_id), None)

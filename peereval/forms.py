@@ -52,6 +52,15 @@ class ClosingTimeForm(forms.Form):
 COMMENT_MAX_LENGTH = 1000
 
 
+class CommentField(forms.CharField):
+    """Browsers send a textarea's line breaks as \r\n but count each as one character
+    against `maxlength`, so they're turned into \n before the length is checked."""
+
+    def to_python(self, value):
+        value = super().to_python(value)
+        return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _score_choices(question):
     """1 to 5, with the question's words for the two ends on 1 and 5."""
     labels = {MIN_SCORE: question.label_1, MAX_SCORE: question.label_5}
@@ -64,7 +73,7 @@ def _score_choices(question):
 class RatingForm(forms.Form):
     """One field per T-17 question, named by its key, then an optional comment."""
 
-    comment = forms.CharField(
+    comment = CommentField(
         label="Comment",
         required=False,
         max_length=COMMENT_MAX_LENGTH,
