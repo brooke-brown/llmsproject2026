@@ -230,34 +230,6 @@ class SprintWordingTests(TwoSprintsTestCase):
         self.assertNotIn("project", retry.kwargs["system"].lower())
 
 
-class WeeklyWordingTests(SprintTestCase):
-    """The weekly prompt and errors keep their wording until T-21 removes them."""
-
-    def test_the_weekly_system_prompt_is_unchanged(self):
-        from summaries.prompts import SYSTEM_PROMPT
-
-        self.assertIn("one student's weekly contribution summary", SYSTEM_PROMPT)
-        self.assertIn("the project's requirement list", SYSTEM_PROMPT)
-
-    def test_the_weekly_requirement_section_names_the_project(self):
-        from summaries.prompts import build_prompt
-
-        self.assertTrue(build_prompt([]).startswith("This project has no requirements"))
-        requirement = self.add_requirement(None, 1, "Users can log in")
-        self.assertTrue(build_prompt([], [requirement]).startswith("The project's requirements:"))
-
-    def test_the_weekly_errors_name_the_project_and_the_reporting_week(self):
-        from summaries.validator import validate_claims
-
-        commit = self.add_commit("aa1", at(10, 19))
-        (result,) = validate_claims(
-            [make_claim(commit, requirement_ids=[9])], self.student, self.team, date(2026, 10, 26)
-        )
-        messages = [error.message for error in result.errors]
-        self.assertIn("outside the reporting week 2026-10-26 to 2026-11-01", messages[0])
-        self.assertEqual(messages[1], "Requirement 9 doesn't exist in this project.")
-
-
 class SummarySprintModelTests(SprintTestCase):
     def test_a_summary_needs_a_week_or_a_sprint(self):
         with self.assertRaises(IntegrityError), transaction.atomic():

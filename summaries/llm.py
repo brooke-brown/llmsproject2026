@@ -18,7 +18,7 @@ from summaries.schemas import Claim
 DEFAULT_MODEL = "claude-opus-5-5"
 # A summary's claims are short, so the reply is capped well below the model's maximum.
 # Together with the timeout and no automatic retries, that bounds how long one call can
-# take: at most TIMEOUT_SECONDS. generate_summary may make up to 3 calls.
+# take: at most TIMEOUT_SECONDS. generate_sprint_summary may make several calls.
 MAX_TOKENS = 8000
 TIMEOUT_SECONDS = 120
 

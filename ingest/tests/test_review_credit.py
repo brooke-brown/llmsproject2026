@@ -13,7 +13,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from ingest.models import Artifact
-from ingest.services import student_week_artifacts
+from ingest.services import student_artifacts
 from ingest.tests.test_ingest_commits import (
     FULL_NAME,
     MID_WEEK,
@@ -30,7 +30,7 @@ from ingest.tests.test_ingest_prs_issues import (
     github_user,
     pr_id,
 )
-from ingest.tests.test_student_week_artifacts import ONE_MICROSECOND, make_user
+from ingest.tests.test_student_artifacts import ONE_MICROSECOND, make_user
 
 REVIEWER = "sample-reviewer"
 LONG_AGO = MID_WEEK - timedelta(days=60)
@@ -139,7 +139,7 @@ class StudentCreditTests(ActivityTestCase):
         self.author = make_user(STUDENT)
 
     def credited_ids(self, user):
-        artifacts = student_week_artifacts(user, self.team, WEEK_START)
+        artifacts = student_artifacts(user, self.team, WEEK_START, WEEK_START + timedelta(days=6))
         return [artifact.artifact_id for artifact in artifacts]
 
     def test_a_student_who_only_reviewed_has_that_review_this_week(self):
@@ -271,7 +271,7 @@ class ExcludedReviewTests(ActivityTestCase):
         self.assert_ids(self.ingest_activity(pulls=[pull]), review_id(CONTROL))
 
     def test_a_review_on_your_own_pr_doesnt_count_when_the_login_case_differs(self):
-        # GitHub logins ignore case, as student_week_artifacts does when it credits them.
+        # GitHub logins ignore case, as student_artifacts does when it credits them.
         pull = old_pull(
             fake_review(1, login=STUDENT.upper(), state="COMMENTED"),
             fake_review(CONTROL),

@@ -201,13 +201,8 @@ def _show_generation(request, generation):
 def generate_team_summaries(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
     try:
-        if "sprint" in request.POST:
-            sprint = services.parse_sprint(team, request.POST["sprint"])
-            generation = services.generate_team_sprint_summaries(team, sprint)
-        else:
-            # The weekly flow, kept until T-21 (#125) removes it.
-            week_start = services.parse_week_start(request.POST.get("week_start"))
-            generation = services.generate_team_summaries(team, week_start)
+        sprint = services.parse_sprint(team, request.POST.get("sprint"))
+        generation = services.generate_team_sprint_summaries(team, sprint)
     except services.GenerationError as error:
         return _show_refusal(request, team, error)
     return _show_generation(request, generation)

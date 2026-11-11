@@ -20,7 +20,7 @@ from django.utils import timezone as django_timezone
 from core.models import Repo
 from ingest import services
 from ingest.models import Artifact
-from ingest.tests.test_student_week_artifacts import (
+from ingest.tests.test_student_artifacts import (
     NEW_YORK,
     ONE_MICROSECOND,
     add_repo,

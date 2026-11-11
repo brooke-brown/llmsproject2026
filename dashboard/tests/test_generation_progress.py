@@ -1,7 +1,7 @@
 """Tests for US-45 (#135): see how far summary generation has got.
 
 A run's progress is read from its GenerationRun row, which the run updates as each student
-finishes. `ingest` and `generate_summary` are mocked, as in the other generation tests.
+finishes. `ingest` and `generate_sprint_summary` are mocked, as in the other generation tests.
 """
 
 import json
@@ -15,7 +15,7 @@ from dashboard.models import GenerationRun
 from core.models import Enrollment
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
-from .test_generate_summary import LAST_WEEK, NOW, generate_url, retry_url, team_article
+from .test_generate_summary import NOW, generate_url, retry_url, team_article
 from .test_generation_run import GenerationRunFixture, status_url
 
 
@@ -34,14 +34,14 @@ class RecordingProgressTests(GenerationRunFixture):
         """What the run row said when each student's summary was about to be written."""
         seen = []
 
-        def generate(user, team, week_start):
+        def generate(user, team, sprint):
             run = GenerationRun.objects.get(team=team)
             seen.append((run.done_count, run.student_count, [f["name"] for f in run.failures]))
             if user == self.grace:
                 from summaries.llm import LLMError
 
                 raise LLMError("The LLM request timed out.")
-            return self.save_summary(user, team, week_start)
+            return self.save_summary(user, team, sprint)
 
         self.generate.side_effect = generate
         return seen
@@ -49,10 +49,10 @@ class RecordingProgressTests(GenerationRunFixture):
     def test_the_run_starts_with_the_number_of_students_and_counts_each_one_done(self):
         seen = []
 
-        def generate(user, team, week_start):
+        def generate(user, team, sprint):
             run = GenerationRun.objects.get(team=team)
             seen.append((run.done_count, run.student_count))
-            return self.save_summary(user, team, week_start)
+            return self.save_summary(user, team, sprint)
 
         self.generate.side_effect = generate
         self.click_generate()
@@ -79,10 +79,10 @@ class RecordingProgressTests(GenerationRunFixture):
         self.give_a_failed_student()
         seen = []
 
-        def generate(user, team, week_start):
+        def generate(user, team, sprint):
             run = GenerationRun.objects.get(team=team)
             seen.append((run.done_count, run.student_count))
-            return self.save_summary(user, team, week_start)
+            return self.save_summary(user, team, sprint)
 
         self.generate.side_effect = generate
         self.client.post(retry_url(self.team.id))

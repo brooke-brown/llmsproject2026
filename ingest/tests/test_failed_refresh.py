@@ -37,7 +37,7 @@ from ingest.tests.test_ingest_prs_issues import (
 )
 from ingest.tests.test_refresh_week import COMMIT_ID, EVERY_ID, one_of_each
 from ingest.tests.test_review_credit import fake_review, review_id
-from ingest.tests.test_student_week_artifacts import make_user
+from ingest.tests.test_student_artifacts import make_user
 
 TOKEN = "sample-secret-token-value"
 EDITED = "Edited on GitHub"

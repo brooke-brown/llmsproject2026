@@ -32,7 +32,7 @@ from ingest.tests.test_ingest_prs_issues import (
     pr_id,
 )
 from ingest.tests.test_review_credit import fake_review, old_pull, review_id
-from ingest.tests.test_student_week_artifacts import add_repo, make_team, make_user
+from ingest.tests.test_student_artifacts import add_repo, make_team, make_user
 from summaries.models import Claim, Summary
 
 COMMIT_ID = f"{FULL_NAME}:commit:{sha('a')}"

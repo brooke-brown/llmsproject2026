@@ -10,7 +10,7 @@ from datetime import date
 
 from django.test import TestCase
 
-from core.models import Course, Enrollment, Project, Team, TeamMembership
+from core.models import Course, Enrollment, Project, Sprint, Team, TeamMembership
 from dashboard import flags
 from dashboard.services import SummaryFailure, TeamGeneration
 from summaries.models import Summary
@@ -202,7 +202,8 @@ class FlagReasonNameTests(DisplayNameFixture):
 class GenerationMessageNameTests(DisplayNameFixture):
     def message(self, *failed):
         failures = [SummaryFailure(student, "the model timed out") for student in failed]
-        return TeamGeneration(self.team, WEEK, 4, failures).message
+        sprint = Sprint(name="Sprint 1", start_date=WEEK, end_date=date(2026, 11, 1))
+        return TeamGeneration(self.team, sprint, 4, failures, sprint.end_date).message
 
     def test_a_failure_names_the_student_by_name_without_the_username(self):
         message = self.message(self.ada)

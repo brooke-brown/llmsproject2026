@@ -20,6 +20,7 @@ from django.test import TestCase
 from core.models import Project, Repo, Requirement, Team
 from ingest.models import Artifact
 from summaries.schemas import Claim
+from summaries.tests.week_shim import sprint_for_week
 
 NEW_YORK = ZoneInfo("America/New_York")
 WEEK_START = date(2026, 10, 26)  # A Monday. The week ends Sunday Nov 1.
@@ -41,9 +42,10 @@ MISSING = f"{TEAM_A_REPO}:pr:99"  # Well formed, but no such artifact.
 
 
 def validate(claims, user, team, week_start=WEEK_START):
-    from summaries.validator import validate_claims
+    from summaries.validator import validate_sprint_claims
 
-    return validate_claims(claims, user=user, team=team, week_start=week_start)
+    sprint = sprint_for_week(team.project, week_start)
+    return validate_sprint_claims(claims, user, team, sprint, sprint.end_date)
 
 
 def make_claim(*artifact_ids):
@@ -166,11 +168,11 @@ class ReportingWeekTests(ValidatorTestCase):
         result = self.check(BEFORE_WEEK)
 
         self.assertFalse(result.ok)
-        self.assertEqual(self.checks_of(result), ["outside_week"])
+        self.assertEqual(self.checks_of(result), ["outside_dates"])
 
     def test_the_week_is_judged_in_new_york_time_not_utc(self):
         # d4d4... is Oct 26 in UTC, so a UTC date check would wrongly accept it.
-        self.assertEqual(self.checks_of(self.check(BEFORE_WEEK)), ["outside_week"])
+        self.assertEqual(self.checks_of(self.check(BEFORE_WEEK)), ["outside_dates"])
         # Issue 3 is Nov 2 in UTC, so a UTC date check would wrongly reject it.
         self.assertTrue(self.check(ISSUE_SUNDAY_NIGHT).ok)
 
@@ -190,14 +192,14 @@ class ReportingWeekTests(ValidatorTestCase):
     def test_the_first_moment_of_the_next_week_fails(self):
         artifact_id = self.add_artifact("nextmonday", datetime(2026, 11, 2, 0, 0, tzinfo=NEW_YORK))
 
-        self.assertEqual(self.checks_of(self.check(artifact_id)), ["outside_week"])
+        self.assertEqual(self.checks_of(self.check(artifact_id)), ["outside_dates"])
 
     def test_a_moment_before_the_week_fails(self):
         artifact_id = self.add_artifact(
             "justbefore", datetime(2026, 10, 25, 23, 59, 59, 999999, tzinfo=NEW_YORK)
         )
 
-        self.assertEqual(self.checks_of(self.check(artifact_id)), ["outside_week"])
+        self.assertEqual(self.checks_of(self.check(artifact_id)), ["outside_dates"])
 
     def test_the_message_says_which_week_was_expected(self):
         message = self.check(BEFORE_WEEK).errors[0].message
@@ -278,7 +280,7 @@ class SeveralProblemsTests(ValidatorTestCase):
 
         result = self.check(artifact_id)
 
-        self.assertCountEqual(self.checks_of(result), ["outside_week", "not_contributor"])
+        self.assertCountEqual(self.checks_of(result), ["outside_dates", "not_contributor"])
 
     def test_a_claim_with_one_bad_citation_fails_even_if_the_others_are_fine(self):
         result = self.check(COMMIT, MISSING, PR)
@@ -307,28 +309,11 @@ class SeveralClaimsTests(ValidatorTestCase):
         self.assertEqual(validate([], self.student, self.team), [])
 
 
-class WeekStartTests(ValidatorTestCase):
-    def test_a_week_start_that_is_not_a_monday_is_rejected(self):
-        # Otherwise the check would quietly use the wrong seven days.
-        for week_start in [date(2026, 10, 27), date(2026, 10, 28), date(2026, 11, 1)]:
-            with self.subTest(week_start=week_start):
-                with self.assertRaises(ValueError):
-                    validate([make_claim(COMMIT)], self.student, self.team, week_start)
-
-    def test_the_error_says_the_week_must_start_on_a_monday(self):
-        with self.assertRaisesMessage(ValueError, "Monday"):
-            validate([make_claim(COMMIT)], self.student, self.team, date(2026, 10, 28))
-
-    def test_a_non_monday_is_rejected_even_when_there_are_no_claims(self):
-        with self.assertRaises(ValueError):
-            validate([], self.student, self.team, date(2026, 10, 28))
-
-
 class RequirementTests(ValidatorTestCase):
-    """A claim fails if it cites a requirement number its team's project doesn't have.
+    """A claim fails if it cites a requirement number its sprint doesn't have.
 
     Requirement numbers are Requirement.number, not the database ID. The sample
-    fixture's project has requirements 1 and 2.
+    fixture's sprint has requirements 1 and 2.
     """
 
     def requirement_result(self, requirement_ids, *artifact_ids):
@@ -399,7 +384,10 @@ class RequirementTests(ValidatorTestCase):
 
     def test_numbers_are_matched_by_requirement_number_not_database_id(self):
         requirement = Requirement.objects.create(
-            project=self.team.project, number=5, text="Users can delete a task."
+            project=self.team.project,
+            sprint=sprint_for_week(self.team.project, WEEK_START),
+            number=5,
+            text="Users can delete a task.",
         )
         self.assertNotIn(requirement.pk, {1, 2, 5})  # So the two can't be confused.
 

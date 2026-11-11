@@ -26,7 +26,7 @@ from github import (
     UnknownObjectException,
 )
 
-from core.models import Course, Enrollment, Project, Repo, Team, TeamMembership
+from core.models import Course, Enrollment, Project, Repo, Sprint, Team, TeamMembership
 from dashboard.models import Flag
 from ingest.models import Artifact
 from summaries import schemas
@@ -1273,10 +1273,13 @@ class MissingSetupTests(TeamSetupFixture):
         """Otherwise each student would get a "No activity" summary that looks like a finding."""
         Repo.objects.filter(team=self.team).delete()
         clock = self.patch("django.utils.timezone.now", return_value=NOW)
-        generate = self.patch("summaries.services.generate_summary")
+        generate = self.patch("summaries.services.generate_sprint_summary")
+        sprint = Sprint.objects.create(
+            project=self.project, name="Sprint 1", start_date=WEEK, end_date=date(2026, 11, 1)
+        )
 
         response = self.client.post(
-            generate_url(self.team.id), {"week_start": WEEK.isoformat()}, follow=True
+            generate_url(self.team.id), {"sprint": str(sprint.id)}, follow=True
         )
 
         self.assertTrue(clock.called)
@@ -1286,7 +1289,7 @@ class MissingSetupTests(TeamSetupFixture):
 
 
 class EndToEndTests(TestCase):
-    """The real generate_summary, validator and flag rules. Only GitHub and the LLM are mocked."""
+    """The real generate_sprint_summary, validator and flag rules. Only GitHub and the LLM are mocked."""
 
     @classmethod
     def setUpTestData(cls):
@@ -1354,9 +1357,12 @@ class EndToEndTests(TestCase):
 
         overview = self.client.get(overview_url(self.course.id))
         self.assertContains(overview, f'action="{generate_url(team.id)}"')
-        self.client.post(generate_url(team.id), {"week_start": WEEK.isoformat()})
+        sprint = Sprint.objects.create(
+            project=project, name="Sprint 1", start_date=WEEK, end_date=date(2026, 11, 1)
+        )
+        self.client.post(generate_url(team.id), {"sprint": str(sprint.id)})
 
-        summary = Summary.objects.get(team=team, week_start=WEEK)
+        summary = Summary.objects.get(team=team, sprint=sprint)
         self.assertEqual(summary.user.github_login, "ada-lovelace")
         page = self.client.get(team_url(team.id))
         summary_url = reverse("dashboard:summary", args=[summary.id])

@@ -11,8 +11,10 @@
 
   {"model": "core.project", "pk": 1, "fields": {"course": 1, "name": "Sample Project"}},
 
-  {"model": "core.requirement", "pk": 1, "fields": {"project": 1, "number": 1, "text": "Users can add a task to a shared list."}},
-  {"model": "core.requirement", "pk": 2, "fields": {"project": 1, "number": 2, "text": "Users can mark a task as done."}},
+  {"model": "core.sprint", "pk": 1, "fields": {"project": 1, "name": "Sprint 1", "start_date": "2026-10-26", "end_date": "2026-11-01"}},
+
+  {"model": "core.requirement", "pk": 1, "fields": {"project": 1, "sprint": 1, "number": 1, "text": "Users can add a task to a shared list."}},
+  {"model": "core.requirement", "pk": 2, "fields": {"project": 1, "sprint": 1, "number": 2, "text": "Users can mark a task as done."}},
 
   {"model": "core.team", "pk": 1, "fields": {"project": 1, "name": "Sample Team A"}},
   {"model": "core.team", "pk": 2, "fields": {"project": 1, "name": "Sample Team B"}},
