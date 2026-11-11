@@ -23,7 +23,7 @@ def _student_ids(team):
     return {membership.user_id for membership in team.memberships.all()}
 
 
-def _sprint_summaries(team):
+def sprint_summaries(team):
     """The team's sprint summaries, each with its sprint and generation log. Uses prefetched
     summaries when there are some, as on the course overview."""
     if "summaries" in getattr(team, "_prefetched_objects_cache", {}):
@@ -44,7 +44,7 @@ def _sprints_every_student_has(team, include_partial):
         return []
     counted, sprints = defaultdict(set), {}
     # Checked in Python, because whether a summary is partial depends on its generation log.
-    for summary in _sprint_summaries(team):
+    for summary in sprint_summaries(team):
         if summary.user_id in students and (include_partial or not summary.is_partial):
             counted[summary.sprint_id].add(summary.user_id)
             sprints[summary.sprint_id] = summary.sprint
@@ -52,10 +52,11 @@ def _sprints_every_student_has(team, include_partial):
     return sorted(complete, key=lambda sprint: sprint.start_date)
 
 
-def flaggable_sprints(team):
-    """The team's sprints that can raise flags, oldest first: each has ended, and every student
-    on the team has a complete summary for it."""
-    today = timezone.now().astimezone(REPORTING_TIME_ZONE).date()
+def flaggable_sprints(team, today=None):
+    """The team's sprints that can raise flags, oldest first: each has ended before `today`
+    (by default, today in the reporting time zone), and every student on the team has a
+    complete summary for it."""
+    today = today or timezone.now().astimezone(REPORTING_TIME_ZONE).date()
     return [
         sprint
         for sprint in _sprints_every_student_has(team, include_partial=False)
