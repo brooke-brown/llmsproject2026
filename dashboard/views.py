@@ -104,6 +104,8 @@ def course_overview(request, course_id):
             "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),
+            # The overview's forms return here, keeping the sprints chosen in its menus.
+            "next": request.get_full_path(),
         },
     )
 
@@ -142,7 +144,7 @@ def team(request, team_id):
             "memberships": memberships,
             "legend": services.pie_legend(memberships),
             "team_status": (
-                services.team_sprint_status(team, sprint, in_progress_through)
+                services.team_sprint_status(team, sprint)
                 if has_sprints
                 else services.team_status(team)
             ),
@@ -165,16 +167,23 @@ def _redirect_back(request, default):
     return default
 
 
+def _back_to_overview(request, team):
+    """Return to the course overview the form came from, keeping its chosen sprints."""
+    return _redirect_back(
+        request, redirect("dashboard:course_overview", course_id=team.project.course_id)
+    )
+
+
 def _show_refusal(request, team, error):
     """Say why nothing ran. The overview lists every team, so the message says which one."""
     messages.error(request, f"{team.name}: {error}")
-    return redirect("dashboard:course_overview", course_id=team.project.course_id)
+    return _back_to_overview(request, team)
 
 
 def _show_generation(request, generation):
     """Keep how the run went for the course overview, and go there."""
     services.save_run_result(request.session, generation)
-    return redirect("dashboard:course_overview", course_id=generation.team.project.course_id)
+    return _back_to_overview(request, generation.team)
 
 
 @login_required
@@ -204,7 +213,7 @@ def retry_failed_summaries(request, team_id):
         return _show_refusal(request, team, error)
     if generation is None:
         messages.info(request, f"{team.name} has no failed summaries to retry.")
-        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+        return _back_to_overview(request, team)
     return _show_generation(request, generation)
 
 

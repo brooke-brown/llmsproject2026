@@ -39,7 +39,7 @@
           <div class="row">
             <h3><a href="{% url 'dashboard:team' team.id %}{% if project.overview_sprint %}?sprint={{ project.overview_sprint.id }}{% endif %}"><strong>{{ team.name }}</strong></a></h3>
             {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif project.overview_sprint %}{% if team.sprint_status == "ok" %}<span class="tag ok">No flags</span>{% elif team.sprint_status == "in_progress" %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week or team.latest_sprint %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
-            {% if team.has_open_dispute %}<span class="tag dispute">Dispute open</span>{% endif %}
+            {% if team.has_open_dispute %}<span class="tag dispute">Dispute open{% if team.dispute_sprints %}: {% for sprint in team.dispute_sprints %}{{ sprint.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</span>{% endif %}
           </div>
           <ul class="people">
             {% for membership in team.memberships.all %}
@@ -53,6 +53,7 @@
           <div class="foot">
             <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post" class="generate-form">
               {% csrf_token %}
+              <input type="hidden" name="next" value="{{ next }}">
               {% if project.started_sprints %}
               <fieldset role="group">
                 <select name="sprint" aria-label="Sprint" required>
@@ -67,6 +68,7 @@
             {% if team.id in retry_team_ids %}
             <form action="{% url 'dashboard:retry_failed_summaries' team.id %}" method="post" class="generate-form">
               {% csrf_token %}
+              <input type="hidden" name="next" value="{{ next }}">
               <button type="submit" class="secondary"{% if team.id in generating_team_ids %} disabled{% endif %}>Retry failed summaries</button>
             </form>
             {% endif %}

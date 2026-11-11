@@ -9,16 +9,20 @@ The clock is fixed at Tuesday Nov 10, 2026, noon in New York (see test_sprint_fl
 (Oct 12-25) and Sprint 2 (Oct 26-Nov 1) have ended; Sprint 3 (Nov 2-15) is still running.
 """
 
-from datetime import date
+from datetime import date, datetime
+from unittest import mock
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from core.models import Course, Enrollment, Project, Sprint, Team, TeamMembership
+from dashboard import services
 from dashboard.models import Flag, FlagDispute
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
 from .test_show_flags import article_containing
-from .test_sprint_flags import NOW, RULE, SprintFlagFixture
+from .test_sprint_flags import DURING_SPRINT_2, NOW, RULE, SprintFlagFixture
 
 Role = Enrollment.Role
 
@@ -188,6 +192,134 @@ class SeveralProjectsTests(OverviewSprintFixture):
 
         self.assertEqual(self.selected(content, self.project), self.sprint2.id)
 
+    def test_a_projects_menu_doesnt_pin_the_others_defaults(self):
+        # Project Two is on its default, so choosing in Project One's menu mustn't fix it in
+        # the URL: it should move on when Project Two's next sprint ends.
+        content = self.content(self.sprint1)
+
+        section = self.project_section(content, self.project)
+        form = section[section.index("<form") : section.index("</form>")]
+        self.assertNotIn('type="hidden" name="sprint"', form)
+        # Project Two's menu still keeps Project One's choice.
+        section = self.project_section(content, self.project2)
+        form = section[section.index("<form") : section.index("</form>")]
+        self.assertIn(f'<input type="hidden" name="sprint" value="{self.sprint1.id}">', form)
+
+    def test_more_projects_without_started_sprints_add_no_queries(self):
+        self.client.force_login(self.instructor)
+        before = self.overview_queries()
+        for name in ("Project Three", "Project Four"):
+            later = Project.objects.create(course=self.course, name=name)
+            Sprint.objects.create(
+                project=later, name="Sprint 1", start_date=date(2026, 11, 16),
+                end_date=date(2026, 11, 22),
+            )
+
+        self.assertEqual(self.overview_queries(), before)
+
+    def overview_queries(self):
+        with CaptureQueriesContext(connection) as captured:
+            self.client.get(overview_url(self.course.id))
+        return len(captured)
+
+
+class KeepsChosenSprintTests(OverviewSprintFixture):
+    """Overview actions return to the overview with the sprints that were chosen."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.instructor)
+        self.chosen = f"{overview_url(self.course.id)}?sprint={self.sprint1.id}"
+
+    def test_the_overview_forms_carry_the_page_they_came_from(self):
+        content = self.client.get(self.chosen).content.decode()
+
+        card = article_containing(content, ">Team Pair<")
+        self.assertIn(f'name="next" value="{overview_url(self.course.id)}?sprint={self.sprint1.id}"',
+                      card)
+
+    def test_generating_returns_to_the_chosen_sprint(self):
+        generation = mock.Mock()
+        generation.team = self.pair
+        with mock.patch.object(services, "generate_team_sprint_summaries",
+                               return_value=generation), \
+                mock.patch.object(services, "save_run_result"):
+            response = self.client.post(
+                reverse("dashboard:generate_team_summaries", args=[self.pair.id]),
+                {"sprint": self.sprint2.id, "next": self.chosen},
+            )
+
+        self.assertRedirects(response, self.chosen, fetch_redirect_response=False)
+
+    def test_a_refused_run_returns_to_the_chosen_sprint(self):
+        response = self.client.post(
+            reverse("dashboard:generate_team_summaries", args=[self.pair.id]),
+            {"sprint": "nope", "next": self.chosen},
+        )
+
+        self.assertRedirects(response, self.chosen, fetch_redirect_response=False)
+
+    def test_retrying_with_nothing_to_retry_returns_to_the_chosen_sprint(self):
+        response = self.client.post(
+            reverse("dashboard:retry_failed_summaries", args=[self.pair.id]),
+            {"next": self.chosen},
+        )
+
+        self.assertRedirects(response, self.chosen, fetch_redirect_response=False)
+
+    def test_adding_a_team_returns_to_the_chosen_sprint(self):
+        response = self.client.post(
+            reverse("dashboard:team_create", args=[self.project.id]),
+            {"name": "Team New", "next": self.chosen},
+        )
+
+        self.assertRedirects(response, self.chosen, fetch_redirect_response=False)
+
+    def test_another_sites_next_is_ignored(self):
+        response = self.client.post(
+            reverse("dashboard:retry_failed_summaries", args=[self.pair.id]),
+            {"next": "https://example.com/"},
+        )
+
+        self.assertRedirects(response, overview_url(self.course.id),
+                             fetch_redirect_response=False)
+
+
+class CoursePickerTests(OverviewSprintFixture):
+    """The course picker counts teams in the sprint the overview opens on (Sprint 2)."""
+
+    def card(self):
+        return services.course_cards(self.instructor)[0]
+
+    def test_an_earlier_sprints_flag_isnt_counted_when_the_overview_wouldnt_show_it(self):
+        # Sprint 1 ended with a flag; Sprint 2 ended with Grace's summary missing. The overview
+        # opens on Sprint 2 and shows no flagged team, so the picker mustn't count one.
+        self.give_sprint1_flag()
+        self.compute(self.pair)
+        self.give(self.ada, self.pair, self.sprint2, "major")
+
+        self.assertEqual(self.card().flagged_count, 0)
+        self.assertNotIn("<mark>Flag</mark>", self.card_html())
+
+    def card_html(self):
+        return article_containing(self.content(), ">Team Pair<")
+
+    def test_a_flag_in_the_default_sprint_is_counted(self):
+        self.flag(self.pair, self.ada, self.sprint2)
+        self.flag(self.team, self.ada, self.sprint2, Flag.Severity.WARNING)
+
+        card = self.card()
+
+        self.assertEqual(card.flagged_count, 1)
+        self.assertEqual(card.warned_count, 1)
+        self.assertEqual(card.team_count, 2)
+
+    def test_a_withdrawn_flag_isnt_counted(self):
+        self.flag(self.pair, self.ada, self.sprint2)
+        self.dispute(self.pair, self.ada, self.sprint2, FlagDispute.Status.FLAG_WITHDRAWN)
+
+        self.assertEqual(self.card().flagged_count, 0)
+
 
 class SprintOrderingTests(OverviewSprintFixture):
     @classmethod
@@ -227,12 +359,31 @@ class SprintOrderingTests(OverviewSprintFixture):
         self.assertEqual(self.team_order(), ["Team Quiet", "Team Pair", "Team Alpha"])
         self.assertIn("Dispute open", self.card(self.pair))
 
-    def test_a_dispute_in_another_sprint_doesnt_move_or_tag_the_team(self):
+    def test_an_open_dispute_in_an_earlier_sprint_still_moves_and_tags_the_team(self):
+        # The overview defaults to Sprint 2, but a decision is still waiting in Sprint 1.
         self.dispute(self.pair, self.ada, self.sprint1)
 
-        self.assertEqual(self.team_order(), ["Team Alpha", "Team Pair", "Team Quiet"])
+        self.assertEqual(self.team_order(), ["Team Pair", "Team Alpha", "Team Quiet"])
+        self.assertIn("Dispute open: Sprint 1", self.card(self.pair))
+
+    def test_a_dispute_in_the_selected_sprint_doesnt_name_it(self):
+        self.dispute(self.pair, self.ada, self.sprint2)
+
+        card = self.card(self.pair)
+
+        self.assertIn("Dispute open</span>", card)
+        self.assertNotIn("Dispute open:", card)
+
+    def test_disputes_in_several_sprints_name_them_newest_first(self):
+        self.dispute(self.pair, self.ada, self.sprint1)
+        self.dispute(self.pair, self.grace, self.sprint2)
+
+        self.assertIn("Dispute open: Sprint 2, Sprint 1", self.card(self.pair))
+
+    def test_a_former_members_dispute_doesnt_count(self):
+        self.dispute(self.pair, self.alan, self.sprint1)
+
         self.assertNotIn("Dispute open", self.card(self.pair))
-        self.assertIn("Dispute open", self.card(self.pair, self.sprint1))
 
     def test_a_decided_dispute_doesnt_count_as_open(self):
         self.flag(self.pair, self.ada, self.sprint2)
@@ -280,12 +431,49 @@ class SprintStatusTests(OverviewSprintFixture):
         self.assertNotIn("<mark>Flag</mark>", card)
         self.assertNotIn("No flags", card)
 
-    def test_a_running_sprint_never_raises_a_flag(self):
-        # However a flag got there, a running sprint doesn't show it.
-        self.flag(self.pair, self.ada, self.sprint3)
+    def test_an_ended_sprint_missing_a_summary_says_not_generated_not_in_progress(self):
+        # Only Grace has a summary for Sprint 2, and it's complete. The team page says Ada's is
+        # "Not generated", so the overview mustn't call the sprint in progress.
+        self.give(self.grace, self.pair, self.sprint2, "major")
 
-        self.assertEqual(self.team_order(self.sprint3), ["Team Alpha", "Team Pair"])
-        self.assertNotIn("<mark>Flag</mark>", self.card(self.pair, self.sprint3))
+        card = self.card(self.pair)
+
+        self.assertIn("Not generated", card)
+        self.assertNotIn("In progress", card)
+
+    def test_an_ended_sprint_with_a_partial_summary_says_in_progress(self):
+        self.give(self.ada, self.pair, self.sprint2, "major", generated=DURING_SPRINT_2)
+        self.give(self.grace, self.pair, self.sprint2, "major")
+
+        self.assertIn("In progress", self.card(self.pair))
+
+    def test_the_overview_and_team_page_agree_on_the_tag(self):
+        self.give(self.grace, self.pair, self.sprint2, "major")
+        self.client.force_login(self.instructor)
+
+        team_page = self.client.get(f"{team_url(self.pair.id)}?sprint={self.sprint2.id}")
+        overview = self.overview()
+
+        self.assertEqual(team_page.context["team_status"], "none")
+        pair = next(
+            team for project in overview.context["projects"] for team in project.ranked_teams
+            if team.id == self.pair.id
+        )
+        self.assertEqual(pair.sprint_status, "none")
+
+    def test_labels_follow_the_now_given_not_the_real_clock(self):
+        # The real clock is patched to Nov 10, when Sprint 2 has ended. Asked about Nov 1, its
+        # last day, the sprint is still running, so even complete summaries can't say no flags.
+        self.give_sprint2_balanced()
+        self.compute(self.pair)
+        on_last_day = datetime(2026, 11, 1, 12, 0, tzinfo=NOW.tzinfo)
+
+        projects = services.course_projects_with_teams(
+            self.course, {self.sprint2.id}, now=on_last_day
+        )
+
+        pair = next(team for team in projects[0].ranked_teams if team.id == self.pair.id)
+        self.assertNotEqual(pair.sprint_status, "ok")
 
 
 class NoSprintsTests(OverviewSprintFixture):

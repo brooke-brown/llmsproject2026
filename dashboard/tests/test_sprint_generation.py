@@ -334,4 +334,7 @@ class SprintPagesTests(SprintGenerationFixture):
         article = team_article(self.overview(), "Team Alpha")
         self.assertIn("Sprint 2", article)
         self.assertNotIn("No summaries yet", article)
-        self.assertNotIn("Not generated", article)
+        # The overview shows Sprint 1, which has ended without Ada's summary: as on the team
+        # page, that's not generated rather than in progress.
+        self.assertIn("Not generated", article)
+        self.assertNotIn("In progress", article)
