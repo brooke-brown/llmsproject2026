@@ -20,7 +20,7 @@ from ingest.tests.test_ingest_commits import (
     fake_commit,
     sha,
 )
-from ingest.tests.test_student_week_artifacts import (
+from ingest.tests.test_student_artifacts import (
     add_repo,
     lookup,
     make_project,

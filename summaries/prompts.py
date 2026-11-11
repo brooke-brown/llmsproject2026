@@ -1,4 +1,4 @@
-"""The prompt sent to the LLM to write one student's weekly summary."""
+"""The prompt sent to the LLM to write one student's summary of a sprint."""
 
 from zoneinfo import ZoneInfo
 
@@ -12,17 +12,16 @@ BODY_CAP = 2000
 REQUIREMENT_CAP = 1000
 DIFF_CAP = 4000
 
-# A week with many artifacts shrinks each diff's cap so the prompt stays near this many
+# A summary with many artifacts shrinks each diff's cap so the prompt stays near this many
 # characters (about 50,000 tokens), but never below MIN_DIFF_CAP, so every diff keeps its
-# start. Titles and bodies are capped but never shrunk, so an extreme week can go a little
+# start. Titles and bodies are capped but never shrunk, so an extreme sprint can go a little
 # over: the budget bounds the diffs, which are the bulk of a prompt, not every artifact.
 PROMPT_BUDGET = 200_000
 MIN_DIFF_CAP = 200
 
-# One template for the weekly and sprint prompts, so the rules can't drift apart and a
-# rewording can't silently give sprint runs the weekly text.
-_SYSTEM_TEMPLATE = """\
-You write one student's {summary} for an instructor, as a list of claims.
+SYSTEM_PROMPT = """\
+You write one student's contribution summary for one sprint, for an instructor, as a list of \
+claims.
 
 Rules:
 - Describe observable activity only: what the student did, as shown in the artifacts. \
@@ -34,17 +33,10 @@ exactly as listed. Never cite an ID that isn't in the list.
 not by how many lines changed. A small fix that unblocks the team can be major, and a \
 large reformatting is minor.
 - Set requirement_ids to the numbers of the requirements this work advances, using only the \
-numbers in {owner} requirement list. Use an empty list if it advances none.
+numbers in the sprint's requirement list. Use an empty list if it advances none.
 - Write each claim as one plain sentence. Group related artifacts into one claim and cite \
 all of them.
 """
-
-SYSTEM_PROMPT = _SYSTEM_TEMPLATE.format(summary="weekly contribution summary", owner="the project's")
-
-SPRINT_SYSTEM_PROMPT = _SYSTEM_TEMPLATE.format(
-    summary="contribution summary for one sprint", owner="the sprint's"
-)
-
 
 MERGE_SYSTEM_PROMPT = """\
 You merge one student's validated claims for one sprint into a single report. The claims \
@@ -61,7 +53,7 @@ describes, using only the requirement numbers in the sprint's list.
 """
 
 
-def build_merge_prompt(claims, requirements=(), period="the sprint", sprint_name=None) -> str:
+def build_merge_prompt(claims, requirements, period, sprint_name) -> str:
     """The sprint's requirements, then the validated claims to merge, numbered.
 
     Only claims go in, never raw artifacts, so the merge has nothing else to cite.
@@ -88,13 +80,13 @@ def build_merge_prompt(claims, requirements=(), period="the sprint", sprint_name
     )
 
 
-def build_prompt(artifacts, requirements=(), period="the week", sprint_name=None) -> str:
+def build_prompt(artifacts, requirements, period, sprint_name) -> str:
     """The requirements, then the student's artifacts for the period, oldest first.
 
     `requirements` are Requirement rows in number order. They come first so the LLM knows
     what it can tie claims to. `period` names the dates the artifacts cover, such as
-    "Sprint 1 (2026-10-23 to 2026-10-29)"; the default is the weekly wording. With
-    `sprint_name`, the requirements are introduced as that sprint's, not the project's.
+    "Sprint 1 (2026-10-23 to 2026-10-29)", and `sprint_name` introduces the requirements as
+    that sprint's.
     """
     artifacts = list(artifacts)
     intro = (
@@ -110,9 +102,7 @@ def build_prompt(artifacts, requirements=(), period="the week", sprint_name=None
     return intro + "\n\n".join(blocks)
 
 
-def build_retry_prompt(
-    artifacts, failing, requirements=(), period="the week", sprint_name=None
-) -> str:
+def build_retry_prompt(artifacts, failing, requirements, period, sprint_name) -> str:
     """Ask for corrected versions of the claims that failed validation.
 
     `failing` is a list of (claim, errors) pairs. The artifact list goes back too, so the
@@ -142,16 +132,12 @@ def _failing_claim_block(number, claim, errors) -> str:
     return "\n".join(lines)
 
 
-def _requirements_section(requirements, sprint_name=None) -> str:
-    """The numbered requirements, introduced as the sprint's when `sprint_name` is given, so a
-    sprint with none isn't described as a project with none."""
+def _requirements_section(requirements, sprint_name) -> str:
+    """The sprint's numbered requirements, or a line saying it has none."""
     requirements = list(requirements)
-    owner, possessive = (
-        (sprint_name, f"{sprint_name}'s") if sprint_name else ("This project", "The project's")
-    )
     if not requirements:
-        return f"{owner} has no requirements, so leave requirement_ids empty.\n\n"
-    lines = [f"{possessive} requirements:"]
+        return f"{sprint_name} has no requirements, so leave requirement_ids empty.\n\n"
+    lines = [f"{sprint_name}'s requirements:"]
     for requirement in requirements:
         capped = _capped(f"{requirement.number}.", requirement.text, REQUIREMENT_CAP, label="requirement")
         lines.extend(capped)

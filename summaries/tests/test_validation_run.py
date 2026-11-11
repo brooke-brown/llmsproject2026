@@ -1,6 +1,6 @@
 """Tests for T-9 (#40): logging each validation run.
 
-Every successful generate_summary call saves one ValidationRun beside its summary, in the
+Every successful summary generation saves one ValidationRun beside its summary, in the
 same transaction, so the log never says something the database doesn't have. A call that
 fails saves no summary, so it has nothing to attach a run to and logs nothing.
 
@@ -175,12 +175,6 @@ class NoRunTests(RunTestCase):
 
         with self.assertRaises(LLMError):
             self.run_summary()
-
-        self.assertEqual(ValidationRun.objects.count(), 0)
-
-    def test_a_non_monday_logs_no_run(self):
-        with self.assertRaises(ValueError):
-            self.run_summary(week_start=date(2026, 10, 28))
 
         self.assertEqual(ValidationRun.objects.count(), 0)
 

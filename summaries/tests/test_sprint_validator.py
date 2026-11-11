@@ -24,10 +24,10 @@ class SprintValidatorTests(SprintTestCase):
     def test_the_last_day_is_included_until_midnight_in_new_york(self):
         self.assertTrue(self.check(self.add_commit("aa1", at(10, 29, 23, 30))).ok)
 
-    def test_a_day_either_side_of_the_range_fails_with_outside_week(self):
+    def test_a_day_either_side_of_the_range_fails_with_outside_dates(self):
         for suffix, when in (("aa1", at(10, 22, 23, 30)), ("aa2", at(10, 30, 0, 30))):
             result = self.check(self.add_commit(suffix, when))
-            self.assertEqual([error.check for error in result.errors], ["outside_week"])
+            self.assertEqual([error.check for error in result.errors], ["outside_dates"])
             self.assertIn("2026-10-23", result.errors[0].message)
 
     def test_the_date_error_names_the_sprint_not_a_reporting_week(self):
@@ -71,4 +71,4 @@ class SourceClaimTests(SprintTestCase):
     def test_the_range_can_start_after_the_sprint_does(self):
         early = self.add_commit("aa1", at(10, 24))
         result = self.run_check([early], allowed=None, first_day=date(2026, 10, 27))
-        self.assertEqual([e.check for e in result.errors], ["outside_week"])
+        self.assertEqual([e.check for e in result.errors], ["outside_dates"])

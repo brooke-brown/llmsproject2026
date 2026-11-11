@@ -1,7 +1,7 @@
-"""Tests for generating the current week: its summaries are marked as partial. They count
-toward the contribution shares on the team page, which say so, but not toward flags until
-the week is generated again after it ends. Flags and shares now follow sprints (US-41), so
-their in-progress tests are in test_sprint_flags.
+"""Tests for how a partial weekly summary is labelled and what it says. Weekly summaries are
+the alpha's, and no new ones can be generated (T-21): these only keep the pages that still
+show them honest until PR B deletes them. Generating by sprint, and its in-progress wording,
+is tested in test_sprint_generation, and flags and shares follow sprints (US-41).
 
 The clock is fixed at Wednesday Nov 4, 2026, noon in New York, so the current week starts
 Nov 2 and the most recent completed week starts Oct 26.
@@ -21,7 +21,7 @@ from dashboard.models import Flag
 from summaries.models import Claim, Summary, ValidationRun
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
-from .test_generate_summary import generate_url, page_messages, team_article
+from .test_generate_summary import team_article
 
 Role = Enrollment.Role
 NEW_YORK = ZoneInfo("America/New_York")
@@ -90,52 +90,6 @@ class InProgressFixture(TestCase):
             summary = give(student, self.team, *(significances or ("major",)), week=week)
             run_on(summary)
         return summary
-
-
-class PickingTheWeekTests(InProgressFixture):
-    def setUp(self):
-        super().setUp()
-        self.set_clock(WEDNESDAY)
-        self.ingest = mock.patch("ingest.services.ingest", return_value=[]).start()
-        self.generate = mock.patch("summaries.services.generate_summary").start()
-        self.generate.side_effect = lambda user, team, week_start: Summary.objects.get_or_create(
-            team=team, user=user, week_start=week_start
-        )[0]
-        self.addCleanup(mock.patch.stopall)
-
-    def post(self, week):
-        return self.client.post(
-            generate_url(self.team.id), {"week_start": week.isoformat()}, follow=True
-        )
-
-    def test_a_submitted_non_monday_is_still_rejected(self):
-        message = page_messages(self.post(date(2026, 11, 3)))
-
-        self.assertIn("The week must start on a Monday.", message)
-        self.ingest.assert_not_called()
-
-    def test_the_current_week_can_be_generated(self):
-        self.post(CURRENT)
-
-        self.ingest.assert_called()
-        self.assertEqual(self.ingest.call_args.args[1:], (CURRENT, date(2026, 11, 8)))
-        self.assertEqual(self.generate.call_count, 2)
-
-    def test_the_message_says_the_week_is_in_progress(self):
-        message = page_messages(self.post(CURRENT))
-
-        self.assertIn("still in progress", message)
-        self.assertIn("flags", message)
-
-    def test_a_completed_weeks_message_doesnt(self):
-        self.assertNotIn("in progress", page_messages(self.post(COMPLETED)))
-
-    def test_a_week_that_hasnt_started_is_rejected_and_nothing_runs(self):
-        message = page_messages(self.post(NEXT))
-
-        self.assertIn("That week hasn't started yet.", message)
-        self.ingest.assert_not_called()
-        self.generate.assert_not_called()
 
 
 class IsPartialTests(InProgressFixture):

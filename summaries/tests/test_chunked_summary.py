@@ -130,7 +130,7 @@ class ChunkedGenerationTests(ChunkedSummaryTestCase):
         summary = self.generate()
         self.assertEqual(self.kinds().count("retry"), 2)  # The existing two retries.
         dropped = summary.claims.filter(status="couldnt_verify").get()
-        self.assertEqual(dropped.validator_errors[0]["check"], "outside_week")
+        self.assertEqual(dropped.validator_errors[0]["check"], "outside_dates")
 
     def test_a_failing_chunk_claim_is_retried_and_can_pass(self):
         self.answers = {
