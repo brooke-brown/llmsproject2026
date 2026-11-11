@@ -1,10 +1,10 @@
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Count, Exists, OuterRef
+from django.db.models import Count, Exists, OuterRef, Prefetch
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_datetime
 
-from core.models import Project, Team
+from core.models import Project, Sprint, Team
 from dashboard.services import is_course_student
 
 from .models import Contribution, Corroboration
@@ -78,6 +78,66 @@ def contributions_for_list(team: Team, student):
         .annotate(confirmation_count=Count("corroborations"))
         .order_by("-date", "-created_at", "-pk")
     )
+
+
+def _for_staff(contributions, project_sprints):
+    """Evaluate `contributions` for the team and summary pages, newest work first. Each gets
+    `confirmation_count`, `confirmed_by` (the confirming teammates' names, alphabetically) and
+    `sprint_names` (the project's sprints that include its date, earliest first). The sprints
+    come from `project_sprints`, so the number of queries doesn't grow with the rows."""
+    contributions = list(
+        contributions.annotate(confirmation_count=Count("corroborations"))
+        .prefetch_related(
+            Prefetch(
+                "corroborations", queryset=Corroboration.objects.select_related("teammate")
+            )
+        )
+        .order_by("-date", "-created_at", "-pk")
+    )
+    for contribution in contributions:
+        contribution.confirmed_by = sorted(
+            corroboration.teammate.display_name
+            for corroboration in contribution.corroborations.all()
+        )
+        contribution.sprint_names = [
+            sprint.name
+            for sprint in project_sprints
+            if sprint.start_date <= contribution.date <= sprint.end_date
+        ]
+    return contributions
+
+
+def _project_sprints(team: Team):
+    return list(Sprint.objects.filter(project_id=team.project_id).order_by("start_date", "pk"))
+
+
+def contributions_for(team: Team, student, sprint=None, through=None) -> list[Contribution]:
+    """What `student` recorded on `team`, for instructors and TAs: newest work first, each
+    with `confirmation_count`, `confirmed_by` and `sprint_names` (see `_for_staff`). With a
+    sprint, only work dated from its first through its last day. With `through`, only work
+    dated on or before that day, such as the last day a partial summary covers.
+
+    Self-reported and never checked: not evidence for a claim, and never counted toward
+    shares or flags."""
+    contributions = Contribution.objects.filter(team=team, student=student)
+    if sprint is not None:
+        contributions = contributions.filter(
+            date__gte=sprint.start_date, date__lte=sprint.end_date
+        )
+    if through is not None:
+        contributions = contributions.filter(date__lte=through)
+    return _for_staff(contributions, _project_sprints(team))
+
+
+def contributions_by_student(team: Team) -> dict[int, list[Contribution]]:
+    """Every student's work on `team`, as `contributions_for` returns it, keyed by user ID, in
+    a fixed number of queries. A student with none has no key."""
+    by_student = {}
+    for contribution in _for_staff(
+        Contribution.objects.filter(team=team), _project_sprints(team)
+    ):
+        by_student.setdefault(contribution.student_id, []).append(contribution)
+    return by_student
 
 
 def teammates_contributions_for_list(team: Team, student):

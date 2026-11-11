@@ -206,8 +206,8 @@ The notes below describe the weekly flow, which still works through the same but
 | `/accounts/login/`, `/accounts/logout/` | Log in and out |
 | `/` | Your courses. Goes straight to the course if you only have one. |
 | `/courses/<id>/` | Each project's requirements and teams, with flagged teams first, then warned teams, then teams with an open dispute, a Flag, Warning or Dispute open label, and the Generate summaries button. Instructors also get New project, and Edit project and requirements links for each project. |
-| `/teams/<id>/` | Repos, flags with their reasons and any disputes, and students, whose names link to their newest summary, with all their summaries. Instructors can keep or withdraw a disputed flag. |
-| `/summaries/<id>/` | Verified claims with GitHub links, and the "couldn't be verified" note |
+| `/teams/<id>/` | Repos, flags with their reasons and any disputes, and students, whose names link to their newest summary, with all their summaries. Each student also has their offline contributions for the whole project (all sprints, whichever one the page shows), newest first, labelled self-reported with who confirmed each one. Instructors can keep or withdraw a disputed flag. |
+| `/summaries/<id>/` | Verified claims with GitHub links, and the "couldn't be verified" note. Below them, a sprint summary lists the student's offline contributions dated in that sprint, up to the last day the summary covers, labelled "Self-reported, not checked against GitHub". They are never claims and never count toward shares or flags. |
 | `/projects/<id>/requirements/` | Import, edit, add and delete a project's requirements. Instructors only. |
 | `/admin/` | Users, courses, enrollments, teams and repos, plus read-only views of artifacts, summaries, claims, validation runs and flags |
 
