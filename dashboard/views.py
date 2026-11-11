@@ -721,7 +721,7 @@ def passwords(request, project_id):
     return render(
         request,
         "dashboard/passwords.html",
-        {"project": project, "plan": setup.plan_temporary_passwords(project)},
+        {"project": project, "plan": setup.plan_temporary_passwords(project, request.user)},
     )
 
 
@@ -730,11 +730,11 @@ def passwords(request, project_id):
 def passwords_generate(request, project_id):
     """Generate the passwords and send them back once, as a download that isn't cached."""
     project = services.get_project_for_instructor(request.user, project_id)
-    if not setup.plan_temporary_passwords(project).count:
+    if not setup.plan_temporary_passwords(project, request.user).count:
         messages.info(request, "No students need a temporary password.")
         return redirect("dashboard:passwords", project_id=project.id)
     try:
-        rows = setup.generate_temporary_passwords(project)
+        rows = setup.generate_temporary_passwords(project, request.user)
     except setup.ProjectSetupError as error:
         messages.error(request, str(error))
         return redirect("dashboard:passwords", project_id=project.id)

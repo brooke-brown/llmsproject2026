@@ -8,6 +8,7 @@ from datetime import timedelta
 from itertools import batched
 
 import requests
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core import signing
 from django.core.exceptions import ValidationError
@@ -339,13 +340,17 @@ def _set_password_as(instructor: User | None, student: User, password: str) -> N
     """Set a temporary password, unless the student is also in a course `instructor` doesn't
     teach. Otherwise adding someone to a team would hand over their account in every course.
     With no instructor given, no course counts as taught, so an enrolled student is refused."""
-    taught = Enrollment.objects.filter(user=instructor, role=Enrollment.Role.INSTRUCTOR)
-    if student.enrollments.exclude(course__in=taught.values("course")).exists():
+    if _in_course_not_taught_by(instructor, student):
         raise ProjectSetupError(
             f"{student.github_login} is also enrolled in a course you don't teach, so their "
             "password can only be changed in the admin."
         )
     set_temporary_password(student, password)
+
+
+def _in_course_not_taught_by(instructor: User | None, student: User) -> bool:
+    taught = Enrollment.objects.filter(user=instructor, role=Enrollment.Role.INSTRUCTOR)
+    return student.enrollments.exclude(course__in=taught.values("course")).exists()
 
 
 def _refuse_unclaimed_account(student: User) -> None:
@@ -1063,6 +1068,10 @@ PASSWORD_ALPHABET = "".join(c for c in string.ascii_letters + string.digits if c
 PASSWORD_LENGTH = 12
 PASSWORD_ATTEMPTS = 5
 BLOCKED_NOTE = "Not given a password here: this account can only be changed in the admin."
+OTHER_COURSE_NOTE = (
+    "Not given a password here: also enrolled in a course you don't teach, so change it in the "
+    "admin."
+)
 PASSWORD_CSV_COLUMNS = ("team", "name", "github_login", "email", "temporary_password", "note")
 
 
@@ -1102,9 +1111,12 @@ class PasswordRow:
     user: User | None = None
 
 
-def plan_temporary_passwords(project: Project) -> PasswordPlan:
+def plan_temporary_passwords(project: Project, instructor: User) -> PasswordPlan:
     """Who would get a temporary password: students on the project's teams who can't log in
-    yet or still have an unchanged temporary one. Saves nothing."""
+    yet or still have an unchanged temporary one. Saves nothing.
+
+    A student also in a course `instructor` doesn't teach is blocked, as on the team page, or
+    the instructor would know a working login for that course too."""
     targets, blocked, left_alone = [], [], 0
     memberships = (
         TeamMembership.objects.filter(team__project=project)
@@ -1124,23 +1136,43 @@ def plan_temporary_passwords(project: Project) -> PasswordPlan:
             target.note = BLOCKED_NOTE
             blocked.append(target)
         else:
-            targets.append(target)
+            if _in_course_not_taught_by(instructor, user):
+                target.note = OTHER_COURSE_NOTE
+                blocked.append(target)
+            else:
+                targets.append(target)
     return PasswordPlan(targets, blocked, left_alone)
 
 
-def generate_temporary_passwords(project: Project) -> list[PasswordRow]:
-    """Give every student in the plan a random temporary password, all or none, and return a
-    row for each, blocked accounts included with a blank password.
+def generate_temporary_passwords(project: Project, instructor: User) -> list[PasswordRow]:
+    """Give every student in `instructor`'s plan a random temporary password, all or none, and
+    return a row for each, blocked accounts included with a blank password.
 
     The plain passwords are returned and nothing else: they aren't stored or logged. Raises
-    ProjectSetupError if a password can't be made, and then nothing has changed.
+    ProjectSetupError if a password can't be made, or a student changed theirs meanwhile, and
+    then nothing has changed.
+
+    Hashing is slow, so it all happens before the transaction: SQLite holds its write lock
+    for a whole transaction, and every other write in the app would wait on it.
     """
-    plan = plan_temporary_passwords(project)
-    rows = []
+    plan = plan_temporary_passwords(project, instructor)
+    rows, hashes = [], []
+    for target in plan.targets:
+        password = _random_valid_password(target.user)
+        rows.append(_row(target, password))
+        hashes.append((target.user, make_password(password)))
     with transaction.atomic():
-        for target in plan.targets:
-            password = _set_random_password(target.user)
-            rows.append(_row(target, password))
+        for user, hashed in hashes:
+            # Only if the password is still the one planned on, so one a student chose while
+            # the others were hashing is never overwritten.
+            saved = User.objects.filter(pk=user.pk, password=user.password).update(
+                password=hashed, must_change_password=True
+            )
+            if not saved:
+                raise ProjectSetupError(
+                    f"{user.github_login} changed their password at the same moment, so no "
+                    "passwords were changed. Please try again."
+                )
     rows.extend(_row(target, "") for target in plan.blocked)
     return rows
 
@@ -1173,13 +1205,13 @@ def _random_password() -> str:
     return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(PASSWORD_LENGTH))
 
 
-def _set_random_password(user: User) -> str:
-    """Set a random password that passes the password rules, trying a few times."""
+def _random_valid_password(user: User) -> str:
+    """A random password that passes the password rules for `user`, trying a few times."""
     for _ in range(PASSWORD_ATTEMPTS):
         password = _random_password()
         try:
-            set_temporary_password(user, password)
-        except ProjectSetupError:
+            validate_password(password, user=user)
+        except ValidationError:
             continue
         return password
     raise ProjectSetupError(
