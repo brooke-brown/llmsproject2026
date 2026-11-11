@@ -14,6 +14,21 @@
     <h1>{{ project.name }}</h1>
     {% if can_set_up %}<a href="{% url 'dashboard:project_setup' project.id %}">Edit project</a>{% endif %}
   </div>
+  {% if project.overview_sprint %}
+  <form class="compact sprint-pick" method="get" action="{% url 'dashboard:course_overview' course.id %}">
+    {% for sprint_id in project.other_sprint_ids %}<input type="hidden" name="sprint" value="{{ sprint_id }}">{% endfor %}
+    <label for="overview-sprint-{{ project.id }}">Sprint</label>
+    <select name="sprint" id="overview-sprint-{{ project.id }}">
+      {% for choice in project.menu_sprints %}<option value="{{ choice.id }}"{% if choice.id == project.overview_sprint.id %} selected{% endif %}>{{ choice.label }}{% if choice.is_running %}, in progress{% endif %}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Show</button>
+  </form>
+  {% elif project.has_sprints %}
+  <p class="sprint-pick keynote">No sprint has started yet.</p>
+  {% else %}
+  <p class="sprint-pick keynote">No sprints yet.{% if can_set_up %} <a href="{% url 'dashboard:project_setup' project.id %}">Set one up</a>.{% endif %}</p>
+  {% endif %}
   <div class="layout">
     <div>
       {% if project.ranked_teams %}
@@ -22,8 +37,8 @@
         {% for team in project.ranked_teams %}
         <article class="card{% if team.flag_rank == 0 %} flag{% elif team.flag_rank == 1 %} warn{% endif %}">
           <div class="row">
-            <h3><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></h3>
-            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week or team.latest_sprint %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
+            <h3><a href="{% url 'dashboard:team' team.id %}{% if project.overview_sprint %}?sprint={{ project.overview_sprint.id }}{% endif %}"><strong>{{ team.name }}</strong></a></h3>
+            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif project.overview_sprint %}{% if team.sprint_status == "ok" %}<span class="tag ok">No flags</span>{% elif team.sprint_status == "in_progress" %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week or team.latest_sprint %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
             {% if team.has_open_dispute %}<span class="tag dispute">Dispute open</span>{% endif %}
           </div>
           <ul class="people">

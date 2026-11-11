@@ -113,7 +113,8 @@ class SprintChoiceTests(SprintGenerationFixture):
         Sprint.objects.create(
             project=self.other_project, name="Elsewhere", start_date=date(2026, 10, 1), end_date=date(2026, 10, 4)
         )
-        self.assertNotIn("Elsewhere", self.overview())
+        # Project Two's own sprint menu lists it (US-46), but this team's form doesn't.
+        self.assertNotIn("Elsewhere", team_article(self.overview(), "Team Alpha"))
 
     def test_it_defaults_to_the_current_sprint(self):
         article = team_article(self.overview(), "Team Alpha")

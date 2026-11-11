@@ -98,7 +98,9 @@ def course_overview(request, course_id):
         "dashboard/course_overview.html",
         {
             "course": course,
-            "projects": services.course_projects_with_teams(course),
+            "projects": services.course_projects_with_teams(
+                course, services.parse_ids(request.GET.getlist("sprint"))
+            ),
             "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),

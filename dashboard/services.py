@@ -473,6 +473,11 @@ def parse_id(value):
     return int(value) if value and value.isdecimal() else None
 
 
+def parse_ids(values):
+    """The database IDs among query string values, skipping any that can't be one."""
+    return {parsed for parsed in map(parse_id, values) if parsed is not None}
+
+
 def project_setup_teams(project):
     """The project's teams by name, each with its `student_count` and `repo_count`."""
     return project.teams.annotate(
@@ -863,39 +868,82 @@ def pie_legend(memberships):
     )
 
 
-def _has_open_dispute():
-    """True for a team with an open dispute from a current member, inside a Team query. The
-    team page shows only current members' disputes, so any other couldn't be resolved."""
-    return Exists(
-        FlagDispute.objects.filter(
-            team=OuterRef("pk"),
-            status=FlagDispute.Status.OPEN,
-            student__team_memberships__team=OuterRef("pk"),
-        )
-    )
-
-
 FLAG_RANKS = {Flag.Severity.FLAG: 0, Flag.Severity.WARNING: 1}
+OPEN_DISPUTE_RANK, UNFLAGGED_RANK = 2, 3
 
 
-def course_projects_with_teams(course):
-    """The course's projects, each with its requirements by number, and its teams and their
-    students.
+def overview_sprint(sprints, chosen_ids, now=None):
+    """The sprint a project shows on the overview, from its started `sprints`, newest first:
+    the one whose ID is in `chosen_ids`, or else the latest that has ended, or else the
+    running one. None if no sprint has started."""
+    for sprint in sprints:
+        if sprint.id in chosen_ids:
+            return sprint
+    today = reporting_today(now)
+    ended = [sprint for sprint in sprints if sprint.end_date < today]
+    if ended:
+        return max(ended, key=lambda sprint: (sprint.end_date, sprint.start_date))
+    return sprints[0] if sprints else None
 
-    Each project's `ranked_teams` has flagged teams first, then warned teams, then teams with
-    an open dispute, then the rest, each group sorted by name. Each team's `flag_rank` is 0 if
-    it has a flag, 1 if its worst is a warning, 2 if it has an open dispute but no flags, and 3
-    otherwise. Only the flags of the team's latest flaggable sprint count (see team_severity),
-    and withdrawn flags don't. Each team also gets `has_open_dispute`.
+
+def _sprint_severity(team, sprint, today):
+    """"flag" or "warning", the team's worst active flag in the sprint, or None. A running
+    sprint never raises one. Uses the prefetched `active_flags`."""
+    if sprint is None or sprint.end_date >= today:
+        return None
+    severities = {flag.severity for flag in team.active_flags if flag.sprint_id == sprint.id}
+    for severity in [Flag.Severity.FLAG, Flag.Severity.WARNING]:
+        if severity in severities:
+            return severity
+    return None
+
+
+def _add_sprint_status(team, sprint, today):
+    """Give the team `flag_rank`, `has_open_dispute` and `sprint_status` for the overview's
+    sprint. Only the sprint's disputes from current members count, since the team page shows
+    only theirs. `sprint_status` is "ok" for a sprint that can raise flags, "in_progress" for
+    one the team has a summary for, and otherwise "none"."""
+    members = {membership.user_id for membership in team.memberships.all()}
+    team.has_open_dispute = sprint is not None and any(
+        dispute.sprint_id == sprint.id and dispute.student_id in members
+        for dispute in team.open_disputes
+    )
+    severity = _sprint_severity(team, sprint, today)
+    team.flag_rank = FLAG_RANKS.get(
+        severity, OPEN_DISPUTE_RANK if team.has_open_dispute else UNFLAGGED_RANK
+    )
+    team.sprint_status = "none"
+    if sprint is None:
+        return
+    if sprint.end_date < today and sprint in flags.flaggable_sprints(team):
+        team.sprint_status = "ok"
+    elif any(summary.sprint_id == sprint.id for summary in team.summaries.all()):
+        team.sprint_status = "in_progress"
+
+
+def course_projects_with_teams(course, chosen_sprint_ids=(), now=None):
+    """The course's projects, each with its requirements by number, its teams and their
+    students, and the sprint it shows.
+
+    Each project has `started_sprints` (for generating, oldest first), `menu_sprints` (newest
+    first), `overview_sprint` (see overview_sprint; IDs in `chosen_sprint_ids` pick it),
+    `other_sprint_ids` (the other projects' shown sprints, so its menu keeps them) and
+    `has_sprints`.
+
+    Each project's `ranked_teams` has teams flagged in its overview sprint first, then warned
+    teams, then teams with an open dispute in that sprint, then the rest, each group sorted by
+    name. Each team's `flag_rank` is 0, 1, 2 or 3 for those groups. Withdrawn flags don't count,
+    and a running sprint raises none. Each team also gets `has_open_dispute` and
+    `sprint_status` (see _add_sprint_status).
     """
+    chosen_sprint_ids = set(chosen_sprint_ids)
+    today = reporting_today(now)
     memberships = TeamMembership.objects.select_related("user").order_by(
         "user__last_name", "user__first_name", "user__github_login"
     )
+    open_disputes = FlagDispute.objects.filter(status=FlagDispute.Status.OPEN)
     teams = (
-        Team.objects.annotate(
-            latest_week=Max("summaries__week_start"),
-            has_open_dispute=_has_open_dispute(),
-        )
+        Team.objects.annotate(latest_week=Max("summaries__week_start"))
         .order_by("name")
         .prefetch_related(
             Prefetch("memberships", queryset=memberships),
@@ -903,6 +951,7 @@ def course_projects_with_teams(course):
             "summaries__validation_runs",
             "summaries__sprint",
             Prefetch("flags", queryset=active_flags(), to_attr="active_flags"),
+            Prefetch("flag_disputes", queryset=open_disputes, to_attr="open_disputes"),
         )
     )
     projects = list(
@@ -912,15 +961,25 @@ def course_projects_with_teams(course):
         )
     )
     for project in projects:
-        project.started_sprints = started_sprints(project)
+        project.started_sprints = started_sprints(project, now)
+        project.menu_sprints = project.started_sprints[::-1]
         for sprint in project.started_sprints:
             sprint.label = sprint_label(sprint)
-        project.default_sprint = default_sprint(project)
+            sprint.is_running = sprint.end_date >= today
+        project.has_sprints = bool(project.started_sprints) or project.sprints.exists()
+        project.default_sprint = default_sprint(project, now)
+        project.overview_sprint = overview_sprint(project.menu_sprints, chosen_sprint_ids, now)
         for team in project.teams.all():
             _add_summary_status(team)
-            team.flag_rank = FLAG_RANKS.get(team_severity(team), 2 if team.has_open_dispute else 3)
+            _add_sprint_status(team, project.overview_sprint, today)
         # Sorting is stable, so each rank stays in name order.
         project.ranked_teams = sorted(project.teams.all(), key=lambda team: team.flag_rank)
+    for project in projects:
+        project.other_sprint_ids = [
+            other.overview_sprint.id
+            for other in projects
+            if other is not project and other.overview_sprint is not None
+        ]
     return projects
 
 

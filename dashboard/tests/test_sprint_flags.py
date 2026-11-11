@@ -431,12 +431,13 @@ class WithdrawnDisputeTests(SprintFlagFixture):
 
 
 class CourseOverviewTests(SprintFlagFixture):
-    """The overview labels a team from its latest sprint that has ended and where every
-    student has a complete summary."""
+    """The overview labels a team from the sprint it shows, by default the latest that has
+    ended (US-46), and only from flags that sprint raised."""
 
-    def label(self, team):
+    def label(self, team, sprint=None):
         self.client.force_login(self.instructor)
-        content = self.client.get(overview_url(self.course.id)).content.decode()
+        query = {"sprint": sprint.id} if sprint else {}
+        content = self.client.get(overview_url(self.course.id), query).content.decode()
         team_article = article_containing(content, team.name)
         if "<mark>Flag</mark>" in team_article:
             return "Flag"
@@ -462,20 +463,16 @@ class CourseOverviewTests(SprintFlagFixture):
 
         self.assertEqual(self.label(self.pair), "Flag")
 
-    def test_a_sprint_missing_a_summary_doesnt_replace_the_latest_complete_one(self):
-        self.give(self.ada, self.pair, self.sprint1, "major")
-        self.give(self.grace, self.pair, self.sprint1, "major", "moderate")  # Ada: 3 of 8.
-        self.give(self.ada, self.pair, self.sprint2, "major")
-        # Grace has no Sprint 2 summary, so Sprint 1 still labels the team.
+    def test_a_sprint_missing_a_summary_raises_no_flag_but_earlier_sprints_keep_theirs(self):
+        self.give(self.ada, self.pair, self.sprint1, "minor")
+        self.give(self.grace, self.pair, self.sprint1, "major", "moderate")  # Ada: 1 of 6.
+        self.give(self.ada, self.pair, self.sprint2, "minor")
+        # Grace has no Sprint 2 summary, so Sprint 2 raises nothing, and the overview shows it
+        # by default as the latest sprint that has ended.
         self.compute(self.pair)
 
         self.assertIsNone(self.label(self.pair))
-        Claim.objects.filter(summary__user=self.ada, summary__sprint=self.sprint1).update(
-            significance="minor"
-        )  # Ada: 1 of 6, a flag.
-        self.compute(self.pair)
-
-        self.assertEqual(self.label(self.pair), "Flag")
+        self.assertEqual(self.label(self.pair, self.sprint1), "Flag")
 
 
 class TeamPageShareTests(SprintFlagFixture):
