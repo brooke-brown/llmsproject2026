@@ -25,4 +25,11 @@ urlpatterns = [
         views.evaluation_delete,
         name="evaluation_delete",
     ),
+    # Student pages: a student's view of an evaluation, and their rating of one teammate.
+    path("peer-evaluations/<int:evaluation_id>/", views.evaluation_detail, name="evaluation"),
+    path(
+        "peer-evaluations/<int:evaluation_id>/rate/<int:ratee_id>/",
+        views.rate,
+        name="rate",
+    ),
 ]

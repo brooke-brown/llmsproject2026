@@ -2,12 +2,12 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 from django.utils import formats, timezone
-from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from dashboard.services import get_project_for_instructor
 
 from . import services
-from .forms import ClosingTimeForm, EvaluationForm
+from .forms import COMMENT_MAX_LENGTH, ClosingTimeForm, EvaluationForm, RatingForm
 
 
 def _setup_page(evaluation):
@@ -80,3 +80,55 @@ def evaluation_delete(request, evaluation_id):
     else:
         messages.success(request, f"Deleted {evaluation.name}.")
     return _setup_page(evaluation)
+
+
+@login_required
+@require_GET
+def evaluation_detail(request, evaluation_id):
+    evaluation, team = services.get_evaluation_for_student(request.user, evaluation_id)
+    return render(
+        request,
+        "peereval/evaluation.html",
+        {
+            "evaluation": evaluation,
+            "is_open": services.is_open(evaluation),
+            "teammates": services.teammates_with_status(evaluation, team, request.user),
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def rate(request, evaluation_id, ratee_id):
+    evaluation, team = services.get_evaluation_for_student(request.user, evaluation_id)
+    ratee = services.get_teammate(team, request.user, ratee_id)
+    back = redirect("peereval:evaluation", evaluation_id=evaluation.id)
+    # A closed evaluation never shows the form, so a student's answers aren't shown afterwards.
+    # save_rating checks again under the lock, for a page left open past the closing time.
+    if not services.is_open(evaluation):
+        messages.error(request, services.closed_message(evaluation))
+        return back
+    if request.method == "POST":
+        form = RatingForm(request.POST)
+        if form.is_valid():
+            try:
+                services.save_rating(
+                    evaluation, request.user, ratee, form.scores(), form.cleaned_data["comment"]
+                )
+            except services.EvaluationError as error:
+                messages.error(request, str(error))
+            else:
+                messages.success(request, f"Saved your rating of {ratee.display_name}.")
+            return back
+    else:
+        form = RatingForm(rating=services.own_rating(evaluation, request.user, ratee))
+    return render(
+        request,
+        "peereval/rate.html",
+        {
+            "evaluation": evaluation,
+            "ratee": ratee,
+            "form": form,
+            "comment_max_length": COMMENT_MAX_LENGTH,
+        },
+    )
