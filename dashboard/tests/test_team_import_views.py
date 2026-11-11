@@ -3,6 +3,8 @@
 These drive the real pages. GitHub is mocked, and every student is made up.
 """
 
+import html
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -41,6 +43,13 @@ def confirm_url(project_id):
 
 def template_url(project_id):
     return reverse("dashboard:team_import_template", args=[project_id])
+
+
+def submitted_csv(page):
+    """The CSV a browser would send from the preview's form. HTML parsers drop one newline
+    right after <textarea>, which Python's test client doesn't do on its own."""
+    match = re.search(r'<textarea name="csv" hidden>(.*?)</textarea>', page.content.decode(), re.S)
+    return html.unescape(match.group(1).removeprefix("\n"))
 
 
 def upload(text=GOOD, name="teams.csv"):
@@ -126,6 +135,20 @@ class PreviewPageTests(TeamSetupFixture):
         self.assertContains(page, "Row 2: error", count=2)  # The repo and the student.
         self.assertNotContains(page, ">New<")
         self.assertNotContains(page, "New student")
+
+    def test_an_account_confirm_would_refuse_disables_confirm_on_the_preview(self):
+        make_user("unclaimed-dev", "Una", "Claimed")  # Has a password and no enrollments.
+        page = self.preview(f"{HEADER}\nTeam Gamma,Una Claimed,unclaimed-dev,,\n")
+        self.assertContains(page, "Row 2")
+        self.assertRegex(page.content.decode(), r"<button[^>]*\bdisabled")
+
+    def test_a_leading_blank_line_survives_the_trip_to_confirm(self):
+        text = f"\n{HEADER}\nTeam Gamma,Ada Lovelace,-bad-,,\n"
+        page = self.preview(text)
+        self.assertContains(page, "Row 3")
+        self.assertEqual(submitted_csv(page), text)
+        response = self.client.post(confirm_url(self.project.id), {"csv": submitted_csv(page)})
+        self.assertContains(response, "Row 3")
 
     def test_a_bad_file_is_rejected_with_a_message_on_the_upload_page(self):
         for data, expected in (

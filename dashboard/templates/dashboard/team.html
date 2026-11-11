@@ -24,6 +24,21 @@
   {% if team_status == "flag" %}<span class="tag flag">Flag</span>{% elif team_status == "warning" %}<span class="tag warn">Warning</span>{% elif team_status == "ok" %}<span class="tag ok">No flags</span>{% elif team_status == "in_progress" %}<span class="tag none">In progress</span>{% endif %}
 </div>
 
+{% if sprint %}
+<form class="compact sprint-pick" method="get" action="{% url 'dashboard:team' team.id %}">
+  <label for="sprint-menu">Sprint</label>
+  <select name="sprint" id="sprint-menu">
+    {% for choice in sprints %}<option value="{{ choice.id }}"{% if choice.id == sprint.id %} selected{% endif %}>{{ choice.name }} ({{ choice.start_date|date:"M j" }} – {{ choice.end_date|date:"M j" }})</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Show</button>
+</form>
+{% elif has_sprints %}
+<p class="sprint-pick keynote">No sprint has started yet.</p>
+{% else %}
+<p class="sprint-pick keynote">No sprints yet.{% if can_set_up %} Add one on the <a href="{% url 'dashboard:project_setup' team.project_id %}">project's page</a>.{% endif %}</p>
+{% endif %}
+
 {% if team_flags %}
 <div class="findings">
   {% for flag in team_flags %}
@@ -50,13 +65,13 @@
     </form>
     {% else %}
     <header class="row">
-      <span><strong>{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</strong>{% if membership.user.get_full_name %}
+      <span><strong>{% if sprint %}{% if membership.sprint_summary %}<a href="{% url 'dashboard:summary' membership.sprint_summary.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}{% elif membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</strong>{% if membership.user.get_full_name %}
       <code>{{ membership.user.github_login }}</code>{% endif %}</span>{% if membership.contribution_share is not None %}
       <strong>{{ membership.contribution_share }}%</strong>{% endif %}
     </header>
     {% for flag in membership.user.team_flags %}
     {% if flag.is_withdrawn %}
-    <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} for the week of {{ flag.week_start|date:"M j" }}</p>
+    <p class="finding withdrawn"><mark>Withdrawn after dispute</mark> {{ flag.get_severity_display }} in {{ flag.sprint.name }}</p>
     {% else %}
     <p class="finding {{ flag.severity }}"><mark>{{ flag.get_severity_display }}</mark> {{ flag.reason }}</p>
     {% endif %}
@@ -67,11 +82,21 @@
     {% include "dashboard/_dispute.html" %}
     {% endfor %}
     <ul class="pills">
+      {% if sprint %}
+      {% with summary=membership.sprint_summary %}
+      {% if summary %}
+      <li><a href="{% url 'dashboard:summary' summary.id %}">{{ sprint.name }}<span class="count">{% if summary.claim_count %}{{ summary.claim_count }} claim{{ summary.claim_count|pluralize }}{% elif not summary.artifact_count %}no activity{% else %}no claims{% endif %}</span>{% if summary.covered_through %}<span class="count">in progress, through {{ summary.covered_through|date:"M j" }}</span>{% endif %}</a></li>
+      {% else %}
+      <li>Not generated</li>
+      {% endif %}
+      {% endwith %}
+      {% else %}
       {% for summary in membership.user.team_summaries %}
       <li><a href="{% url 'dashboard:summary' summary.id %}">{% if summary.sprint %}{{ summary.sprint.name }} ({{ summary.sprint.start_date|date:"M j" }} – {{ summary.sprint.end_date|date:"M j" }}){% else %}Week of {{ summary.week_start|date:"M j, Y" }}{% endif %}<span class="count">{% if summary.claim_count %}{{ summary.claim_count }} claim{{ summary.claim_count|pluralize }}{% elif not summary.artifact_count %}no activity{% else %}no claims{% endif %}</span>{% if summary.is_partial %}<span class="count">{% if summary.week_is_running %}in progress{% else %}partial{% endif %}</span>{% endif %}</a></li>
       {% empty %}
-      <li>No summaries yet.</li>
+      <li>No summaries yet. Generate them from the course overview.</li>
       {% endfor %}
+      {% endif %}
     </ul>
     {% if can_set_up %}
     <span class="row-actions card-actions">
@@ -85,14 +110,19 @@
     {% endif %}
   </article>
   {% empty %}
-  <p>No students on this team yet.</p>
+  <p>No students on this team yet. {% if can_set_up %}Add one below.{% else %}An instructor needs to add students.{% endif %}</p>
   {% endfor %}
 </div>
 
-{% if share_week %}
+{% if sprint and memberships %}
 <section class="chart" aria-labelledby="share-title">
-  <h2 id="share-title">Share of requirement-tied work, week of {{ share_week|date:"M j" }}{% if share_week_note %} ({{ share_week_note }}){% endif %}</h2>
-  <p class="why">Percentages are each student's share of the team's requirement-tied work in the week of {{ share_week|date:"M j, Y" }}, weighted by significance. Requirement tags and significance are LLM judgments.{% if share_week_note %} This week's summaries are partial, so these shares may change, and flags don't use them.{% endif %}</p>
+  <h2 id="share-title">Share of requirement-tied work, {{ sprint.name }}{% if in_progress_through %} (in progress, through {{ in_progress_through|date:"M j" }}){% endif %}</h2>
+  {% if not every_student_has_summary %}
+  <p class="why">Shares appear once every student has a summary for {{ sprint.name }}. Summaries are made from the course overview.</p>
+  {% elif not legend %}
+  <p class="why">No requirement-tied work to compare in {{ sprint.name }}.</p>
+  {% else %}
+  <p class="why">Percentages are each student's share of the team's requirement-tied work in {{ sprint.name }} ({{ sprint.start_date|date:"M j" }} – {{ sprint.end_date|date:"M j, Y" }}), weighted by significance. Requirement tags and significance are LLM judgments.{% if in_progress_through %} This sprint's summaries are partial, so these shares may change, and flags don't use them.{% endif %}</p>
   <div class="pie-wrap">
     <svg class="pie" viewBox="0 0 100 100" role="img" aria-label="Pie chart of each student's share of the team's requirement-tied work">
       {% for membership in legend %}{% if membership.pie %}
@@ -104,7 +134,7 @@
       <ul class="pie-legend">
         {% for membership in legend %}
         <li class="legend-row"><i class="swatch{% if not membership.pie %} none{% endif %}"{% if membership.pie %} style="background: {{ membership.pie.color }}"{% endif %}></i>
-          <span class="name">{% if membership.user.team_summaries %}<a href="{% url 'dashboard:summary' membership.user.team_summaries.0.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</span>
+          <span class="name">{% if membership.sprint_summary %}<a href="{% url 'dashboard:summary' membership.sprint_summary.id %}">{{ membership.user.display_name }}</a>{% else %}{{ membership.user.display_name }}{% endif %}</span>
           <span class="val">{{ membership.contribution_share }}%</span>{% if membership.chart_flag %}
           <span class="tag {% if membership.chart_flag.severity == 'flag' %}flag{% else %}warn{% endif %}">{{ membership.chart_flag.get_severity_display }}</span>{% endif %}</li>
         {% endfor %}
@@ -112,6 +142,7 @@
       <p class="equal-note">An equal share is {{ equal_share }}% ({{ memberships|length }} student{{ memberships|length|pluralize }}).</p>
     </div>
   </div>
+  {% endif %}
 </section>
 {% endif %}
 

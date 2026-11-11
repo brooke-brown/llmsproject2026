@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.validators import MaxLengthValidator, MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
@@ -10,6 +10,10 @@ from django.utils import timezone
 
 from core.models import Sprint, Team, TeamMembership
 from ingest.services import REPORTING_TIME_ZONE
+
+MAX_DESCRIPTION_LENGTH = 1000
+MIN_HOURS = Decimal("0.25")
+MAX_HOURS = Decimal("24")
 
 
 class Contribution(models.Model):
@@ -34,13 +38,13 @@ class Contribution(models.Model):
     # When the work happened, which is what places it in a sprint.
     date = models.DateField()
     category = models.CharField(max_length=20, choices=Category.choices)
-    description = models.TextField()
+    description = models.TextField(validators=[MaxLengthValidator(MAX_DESCRIPTION_LENGTH)])
     hours = models.DecimalField(
         max_digits=4,
         decimal_places=2,
         null=True,
         blank=True,
-        validators=[MinValueValidator(Decimal("0.25")), MaxValueValidator(Decimal("24"))],
+        validators=[MinValueValidator(MIN_HOURS), MaxValueValidator(MAX_HOURS)],
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

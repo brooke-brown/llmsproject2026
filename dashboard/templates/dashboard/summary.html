@@ -64,7 +64,7 @@
 </article>
 {% empty %}
   {% if not summary.artifact_count %}
-  <div class="stat empty">No activity {% if summary.sprint %}in this sprint{% else %}that week{% endif %}.</div>
+  <div class="stat empty">No activity {% if summary.sprint %}in this sprint{% else %}that week{% endif %}. Check that the team's repo and the student's GitHub username are right.</div>
   {% elif not unverified_count %}
   <div class="stat empty">No claims were made for this {% if summary.sprint %}sprint{% else %}week{% endif %}.</div>
   {% endif %}

@@ -45,7 +45,9 @@
 <form action="{% url 'dashboard:team_import_confirm' project.id %}" method="post" enctype="multipart/form-data">
   {% csrf_token %}
   {# Carried here instead of saved on the server, because it is student data. #}
-  <textarea name="csv" hidden>{{ csv }}</textarea>
+  {# The newline after the tag is dropped by the browser, so a CSV starting with a blank line keeps it. #}
+  <textarea name="csv" hidden>
+{{ csv }}</textarea>
   <input type="hidden" name="checked_repos" value="{{ checked_repos }}">
   <p class="form-actions">
     <button type="submit" class="primary"{% if plan.errors %} disabled aria-disabled="true"{% endif %}>Confirm import</button>

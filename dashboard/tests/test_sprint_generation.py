@@ -197,9 +197,15 @@ class GenerateBySprintTests(SprintGenerationFixture):
         self.assertIn("still in progress", message)
         self.assertIn("Nov 2", message)
 
-    def test_flags_are_left_to_the_sprint_flag_rules(self):
+    def test_flags_are_recomputed_once_every_student_succeeds(self):
+        # US-41: compute_flags decides which sprints can raise flags.
         self.post(self.ended)
-        self.compute_flags.assert_not_called()
+        self.compute_flags.assert_called_once_with(self.team)
+
+    def test_flags_are_recomputed_for_a_running_sprint_too(self):
+        # A running sprint raises none itself, but an earlier sprint's flags stay current.
+        self.post(self.running)
+        self.compute_flags.assert_called_once_with(self.team)
 
     def test_a_sprint_that_has_not_started_is_rejected(self):
         message = page_messages(self.post(self.future, follow=True))
@@ -241,7 +247,15 @@ class RetryBySprintTests(SprintGenerationFixture):
         message = page_messages(self.post(self.ended, follow=True))
         self.assertIn("Generated 1 of 2 summaries for Team Alpha for Sprint 1", message)
         self.assertIn("Grace Example", message)
-        self.assertNotIn("Flags weren't updated", message)
+        self.assertIn("Flags weren't updated", message)
+        self.compute_flags.assert_not_called()
+
+    def test_retrying_until_every_student_succeeds_recomputes_flags(self):
+        self.fail_for(self.grace)
+        self.post(self.ended)
+        self.generate.side_effect = self.save_summary
+        self.client.post(retry_url(self.team.id))
+        self.compute_flags.assert_called_once_with(self.team)
 
     def test_the_sprint_is_remembered_for_the_retry(self):
         self.fail_for(self.grace)

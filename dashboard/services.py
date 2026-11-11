@@ -7,7 +7,7 @@ from fractions import Fraction
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, transaction
-from django.db.models import Case, Count, Exists, F, Max, OuterRef, Prefetch, Q, Value, When
+from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -53,7 +53,7 @@ def _withdrawn():
             team=OuterRef("team"),
             student=OuterRef("user"),
             rule=OuterRef("rule"),
-            week_start=OuterRef("week_start"),
+            sprint=OuterRef("sprint"),
             status=FlagDispute.Status.FLAG_WITHDRAWN,
         )
     )
@@ -64,6 +64,33 @@ def active_flags():
     return Flag.objects.filter(~_withdrawn())
 
 
+TEAM_FLAG_PREFETCH = [
+    "memberships",
+    "summaries__sprint",
+    "summaries__validation_runs",
+    Prefetch("flags", queryset=active_flags(), to_attr="active_flags"),
+]
+
+
+def team_severity(team):
+    """"flag" or "warning", the worst active flag in the team's latest flaggable sprint, or
+    None. Only that sprint labels a team, so an earlier sprint's flags don't. Prefetch
+    TEAM_FLAG_PREFETCH when labelling many teams."""
+    sprint = flags.latest_flaggable_sprint(team)
+    if sprint is None:
+        return None
+    if hasattr(team, "active_flags"):
+        severities = {f.severity for f in team.active_flags if f.sprint_id == sprint.id}
+    else:
+        severities = set(
+            active_flags().filter(team=team, sprint=sprint).values_list("severity", flat=True)
+        )
+    for severity in [Flag.Severity.FLAG, Flag.Severity.WARNING]:
+        if severity in severities:
+            return severity
+    return None
+
+
 def flags_in_display_order():
     """Every flag, each with `is_withdrawn`. "flag" sorts before "warning", so flags come first."""
     return Flag.objects.annotate(is_withdrawn=_withdrawn()).order_by("severity", "id")
@@ -71,12 +98,12 @@ def flags_in_display_order():
 
 def dispute_for(flag):
     """The student's dispute of this flag, or None. Flags are replaced on every run, so this
-    matches on what a recomputed flag keeps: team, student, rule and week, not wording or
+    matches on what a recomputed flag keeps: team, student, rule and sprint, not wording or
     severity. A flag about the whole team has no student, so it has no dispute."""
     if flag.user_id is None:
         return None
     return FlagDispute.objects.filter(
-        team_id=flag.team_id, student_id=flag.user_id, rule=flag.rule, week_start=flag.week_start
+        team_id=flag.team_id, student_id=flag.user_id, rule=flag.rule, sprint_id=flag.sprint_id
     ).first()
 
 
@@ -88,10 +115,10 @@ def add_disputes(memberships):
     no queries.
     """
     for membership in memberships:
-        # Each student's flags and disputes are already this team's, so rule and week match them.
-        disputes = {(d.rule, d.week_start): d for d in membership.user.team_disputes}
+        # Each student's flags and disputes are already this team's, so rule and sprint match them.
+        disputes = {(d.rule, d.sprint_id): d for d in membership.user.team_disputes}
         for flag in membership.user.team_flags:
-            flag.dispute = disputes.pop((flag.rule, flag.week_start), None)
+            flag.dispute = disputes.pop((flag.rule, flag.sprint_id), None)
         membership.unraised_disputes = list(disputes.values())
     return memberships
 
@@ -147,7 +174,7 @@ class DisputePage:
 
     team: Team
     rule: str
-    week_start: date
+    sprint: Sprint
     flag: Flag | None
     dispute: FlagDispute | None
 
@@ -175,34 +202,27 @@ class DisputePage:
         )
 
 
-def get_dispute_page(user, team_id, rule, week):
-    """The user's flag and dispute for this team, rule and week (an ISO date). These survive
-    compute_flags, unlike Flag.pk, so the page keeps working while flags are regenerated.
+def get_dispute_page(user, team_id, rule, sprint_id):
+    """The user's flag and dispute for this team, rule and sprint. These survive compute_flags,
+    unlike Flag.pk, so the page keeps working while flags are regenerated.
 
     403 unless the user is on the team, in a course they're a student in, and the flag is
     about them. 404 if there's no such flag, or it's no longer raised and its dispute is still
     open (#108 hides those). A decided dispute stays readable after its flag is gone.
     """
-    try:
-        week_start = date.fromisoformat(week)
-    except ValueError:
-        raise Http404
     team = get_team_for_student(user, team_id)
     if not is_course_student(user, team.project.course):
         raise PermissionDenied
-    flag = (
-        flags_in_display_order()
-        .filter(team=team, user=user, rule=rule, week_start=week_start)
-        .first()
-    )
+    sprint = get_object_or_404(Sprint, pk=sprint_id, project=team.project)
+    flag = flags_in_display_order().filter(team=team, user=user, rule=rule, sprint=sprint).first()
     dispute = FlagDispute.objects.filter(
-        team=team, student=user, rule=rule, week_start=week_start
+        team=team, student=user, rule=rule, sprint=sprint
     ).select_related("resolved_by").first()
     if flag is None and (dispute is None or dispute.status == FlagDispute.Status.OPEN):
-        if Flag.objects.filter(team=team, rule=rule, week_start=week_start).exists():
+        if Flag.objects.filter(team=team, rule=rule, sprint=sprint).exists():
             raise PermissionDenied  # A teammate's flag, or one about the whole team.
         raise Http404
-    return DisputePage(team, rule, week_start, flag, dispute)
+    return DisputePage(team, rule, sprint, flag, dispute)
 
 
 def submit_dispute(flag, explanation):
@@ -233,7 +253,7 @@ def submit_dispute(flag, explanation):
                     team_id=flag.team_id,
                     student_id=flag.user_id,
                     rule=flag.rule,
-                    week_start=flag.week_start,
+                    sprint_id=flag.sprint_id,
                     flag_reason=flag.reason,
                     severity=flag.severity,
                     explanation=explanation,
@@ -280,13 +300,10 @@ def course_cards(user):
         course = enrollment.course
         teams = Team.objects.filter(project__course=course)
         course.role_label = enrollment.get_role_display()
-        course.team_count = teams.count()
-        course.flagged_count = teams.filter(_has_flag(Flag.Severity.FLAG)).count()
-        course.warned_count = (
-            teams.filter(_has_flag(Flag.Severity.WARNING))
-            .exclude(_has_flag(Flag.Severity.FLAG))
-            .count()
-        )
+        severities = [team_severity(team) for team in teams.prefetch_related(*TEAM_FLAG_PREFETCH)]
+        course.team_count = len(severities)
+        course.flagged_count = severities.count(Flag.Severity.FLAG)
+        course.warned_count = severities.count(Flag.Severity.WARNING)
         courses.append(course)
     return courses
 
@@ -345,13 +362,20 @@ def student_home_courses(user):
         )
         .order_by("team__project__course__name", "team__project__name", "team__name")
     )
-    my_flags = flags_in_display_order().filter(user=user).order_by("-week_start", "severity", "id")
+    my_flags = (
+        flags_in_display_order()
+        .filter(user=user)
+        .select_related("sprint")
+        .order_by("-sprint__start_date", "severity", "id")
+    )
     flags_by_team = {}
     for flag in my_flags:
         flags_by_team.setdefault(flag.team_id, []).append(flag)
     disputes = {
-        (d.team_id, d.rule, d.week_start): d
-        for d in FlagDispute.objects.filter(student=user).order_by("-week_start", "id")
+        (d.team_id, d.rule, d.sprint_id): d
+        for d in FlagDispute.objects.filter(student=user)
+        .select_related("sprint")
+        .order_by("-sprint__start_date", "id")
     }
 
     courses = {}
@@ -361,7 +385,7 @@ def student_home_courses(user):
         ]
         membership.my_flags = flags_by_team.get(membership.team_id, [])
         for flag in membership.my_flags:
-            flag.dispute = disputes.pop((flag.team_id, flag.rule, flag.week_start), None)
+            flag.dispute = disputes.pop((flag.team_id, flag.rule, flag.sprint_id), None)
         # Whatever is left for this team matched no current flag. Dicts keep insertion order.
         membership.unraised_disputes = [
             dispute for (team_id, _, _), dispute in disputes.items()
@@ -562,15 +586,30 @@ def team_status(team):
     """'flag' or 'warning' for a flagged team, 'ok' for one that has a complete summary and no
     flags, 'in_progress' for one with only partial summaries, and 'none' for one nothing has
     been generated for yet."""
-    severities = set(active_flags().filter(team=team).values_list("severity", flat=True))
-    if Flag.Severity.FLAG in severities:
-        return "flag"
-    if Flag.Severity.WARNING in severities:
-        return "warning"
+    severity = team_severity(team)
+    if severity is not None:
+        return severity
     summaries = list(team.summaries.prefetch_related("validation_runs"))
     if not summaries:
         return "none"
     return "in_progress" if all(summary.is_partial for summary in summaries) else "ok"
+
+
+def team_sprint_status(team, sprint, in_progress_through):
+    """The team page's tag for the sprint shown: 'flag' or 'warning' for its worst active flag,
+    'ok' for a sprint that can raise flags and raised none, 'in_progress' for one whose
+    summaries are partial, otherwise 'none'. Unlike team_status, it's about this sprint only."""
+    if sprint is None:
+        return "none"
+    severities = set(
+        active_flags().filter(team=team, sprint=sprint).values_list("severity", flat=True)
+    )
+    for severity in [Flag.Severity.FLAG, Flag.Severity.WARNING]:
+        if severity in severities:
+            return severity
+    if sprint in flags.flaggable_sprints(team):
+        return "ok"
+    return "in_progress" if in_progress_through else "none"
 
 
 def team_repos(team):
@@ -592,16 +631,77 @@ def remove_student(membership):
         flags.compute_flags(membership.team)
 
 
-def team_wide_flags(team):
-    """The team's flags that aren't about one student."""
-    return flags_in_display_order().filter(team=team, user=None)
+def team_wide_flags(team, sprint):
+    """The team's flags in this sprint that aren't about one student."""
+    return flags_in_display_order().filter(team=team, sprint=sprint, user=None)
 
 
-def team_memberships_with_summaries(team):
+def team_page_sprints(project, now=None):
+    """The sprints in the team page's menu: those that have started, newest first."""
+    return started_sprints(project, now)[::-1]
+
+
+def team_page_sprint(team, sprints, value, now=None):
+    """The sprint the team page shows, from `sprints` (team_page_sprints): the one whose ID is
+    `value`, or else the latest sprint the team has a summary for, or else the project's
+    default_sprint. None if no sprint has started."""
+    chosen = parse_id(value)
+    for sprint in sprints:
+        if sprint.id == chosen:
+            return sprint
+    latest = (
+        team.summaries.filter(sprint__isnull=False)
+        .select_related("sprint")
+        .order_by("-sprint__start_date", "-sprint__end_date")
+        .first()
+    )
+    if latest is not None:
+        return latest.sprint
+    return default_sprint(team.project, now)
+
+
+def summary_covered_through(summary):
+    """The last day a sprint summary covers: the day it was generated, or its sprint's last day
+    if it was generated after the sprint ended."""
+    generated_on = summary.generated_at.astimezone(ingest_services.REPORTING_TIME_ZONE).date()
+    return summary.sprint.covered_through(generated_on)
+
+
+def add_sprint_summaries(memberships, sprint):
+    """Give each membership `sprint_summary`, its student's summary for the sprint or None,
+    with `covered_through` set when it's partial. Return the earliest day any partial one covers
+    through, for labelling the sprint in progress, or None if none is partial.
+
+    Uses the `team_summaries` from team_memberships_with_summaries, so it runs no queries.
+    """
+    earliest = None
+    for membership in memberships:
+        membership.sprint_summary = None
+        if sprint is None:
+            continue
+        for summary in membership.user.team_summaries:
+            if summary.sprint_id == sprint.id:
+                membership.sprint_summary = summary
+                summary.covered_through = None
+                if summary.is_partial:
+                    summary.covered_through = summary_covered_through(summary)
+                    if earliest is None or summary.covered_through < earliest:
+                        earliest = summary.covered_through
+    return earliest
+
+
+def team_memberships_with_summaries(team, sprint=None):
     """The team's memberships, each user with this team's `team_summaries`, newest first,
     `team_flags` about them, their `team_disputes`, `team_contributions` and the
     `team_corroborations` they gave. Each membership has `confirmations_of_their_work`, how
-    many times teammates confirmed the student's contributions on this team."""
+    many times teammates confirmed the student's contributions on this team.
+
+    With a `sprint`, `team_flags` and `team_disputes` are only that sprint's."""
+    team_flags = flags_in_display_order().filter(team=team)
+    team_disputes = FlagDispute.objects.filter(team=team)
+    if sprint is not None:
+        team_flags = team_flags.filter(sprint=sprint)
+        team_disputes = team_disputes.filter(sprint=sprint)
     summaries = (
         Summary.objects.filter(team=team)
         .annotate(claim_count=Count("claims", filter=Q(claims__status=Claim.Status.VERIFIED)))
@@ -622,14 +722,13 @@ def team_memberships_with_summaries(team):
             Prefetch("user__summaries", queryset=summaries, to_attr="team_summaries"),
             Prefetch(
                 "user__flags",
-                queryset=flags_in_display_order().filter(team=team),
+                queryset=team_flags.select_related("sprint"),
                 to_attr="team_flags",
             ),
             Prefetch(
                 "user__flag_disputes",
-                queryset=FlagDispute.objects.filter(team=team)
-                .select_related("resolved_by")
-                .order_by("week_start", "id"),
+                queryset=team_disputes.select_related("resolved_by", "sprint")
+                .order_by("sprint__start_date", "id"),
                 to_attr="team_disputes",
             ),
             Prefetch(
@@ -695,15 +794,15 @@ def _pie_colours(severities):
     return colours
 
 
-def add_contribution_shares(team, memberships):
+def add_contribution_shares(team, memberships, sprint):
     """Give each of the team's memberships `contribution_share`, the student's whole-percent
-    share of the team's requirement-tied work, and return the memberships and the week the
-    shares are for.
+    share of the team's requirement-tied work in the sprint, and return the memberships.
 
     It's the share the low-share flag rule uses, rounded the same way as flag reasons, but it
-    includes a partial week, which the rule skips. So each membership also gets `chart_flag`,
-    its worst flag if it's about the week being shown, otherwise None. Before there's anything
-    to compare, the week and every share are None.
+    includes a partial sprint, which the rule skips. So each membership also gets `chart_flag`,
+    its worst flag if it's about this sprint, otherwise None. Every share is None until every
+    student has a summary for the sprint, partial or not, and there's requirement-tied work to
+    compare. Uses the `team_summaries` from team_memberships_with_summaries.
 
     Each membership also gets `pie_order`, its place in the chart and legend (largest share
     first), and `pie`, the slice to draw for a student with a share above 0%, otherwise None.
@@ -711,14 +810,18 @@ def add_contribution_shares(team, memberships):
     sized from the exact shares, so they always fill the circle.
     """
     memberships = list(memberships)
-    shares = flags.requirement_shares(team, include_partial=True)
-    week, shares = shares if shares is not None else (None, {})
+    shares = None
+    if sprint is not None and every_student_has_summary(memberships, sprint):
+        shares = flags.sprint_shares(team, sprint)
+    shares = shares or {}
     for membership in memberships:
         share = shares.get(membership.user_id)
-        about_this_week = [
-            f for f in membership.user.team_flags if f.week_start == week and not f.is_withdrawn
+        about_this_sprint = [
+            f
+            for f in membership.user.team_flags
+            if sprint is not None and f.sprint_id == sprint.id and not f.is_withdrawn
         ]
-        membership.chart_flag = about_this_week[0] if about_this_week else None
+        membership.chart_flag = about_this_sprint[0] if about_this_sprint else None
         membership.contribution_share = None if share is None else round(share * 100)
         membership.pie_order = None
         membership.pie = None
@@ -741,16 +844,16 @@ def add_contribution_shares(team, memberships):
             "path": _slice_path(start, end),
         }
         start = end
-    return memberships, week
+    return memberships
 
 
-def share_week_note(team, week):
-    """Why the shares for this week may change: "in progress", "partial", or "" if complete."""
-    summaries = team.summaries.filter(week_start=week).prefetch_related("validation_runs")
-    partial = [summary for summary in summaries if summary.is_partial]
-    if not partial:
-        return ""
-    return "in progress" if partial[0].week_is_running else "partial"
+def every_student_has_summary(memberships, sprint):
+    """True if every membership's student has a summary for the sprint, partial or not, so
+    their shares can be compared. Uses the `team_summaries` from team_memberships_with_summaries."""
+    return bool(memberships) and all(
+        any(summary.sprint_id == sprint.id for summary in membership.user.team_summaries)
+        for membership in memberships
+    )
 
 
 def pie_legend(memberships):
@@ -758,11 +861,6 @@ def pie_legend(memberships):
     return sorted(
         (m for m in memberships if m.pie_order is not None), key=lambda m: m.pie_order
     )
-
-
-def _has_flag(severity):
-    """True for a team with at least one active flag of this severity, inside a Team query."""
-    return Exists(active_flags().filter(team=OuterRef("pk"), severity=severity))
 
 
 def _has_open_dispute():
@@ -777,14 +875,18 @@ def _has_open_dispute():
     )
 
 
+FLAG_RANKS = {Flag.Severity.FLAG: 0, Flag.Severity.WARNING: 1}
+
+
 def course_projects_with_teams(course):
     """The course's projects, each with its requirements by number, and its teams and their
     students.
 
-    Within a project, flagged teams come first, then warned teams, then teams with an open
-    dispute, then the rest, each group sorted by name. Each team's `flag_rank` is 0 if it has
-    a flag, 1 if its worst is a warning, 2 if it has an open dispute but no flags, and 3
-    otherwise. Withdrawn flags don't count. Each team also gets `has_open_dispute`.
+    Each project's `ranked_teams` has flagged teams first, then warned teams, then teams with
+    an open dispute, then the rest, each group sorted by name. Each team's `flag_rank` is 0 if
+    it has a flag, 1 if its worst is a warning, 2 if it has an open dispute but no flags, and 3
+    otherwise. Only the flags of the team's latest flaggable sprint count (see team_severity),
+    and withdrawn flags don't. Each team also gets `has_open_dispute`.
     """
     memberships = TeamMembership.objects.select_related("user").order_by(
         "user__last_name", "user__first_name", "user__github_login"
@@ -793,19 +895,14 @@ def course_projects_with_teams(course):
         Team.objects.annotate(
             latest_week=Max("summaries__week_start"),
             has_open_dispute=_has_open_dispute(),
-            flag_rank=Case(
-                When(_has_flag(Flag.Severity.FLAG), then=Value(0)),
-                When(_has_flag(Flag.Severity.WARNING), then=Value(1)),
-                When(_has_open_dispute(), then=Value(2)),
-                default=Value(3),
-            ),
         )
-        .order_by("flag_rank", "name")
+        .order_by("name")
         .prefetch_related(
             Prefetch("memberships", queryset=memberships),
             "repos",
             "summaries__validation_runs",
             "summaries__sprint",
+            Prefetch("flags", queryset=active_flags(), to_attr="active_flags"),
         )
     )
     projects = list(
@@ -821,6 +918,9 @@ def course_projects_with_teams(course):
         project.default_sprint = default_sprint(project)
         for team in project.teams.all():
             _add_summary_status(team)
+            team.flag_rank = FLAG_RANKS.get(team_severity(team), 2 if team.has_open_dispute else 3)
+        # Sorting is stable, so each rank stays in name order.
+        project.ranked_teams = sorted(project.teams.all(), key=lambda team: team.flag_rank)
     return projects
 
 
@@ -982,7 +1082,7 @@ class TeamGeneration:
                 message += (
                     f" This sprint is still in progress, so these summaries are partial: they cover "
                     f"activity up to {short_date(self.covered_through)}. Generate the sprint again "
-                    "after it ends."
+                    "after it ends to count it toward flags."
                 )
             return message
         done = self.attempted - len(self.failures)
@@ -991,7 +1091,7 @@ class TeamGeneration:
         )
         return (
             f"Generated {done} of {self.attempted} summaries for {self.team.name} for {period}. "
-            f"Couldn't generate: {failed}."
+            f"Couldn't generate: {failed}. Flags weren't updated."
         )
 
 
@@ -1057,9 +1157,9 @@ def _write_summaries(team, students, week_start):
 
 
 def _write_sprint_summaries(team, students, sprint):
-    """Write each student's summary of the sprint, carrying on past a failure.
-
-    Flags aren't recomputed: they are per sprint and only raised once it has ended (US-41).
+    """Write each student's summary of the sprint, carrying on past a failure, then recompute
+    flags only if none failed, as for a week. compute_flags only raises flags for a sprint that
+    has ended with every student's summary complete, so a running sprint raises none (US-41).
     """
     failures = []
     for student in students:
@@ -1069,6 +1169,8 @@ def _write_sprint_summaries(team, students, sprint):
             failures.append(SummaryFailure(student, str(error)))
         except Exception:
             failures.append(SummaryFailure(student, "an unexpected error"))
+    if not failures:
+        flags.compute_flags(team)
     covered = sprint.covered_through(reporting_today())
     return TeamGeneration(team, None, len(students), failures, sprint, covered)
 

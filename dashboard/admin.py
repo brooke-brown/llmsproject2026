@@ -11,7 +11,7 @@ class FlagAdmin(admin.ModelAdmin):
     delete, and refusing it would block those.
     """
 
-    list_display = ("team", "user", "rule", "severity", "week_start", "created_at")
+    list_display = ("team", "user", "rule", "severity", "sprint", "created_at")
     list_filter = ("severity", "rule")
 
     def has_add_permission(self, request):
@@ -26,7 +26,7 @@ class FlagDisputeAdmin(admin.ModelAdmin):
     """Students open disputes and instructors decide them on the dashboard, so this is for
     fixing one by hand. The flag's snapshot isn't editable, so it stays what was disputed."""
 
-    list_display = ("team", "student", "rule", "week_start", "severity", "status", "updated_at")
+    list_display = ("team", "student", "rule", "sprint", "severity", "status", "updated_at")
     list_filter = ("status", "severity", "rule")
     readonly_fields = ("flag_reason", "severity", "created_at", "updated_at")
 
