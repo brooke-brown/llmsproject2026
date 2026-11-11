@@ -71,8 +71,9 @@ def validate_sprint_claims(
     `last_day`, inclusive.
 
     `last_day` is the sprint's covered_through, so a running sprint stops at today. A chunk
-    passes its own first and last day. Requirement numbers are looked up in the sprint alone. If `allowed_artifact_ids` is given, a claim may cite
-    only those artifacts, as a merged claim may cite only the ones it was merged from.
+    passes its own first and last day. Requirement numbers are looked up in the sprint alone.
+    If `allowed_artifact_ids` is given, a claim may cite only those artifacts, as a merged
+    claim may cite only the ones it was merged from.
     """
     window = _DateRange(first_day or sprint.start_date, last_day, sprint.name)
     return _validate_all(

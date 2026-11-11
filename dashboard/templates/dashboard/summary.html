@@ -20,7 +20,7 @@
 {% if summary.sprint and summary.is_partial %}
 <p class="finding warning">{% if summary.week_is_running %}This sprint is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}. Flags only count a sprint once it has ended and every student's summary is complete.{% else %}This summary was generated before the sprint ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}. Generate the sprint again to cover all of it.{% endif %}</p>
 {% elif summary.is_partial %}
-<p class="finding warning">{% if summary.week_is_running %}This week is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}, and it doesn't count toward flags until the week is generated again after it ends.{% else %}This summary was generated before the week ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}. Generate this week again to cover the whole week and count it toward flags.{% endif %}</p>
+<p class="finding warning">{% if summary.week_is_running %}This week is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}.{% else %}This summary was generated before the week ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}.{% endif %} Weekly summaries can't be generated again and don't count toward flags, so generate a sprint that covers these dates instead.</p>
 {% endif %}
 
 {% if claims or unverified_count %}

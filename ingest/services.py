@@ -48,7 +48,8 @@ def ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]:
 
     The range runs from the start of week_start through the end of week_end, in the reporting
     time zone. The parameters keep the names they had when a report was always a week, but
-    any range works, and a sprint's report passes its first day and its last covered day. Commits come from every branch, and merge commits are skipped.
+    any range works, and a sprint's report passes its first day and its last covered day.
+    Commits come from every branch, and merge commits are skipped.
     Co-authors are matched against the students on the repo's team at the time of the run,
     on every stored commit, so a corrected login reaches commits from earlier dates too.
     A PR counts when it merged, or when it was created if unmerged. An issue counts when

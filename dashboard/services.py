@@ -1316,11 +1316,16 @@ def retry_failed_summaries(team, session):
     if the session has nothing to retry for this team.
 
     Ingest doesn't run again, so every student's summary for the sprint uses the same GitHub
-    data. Anyone who has left the team since is skipped. A retry remembered by an older
-    version, with no sprint, has nothing to retry.
+    data. Anyone who has left the team since is skipped. A retry remembered by the weekly
+    flow, with no sprint, has nothing to retry, so it's cleared.
     """
-    retry = session.get(RETRY_SESSION_KEY, {}).get(str(team.id))
-    if retry is None or "sprint_id" not in retry:
+    retries = session.get(RETRY_SESSION_KEY, {})
+    retry = retries.get(str(team.id))
+    if retry is None:
+        return None
+    if "sprint_id" not in retry:
+        retries.pop(str(team.id))
+        session[RETRY_SESSION_KEY] = retries
         return None
     students = _team_students(team, only_ids=retry["student_ids"])
     sprint = Sprint.objects.filter(pk=retry["sprint_id"], project_id=team.project_id).first()
@@ -1347,5 +1352,7 @@ def remember_retry(session, generation):
 
 
 def team_ids_to_retry(session):
-    """The IDs of the teams with failed summaries to retry in this session."""
-    return {int(team_id) for team_id in session.get(RETRY_SESSION_KEY, {})}
+    """The IDs of the teams with failed summaries to retry in this session. A retry remembered
+    by the weekly flow can't run, so it doesn't count."""
+    retries = session.get(RETRY_SESSION_KEY, {})
+    return {int(team_id) for team_id, retry in retries.items() if "sprint_id" in retry}

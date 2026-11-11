@@ -174,18 +174,20 @@ class LabelTests(InProgressFixture):
 
         self.assertContains(response, "This week is still in progress")
         self.assertContains(response, "Nov 4")
-        self.assertContains(response, "doesn't count toward flags until")
+        # The weekly flow is gone (T-21), so the page mustn't offer to generate the week again.
+        self.assertContains(response, "Weekly summaries can't be generated again")
+        self.assertNotContains(response, "Generate this week again")
         self.assertNotContains(response, "or shares")
 
-    def test_summary_page_says_to_generate_a_stale_one_again(self):
+    def test_summary_page_says_a_stale_one_cant_be_generated_again(self):
         summary = self.generated(self.ada, WEDNESDAY)
         self.set_clock(NEXT_TUESDAY)
 
         response = self.summary_page(summary)
 
         self.assertContains(response, "before the week ended")
-        self.assertContains(response, "Generate this week again")
-        self.assertContains(response, "count it toward flags.")
+        self.assertContains(response, "Weekly summaries can't be generated again")
+        self.assertNotContains(response, "Generate this week again")
         self.assertNotContains(response, "still in progress")
 
     def test_summary_page_says_nothing_for_a_complete_summary(self):

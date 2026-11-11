@@ -1,5 +1,7 @@
 """Tests for T-21 (#125): the dashboard generates by sprint only."""
 
+from django.urls import reverse
+
 from dashboard import services
 
 from .test_generate_summary import generate_url, page_messages, retry_url
@@ -33,12 +35,31 @@ class WeeklyGenerationIsGoneTests(SprintGenerationFixture):
             self.assertFalse(hasattr(services, name), name)
         self.assertTrue(callable(services.generate_team_sprint_summaries))
 
-    def test_a_retry_remembered_from_a_weekly_run_has_nothing_to_retry(self):
+    def remember_weekly_retry(self):
         session = self.client.session
-        session["failed_summaries"] = {
+        session[services.RETRY_SESSION_KEY] = {
             str(self.team.id): {"week_start": "2026-10-26", "student_ids": [self.grace.id]}
         }
         session.save()
+
+    def test_a_retry_remembered_from_a_weekly_run_has_nothing_to_retry(self):
+        self.remember_weekly_retry()
         response = self.client.post(retry_url(self.team.id), follow=True)
         self.assertIn("has no failed summaries to retry", page_messages(response))
         self.generate.assert_not_called()
+
+    def test_retrying_it_clears_it_from_the_session(self):
+        self.remember_weekly_retry()
+        self.client.post(retry_url(self.team.id))
+        self.assertNotIn(
+            str(self.team.id), self.client.session.get(services.RETRY_SESSION_KEY, {})
+        )
+
+    def test_the_overview_never_offers_to_retry_it(self):
+        # It can't run, so no Retry button, and no "Incomplete" tag hiding the sprint's status.
+        self.remember_weekly_retry()
+        page = self.client.get(
+            reverse("dashboard:course_overview", args=[self.course.id])
+        ).content.decode()
+        self.assertNotIn(reverse("dashboard:retry_failed_summaries", args=[self.team.id]), page)
+        self.assertNotIn("Incomplete", page)
