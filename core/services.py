@@ -349,13 +349,22 @@ def _set_password_as(instructor: User | None, student: User, password: str) -> N
 def _refuse_unclaimed_account(student: User) -> None:
     """Raise ProjectSetupError for an account with a password that no course vouches for.
     Staff accounts pass, since the dashboard never sets their passwords."""
+    if _is_unclaimed_account(student, lambda: student.enrollments.exists()):
+        raise ProjectSetupError(_unclaimed_account_message(student))
+
+
+def _is_unclaimed_account(student: User, is_enrolled) -> bool:
+    """Whether `add_student` refuses this account. `is_enrolled()` says if any course has it."""
     if student.is_staff or student.is_superuser:
-        return
-    if student.has_usable_password() and not student.enrollments.exists():
-        raise ProjectSetupError(
-            f"{student.github_login} already has an account with a password and isn't enrolled "
-            "in any course, so they weren't added. Enroll them in this course in the admin first."
-        )
+        return False
+    return student.has_usable_password() and not is_enrolled()
+
+
+def _unclaimed_account_message(student: User) -> str:
+    return (
+        f"{student.github_login} already has an account with a password and isn't enrolled "
+        "in any course, so they weren't added. Enroll them in this course in the admin first."
+    )
 
 
 def _refuse_unless_student_only(student: User) -> None:
@@ -738,6 +747,7 @@ class _ExistingAccounts:
     usernames: set[str]  # Lowercase usernames.
     roles: dict[int, str]  # User ID -> role in this course.
     teams: dict[int, str]  # User ID -> name of their team in this project.
+    enrolled: set[int]  # IDs of the matched users enrolled in any course.
 
 
 def read_team_csv(data: bytes) -> str:
@@ -974,14 +984,17 @@ def _existing_accounts(project: Project, logins: list[str]) -> _ExistingAccounts
     wanted = {login.strip().lower() for login in logins if GITHUB_LOGIN.fullmatch(login.strip())}
     users: dict[str, User] = {}
     usernames: set[str] = set()
+    enrolled: set[int] = set()
     for batch in batched(wanted, ACCOUNT_LOOKUP_BATCH):
-        matches = User.objects.annotate(login_key=Lower("github_login")).filter(login_key__in=batch)
+        matches = list(User.objects.annotate(login_key=Lower("github_login")).filter(login_key__in=batch))
         users.update((user.login_key, user) for user in matches)
+        enrollments = Enrollment.objects.filter(user__in=[user.pk for user in matches])
+        enrolled.update(enrollments.values_list("user_id", flat=True))
         taken = User.objects.annotate(name_key=Lower("username")).filter(name_key__in=batch)
         usernames.update(taken.values_list("name_key", flat=True))
     roles = dict(Enrollment.objects.filter(course=project.course_id).values_list("user_id", "role"))
     teams = dict(TeamMembership.objects.filter(team__project=project).values_list("user_id", "team__name"))
-    return _ExistingAccounts(users, usernames, roles, teams)
+    return _ExistingAccounts(users, usernames, roles, teams, enrolled)
 
 
 def _student_problem(accounts: _ExistingAccounts, student: PlannedStudent, team: PlannedTeam, seen_logins) -> str:
@@ -1001,6 +1014,9 @@ def _student_problem(accounts: _ExistingAccounts, student: PlannedStudent, team:
         student.status = "new"
         return ""
 
+    # Confirming would refuse it in add_student, so the preview says so on this row.
+    if _is_unclaimed_account(user, lambda: user.pk in accounts.enrolled):
+        return _unclaimed_account_message(user)
     role = accounts.roles.get(user.pk)
     if role and role != Enrollment.Role.STUDENT:
         role_name = "an instructor" if role == Enrollment.Role.INSTRUCTOR else "a TA"
