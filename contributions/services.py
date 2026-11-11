@@ -31,13 +31,15 @@ def get_team_for_project_student(user, project_id) -> Team:
     """The user's team in the project. 404 if the project doesn't exist, 403 unless they're
     a student in its course and on one of its teams."""
     project = get_object_or_404(Project.objects.select_related("course"), pk=project_id)
-    team = (
-        Team.objects.select_related("project")
-        .filter(project=project, memberships__user=user)
-        .first()
-    )
+    return get_student_team(user, project)
+
+
+def get_student_team(user, project) -> Team:
+    """As `get_team_for_project_student`, for a project already loaded with its course."""
+    team = Team.objects.filter(project=project, memberships__user=user).first()
     if team is None or not is_course_student(user, project.course):
         raise PermissionDenied
+    team.project = project
     return team
 
 

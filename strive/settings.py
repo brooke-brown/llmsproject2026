@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'dashboard',
     'summaries',
     'contributions',
+    'peereval',
 ]
 
 MIDDLEWARE = [

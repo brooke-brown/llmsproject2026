@@ -14,6 +14,9 @@ from contributions.models import Contribution
 from core import services as setup
 from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
 from core.models import Sprint
+from peereval import services as peereval_services
+from peereval.models import PeerRating
+from peereval.questions import QUESTIONS
 from summaries.models import Summary
 
 from . import services
@@ -100,10 +103,14 @@ def course_overview(request, course_id):
         "dashboard/course_overview.html",
         {
             "course": course,
-            "projects": services.course_projects_with_teams(course),
+            "projects": services.course_projects_with_teams(
+                course, services.parse_ids(request.GET.getlist("sprint"))
+            ),
             "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),
+            # The overview's forms return here, keeping the sprints chosen in its menus.
+            "next": request.get_full_path(),
         },
     )
 
@@ -132,6 +139,7 @@ def team(request, team_id):
     offline = contributions.contributions_by_student(team)
     for membership in memberships:
         membership.offline_contributions = offline.get(membership.user_id, [])
+    peer_rating_count = services.add_peer_rating_counts(team, memberships)
     has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
         request,
@@ -149,9 +157,10 @@ def team(request, team_id):
             ),
             "team_flags": services.team_wide_flags(team, sprint),
             "memberships": memberships,
+            "peer_rating_count": peer_rating_count,
             "legend": services.pie_legend(memberships),
             "team_status": (
-                services.team_sprint_status(team, sprint, in_progress_through)
+                services.team_sprint_status(team, sprint)
                 if has_sprints
                 else services.team_status(team)
             ),
@@ -174,16 +183,23 @@ def _redirect_back(request, default):
     return default
 
 
+def _back_to_overview(request, team):
+    """Return to the course overview the form came from, keeping its chosen sprints."""
+    return _redirect_back(
+        request, redirect("dashboard:course_overview", course_id=team.project.course_id)
+    )
+
+
 def _show_refusal(request, team, error):
     """Say why nothing ran. The overview lists every team, so the message says which one."""
     messages.error(request, f"{team.name}: {error}")
-    return redirect("dashboard:course_overview", course_id=team.project.course_id)
+    return _back_to_overview(request, team)
 
 
 def _show_generation(request, generation):
     """Keep how the run went for the course overview, and go there."""
     services.save_run_result(request.session, generation)
-    return redirect("dashboard:course_overview", course_id=generation.team.project.course_id)
+    return _back_to_overview(request, generation.team)
 
 
 @login_required
@@ -213,7 +229,7 @@ def retry_failed_summaries(request, team_id):
         return _show_refusal(request, team, error)
     if generation is None:
         messages.info(request, f"{team.name} has no failed summaries to retry.")
-        return redirect("dashboard:course_overview", course_id=team.project.course_id)
+        return _back_to_overview(request, team)
     return _show_generation(request, generation)
 
 
@@ -291,6 +307,10 @@ def project_setup(request, project_id):
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
             "contribution_count": Contribution.objects.filter(team__project=project).count(),
+            "peer_evaluations": peereval_services.project_evaluations(project),
+            "open_peer_evaluation": peereval_services.open_evaluation(project),
+            "peer_questions": QUESTIONS,
+            "peer_rating_count": PeerRating.objects.filter(evaluation__project=project).count(),
             "editing": request.GET.get("edit") == "1",
         },
     )

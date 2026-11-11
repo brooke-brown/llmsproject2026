@@ -30,6 +30,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
 | `contributions/` | `Contribution` and `Corroboration` models: offline work students report and teammates confirm. Never evidence for a claim, passed to the LLM or counted toward flags |
+| `peereval/` | `PeerEvaluation` and `PeerRating` models, and the questions as a constant in `questions.py`. Only instructors and TAs see ratings; never passed to the LLM or counted toward flags |
 
 ## Shared contracts: do not change without team agreement
 
@@ -73,6 +74,8 @@ Course                     e.g. "CS 3240, Fall 2026"
  └── Project               optional requirements PDF or pasted text → Requirement rows
       ├── Sprint           name, start and end date; a project has zero or more
       │    └── Requirement numbered per sprint; also keeps `project` until T-21
+      ├── PeerEvaluation   a named round of ratings, such as "Midpoint", with a closing time
+      │    └── PeerRating  one rater's 1–5 scores for one teammate, by question key; never shown to students
       └── Team             exists only inside this project
            ├── TeamMembership   User ↔ Team (students)
            ├── Repo             the team's GitHub repo
@@ -125,13 +128,16 @@ Each item is a GitHub issue. Read the issue before starting; it has the acceptan
 - Two sprints can overlap only by one sprint's last day being the next one's first day, and can never start on the same day.
 - Each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today and is labelled in progress.
 - A covered range is split into 7-day chunks, with a leftover of 3 days or fewer joining the previous chunk, so up to 10 days is one chunk. Every student on a team is chunked the same way. Several chunks go through an LLM merge pass and the validator again, and users only ever see the one report.
-- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint; the course overview is labelled from the team's latest one. Weekly summaries no longer raise flags.
+- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint. Weekly summaries no longer raise flags.
+- Built (US-46, #136): each project on the course overview has a sprint menu (`?sprint=<id>`, repeated once per project), defaulting to the latest sprint that has ended. Teams are labelled and ordered by that sprint's flags, then open disputes from any sprint (the tag names an earlier one), and each team link carries the sprint to the team page. The overview and team page share one sprint tag (`team_sprint_status`), and the course picker counts flags in the sprint the overview opens on.
 - Built (US-42, #124): the team page has a sprint menu (`?sprint=<id>`), defaulting to the latest sprint the team has a summary for. Its tag, flags, disputes, shares, pie and summary links are all for that sprint. Shares appear once every student has a summary for it, partial or not; a partial one is labelled "in progress, through <date>", and a missing one "Not generated".
 
 **Setup at scale:** CSV import of teams and students (#126, built: instructors upload on the project's edit page, preview, then confirm), and generating temporary passwords in bulk (#127, built: the project's edit page downloads a CSV once, never stored).
 
 **Student side:** student logins (#102, #106: built, with instructors setting temporary passwords on the team page), the student home (#107), flag disputes (#108, #109, with the `FlagDispute` model already built), offline contributions (#104, #110–#112) and peer evaluations (#105, #113–#115). Built so far:
 - Disputes (US-32): instructors see disputes on the team page and keep or withdraw the flag. A withdrawn flag no longer counts toward a team being flagged; teams with an open dispute sort right after flagged ones.
+- Opening a peer evaluation (US-36): instructors open, re-time, close and delete evaluations in the Peer evaluations panel on "Edit project". One per project can be open at a time; it's open while now is before `closes_at`, and one with ratings can't be deleted. Logic is in `peereval/services.py`.
+- Rating teammates (US-37): the student home links to a project's open evaluation, where a student rates each teammate (never themselves) on every question, with an optional comment, and can change a rating until it closes. Students never see any scores or comments, including their own once it closes. `save_rating` checks `closes_at` under the evaluation's row lock.
 - Disputing a flag (US-31): students dispute a flag about them from the student home, and edit the dispute until it's decided. The page is at `teams/<id>/flags/<rule>/<sprint_id>/dispute/`, never `Flag.pk`, because `compute_flags` replaces flags on every run. A decided dispute stays readable after its flag is no longer raised; an open one is hidden.
 
 **Later, with no issues yet:** polished per-requirement progress view, numeric diff checks, GitHub OAuth login, consent, background jobs, "paired with" detection.
