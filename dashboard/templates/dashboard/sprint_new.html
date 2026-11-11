@@ -1,0 +1,18 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}New sprint · STRIVE{% endblock %}
+
+{% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' project.course_id %}">{{ project.course.name }}</a> / <a href="{% url 'dashboard:project_setup' project.id %}">{{ project.name }}</a> / New sprint</span>{% endblock %}
+
+{% block content %}
+<div class="headrow"><h1>New sprint</h1></div>
+<form class="narrow" action="{% url 'dashboard:sprint_create' project.id %}" method="post">
+  {% csrf_token %}
+  {% include "dashboard/_sprint_fields.html" %}
+  <p class="form-actions">
+    <button type="submit" class="primary">Create sprint</button>
+    <a href="{% url 'dashboard:project_setup' project.id %}">Cancel</a>
+  </p>
+</form>
+<p class="keynote">Dates are inclusive and can start on any day. A sprint can start on the day the previous one ends, but two sprints can't start on the same day. Next you can add the sprint's requirements.</p>
+{% endblock %}

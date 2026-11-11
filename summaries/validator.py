@@ -26,6 +26,7 @@ ARTIFACT_NOT_FOUND = "artifact_not_found"
 OUTSIDE_WEEK = "outside_week"
 NOT_CONTRIBUTOR = "not_contributor"
 UNKNOWN_REQUIREMENT = "unknown_requirement"
+NOT_IN_SOURCE = "not_in_source"
 
 _ARTIFACT_ID_RE = re.compile(ARTIFACT_ID_PATTERN)
 
@@ -72,36 +73,79 @@ def validate_claims(claims, user, team, week_start: date) -> list[ClaimResult]:
     if week_start.weekday() != MONDAY:
         raise ValueError(f"The reporting week must start on a Monday, not {week_start.isoformat()}.")
     week = _Week(week_start)
-    login = user.github_login.lower()
-    # Looked up once for the whole list, from the team's project.
-    requirement_numbers = set(
-        Requirement.objects.filter(project=team.project_id).values_list("number", flat=True)
+    requirements = Requirement.objects.filter(project=team.project_id)
+    return _validate_all(claims, user, team, week, requirements)
+
+
+def validate_sprint_claims(
+    claims, user, team, sprint, last_day: date, *, first_day: date | None = None,
+    allowed_artifact_ids=None,
+) -> list[ClaimResult]:
+    """Check each claim against a sprint: `first_day` (default `sprint.start_date`) through
+    `last_day`, inclusive.
+
+    `last_day` is the sprint's covered_through, so a running sprint stops at today. A chunk
+    passes its own first and last day. It needn't start on a Monday, and requirement numbers
+    are looked up in the sprint alone. If `allowed_artifact_ids` is given, a claim may cite
+    only those artifacts, as a merged claim may cite only the ones it was merged from.
+    """
+    window = _Week(first_day or sprint.start_date, last_day, sprint_name=sprint.name)
+    return _validate_all(
+        claims, user, team, window, Requirement.objects.filter(sprint=sprint),
+        allowed_artifact_ids,
     )
+
+
+def _validate_all(claims, user, team, week, requirements, allowed_artifact_ids=None):
+    login = user.github_login.lower()
+    # Looked up once for the whole list.
+    requirement_numbers = set(requirements.values_list("number", flat=True))
     return [
-        ClaimResult(index, _validate_claim(index, claim, team, login, week, requirement_numbers))
+        ClaimResult(
+            index,
+            _validate_claim(
+                index, claim, team, login, week, requirement_numbers, allowed_artifact_ids
+            ),
+        )
         for index, claim in enumerate(claims)
     ]
 
 
 class _Week:
-    """Monday 00:00 to the next Monday 00:00 in New York, so Sunday night is included."""
+    """The first day at 00:00 to the day after the last at 00:00 in New York, so the last
+    night is included. A reporting week is Monday-Sunday; a sprint's range is any days.
 
-    def __init__(self, week_start: date):
-        self.first_day = week_start
-        self.last_day = week_start + timedelta(days=6)
-        self.start = datetime.combine(week_start, time.min, tzinfo=REPORTING_TIME_ZONE)
+    `sprint_name` words the errors for a sprint, since they go back to the LLM: its dates and
+    requirements are the sprint's, not a reporting week's or the project's."""
+
+    def __init__(self, first_day: date, last_day: date | None = None, sprint_name: str | None = None):
+        self.first_day = first_day
+        self.last_day = last_day or first_day + timedelta(days=6)
+        self.sprint_name = sprint_name
+        self.start = datetime.combine(first_day, time.min, tzinfo=REPORTING_TIME_ZONE)
         self.end = datetime.combine(
-            week_start + timedelta(days=7), time.min, tzinfo=REPORTING_TIME_ZONE
+            self.last_day + timedelta(days=1), time.min, tzinfo=REPORTING_TIME_ZONE
         )
 
     def contains(self, moment: datetime) -> bool:
         return self.start <= moment < self.end
 
+    def describe(self) -> str:
+        dates = f"{self.first_day.isoformat()} to {self.last_day.isoformat()}"
+        if self.sprint_name:
+            return f"{self.sprint_name} ({dates})"
+        return f"the reporting week {dates}"
 
-def _validate_claim(index, claim, team, login, week, requirement_numbers):
+    def unknown_requirement(self, number) -> str:
+        if self.sprint_name:
+            return f"Requirement {number} isn't one of {self.sprint_name}'s requirements."
+        return f"Requirement {number} doesn't exist in this project."
+
+
+def _validate_claim(index, claim, team, login, week, requirement_numbers, allowed=None):
     errors = []
     for artifact_id in claim.artifact_ids:
-        errors.extend(_validate_citation(index, artifact_id, team, login, week))
+        errors.extend(_validate_citation(index, artifact_id, team, login, week, allowed))
     # Each unknown number once, even if the claim repeats it.
     for number in dict.fromkeys(claim.requirement_ids):
         if number not in requirement_numbers:
@@ -110,14 +154,14 @@ def _validate_claim(index, claim, team, login, week, requirement_numbers):
                     index,
                     "",
                     UNKNOWN_REQUIREMENT,
-                    f"Requirement {number} doesn't exist in this project.",
+                    week.unknown_requirement(number),
                     requirement_id=number,
                 )
             )
     return errors
 
 
-def _validate_citation(index, artifact_id, team, login, week):
+def _validate_citation(index, artifact_id, team, login, week, allowed=None):
     def error(check, message):
         return ClaimError(index, artifact_id, check, message)
 
@@ -130,13 +174,19 @@ def _validate_citation(index, artifact_id, team, login, week):
         return [error(ARTIFACT_NOT_FOUND, f"{artifact_id} isn't in any of this team's repos.")]
 
     errors = []
+    if allowed is not None and artifact_id not in allowed:
+        errors.append(
+            error(
+                NOT_IN_SOURCE,
+                f"{artifact_id} isn't cited by any of the claims being merged, so it can't be cited here.",
+            )
+        )
     when = artifact.timestamp.astimezone(REPORTING_TIME_ZONE)
     if not week.contains(when):
         errors.append(
             error(
                 OUTSIDE_WEEK,
-                f"{artifact_id} is dated {when.date().isoformat()}, outside the reporting "
-                f"week {week.first_day.isoformat()} to {week.last_day.isoformat()}.",
+                f"{artifact_id} is dated {when.date().isoformat()}, outside {week.describe()}.",
             )
         )
     credited = {artifact.author_login.lower(), *(c.lower() for c in artifact.co_author_logins)}

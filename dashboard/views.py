@@ -1,15 +1,18 @@
 from django.contrib import messages
+from django.db.models import Count
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordChangeView, RedirectURLMixin
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from contributions.models import Contribution
 from core import services as setup
-from core.forms import ChangePasswordForm, RequirementImportForm
+from core.forms import ChangePasswordForm, RequirementImportForm, SprintForm
+from core.models import Sprint
 from summaries.models import Summary
 
 from . import services
@@ -40,6 +43,38 @@ def student_home(request):
     )
 
 
+@login_required
+@require_http_methods(["GET", "POST"])
+def flag_dispute(request, team_id, rule, sprint_id):
+    page = services.get_dispute_page(request.user, team_id, rule, sprint_id)
+    explanation = page.dispute.explanation if page.dispute else ""
+    error = ""
+    if request.method == "POST":
+        explanation = request.POST.get("explanation", "")
+        try:
+            _, created = services.submit_dispute(page.flag, explanation)
+        except services.DisputeError as refusal:
+            # Rendered here rather than redirected, so what was typed is still there.
+            error = str(refusal)
+        else:
+            if created:
+                messages.success(request, "Your dispute was sent to your instructor.")
+            else:
+                messages.success(request, "Your dispute was updated.")
+            return redirect("dashboard:student_home")
+    return render(
+        request,
+        "dashboard/flag_dispute.html",
+        {
+            "page": page,
+            "dispute": page.dispute,
+            "explanation": explanation,
+            "error": error,
+            "limit": services.DISPUTE_EXPLANATION_LIMIT,
+        },
+    )
+
+
 class ChangePasswordView(RedirectURLMixin, PasswordChangeView):
     # Not Django's default name: the admin ships a template with that name, and it comes first.
     template_name = "dashboard/password_change.html"
@@ -65,8 +100,6 @@ def course_overview(request, course_id):
         {
             "course": course,
             "projects": services.course_projects_with_teams(course),
-            "default_week_start": services.last_completed_week_start(),
-            "current_week_start": services.current_week_start(),
             "generating_team_ids": services.generating_team_ids(course),
             "retry_team_ids": services.team_ids_to_retry(request.session),
             "can_set_up": services.is_course_instructor(request.user, course),
@@ -78,28 +111,46 @@ def course_overview(request, course_id):
 @require_GET
 def course_generating_status(request, course_id):
     course = services.get_course_for_staff(request.user, course_id)
-    return JsonResponse({"team_ids": services.generating_team_ids(course)})
+    runs = services.active_generation_runs(course=course)
+    progress = {
+        team_id: render_to_string("dashboard/_generation_progress.html", {"run": run})
+        for team_id, run in runs.items()
+    }
+    return JsonResponse({"team_ids": sorted(runs), "progress": progress})
 
 
 @login_required
 def team(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
-    memberships, share_week = services.add_contribution_shares(
-        team, services.team_memberships_with_summaries(team)
-    )
+    sprints = services.team_page_sprints(team.project)
+    sprint = services.team_page_sprint(team, sprints, request.GET.get("sprint"))
+    memberships = list(services.team_memberships_with_summaries(team, sprint))
+    in_progress_through = services.add_sprint_summaries(memberships, sprint)
+    memberships = services.add_contribution_shares(team, memberships, sprint)
     services.add_disputes(memberships)
+    has_sprints = bool(sprints) or team.project.sprints.exists()
     return render(
         request,
         "dashboard/team.html",
         {
+            "generation_run": services.active_generation_runs(team_ids=[team.id]).get(team.id),
             "team": team,
             "repos": services.team_repos(team),
-            "team_flags": services.team_wide_flags(team),
+            "has_sprints": has_sprints,
+            "sprints": sprints,
+            "sprint": sprint,
+            "in_progress_through": in_progress_through,
+            "every_student_has_summary": (
+                sprint is not None and services.every_student_has_summary(memberships, sprint)
+            ),
+            "team_flags": services.team_wide_flags(team, sprint),
             "memberships": memberships,
             "legend": services.pie_legend(memberships),
-            "share_week": share_week,
-            "share_week_note": services.share_week_note(team, share_week) if share_week else "",
-            "team_status": services.team_status(team),
+            "team_status": (
+                services.team_sprint_status(team, sprint, in_progress_through)
+                if has_sprints
+                else services.team_status(team)
+            ),
             "equal_share": round(100 / len(memberships)) if memberships else None,
             "can_set_up": services.is_course_instructor(request.user, team.project.course),
             "editing": request.GET.get("edit") == "1",
@@ -136,8 +187,13 @@ def _show_generation(request, generation):
 def generate_team_summaries(request, team_id):
     team = services.get_team_for_staff(request.user, team_id)
     try:
-        week_start = services.parse_week_start(request.POST.get("week_start"))
-        generation = services.generate_team_summaries(team, week_start)
+        if "sprint" in request.POST:
+            sprint = services.parse_sprint(team, request.POST["sprint"])
+            generation = services.generate_team_sprint_summaries(team, sprint)
+        else:
+            # The weekly flow, kept until T-21 (#125) removes it.
+            week_start = services.parse_week_start(request.POST.get("week_start"))
+            generation = services.generate_team_summaries(team, week_start)
     except services.GenerationError as error:
         return _show_refusal(request, team, error)
     return _show_generation(request, generation)
@@ -176,12 +232,14 @@ def dispute_decide(request, dispute_id):
 def summary(request, summary_id):
     summary = services.get_summary_for_staff(request.user, summary_id)
     claims = services.verified_claims(summary)
+    period_start, period_end = services.summary_period(summary)
     return render(
         request,
         "dashboard/summary.html",
         {
             "summary": summary,
-            "week_end": services.week_end(summary.week_start),
+            "period_start": period_start,
+            "period_end": period_end,
             "claims": claims,
             "tied_count": sum(1 for claim in claims if claim.requirement_ids),
             "unverified_count": summary.unverified_count,
@@ -216,6 +274,9 @@ def project_setup(request, project_id):
         {
             "project": project,
             "teams": services.project_setup_teams(project),
+            "sprints": project.sprints.annotate(requirement_count=Count("requirements")).order_by(
+                "start_date", "end_date"
+            ),
             "requirement_count": project.requirements.count(),
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
@@ -293,13 +354,20 @@ def requirements_import(request, project_id):
     return _render_requirements(request, project, form)
 
 
-def _change_requirement(request, project_id, change, *args):
+def _requirements_page(requirement):
+    """Where to go after changing a requirement: its sprint's page, or the project's."""
+    if requirement.sprint_id is not None:
+        return redirect("dashboard:sprint", sprint_id=requirement.sprint_id)
+    return redirect("dashboard:project_requirements", project_id=requirement.project_id)
+
+
+def _change_requirement(request, destination, change, *args):
     """Run a change, say if it was refused, and return to the requirements page."""
     try:
         change(*args)
     except setup.ProjectSetupError as error:
         messages.error(request, str(error))
-    return redirect("dashboard:project_requirements", project_id=project_id)
+    return destination
 
 
 @login_required
@@ -307,7 +375,8 @@ def _change_requirement(request, project_id, change, *args):
 def requirement_add(request, project_id):
     project = services.get_project_for_instructor(request.user, project_id)
     text = request.POST.get("text", "")
-    return _change_requirement(request, project.id, setup.add_requirement, project, text)
+    destination = redirect("dashboard:project_requirements", project_id=project.id)
+    return _change_requirement(request, destination, setup.add_requirement, project, text)
 
 
 @login_required
@@ -316,7 +385,7 @@ def requirement_edit(request, requirement_id):
     requirement = services.get_requirement_for_instructor(request.user, requirement_id)
     text = request.POST.get("text", "")
     return _change_requirement(
-        request, requirement.project_id, setup.edit_requirement, requirement, text
+        request, _requirements_page(requirement), setup.edit_requirement, requirement, text
     )
 
 
@@ -325,7 +394,7 @@ def requirement_edit(request, requirement_id):
 def requirement_delete(request, requirement_id):
     requirement = services.get_requirement_for_instructor(request.user, requirement_id)
     return _change_requirement(
-        request, requirement.project_id, setup.delete_requirement, requirement
+        request, _requirements_page(requirement), setup.delete_requirement, requirement
     )
 
 
@@ -456,3 +525,242 @@ def repo_remove(request, repo_id):
     repo = services.get_repo_for_instructor(request.user, repo_id)
     success = f"Removed {repo.full_name}."
     return _change_team(request, repo.team_id, success, setup.remove_repo, repo)
+
+
+def _render_sprint(request, sprint, import_form=None, edit_form=None):
+    locked = sprint.summaries.exists()
+    editing = edit_form is not None or request.GET.get("edit") == "1"
+    has_requirements = sprint.requirements.exists()
+    copy_sources = []
+    if not has_requirements:
+        copy_sources = list(
+            sprint.project.sprints.exclude(pk=sprint.pk)
+            .annotate(requirement_count=Count("requirements"))
+            .filter(requirement_count__gt=0)
+            .order_by("start_date")
+        )
+    return render(
+        request,
+        "dashboard/sprint.html",
+        {
+            "sprint": sprint,
+            "project": sprint.project,
+            "requirements": sprint.requirements.order_by("number"),
+            "editing_requirement_id": services.parse_id(request.GET.get("edit_requirement")),
+            "import_form": import_form or RequirementImportForm(),
+            "editing": editing,
+            "edit_form": edit_form
+            or (SprintForm(instance=sprint, project=sprint.project, dates_locked=locked) if editing else None),
+            "dates_locked": locked,
+            "copy_sources": copy_sources,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def sprint_create(request, project_id):
+    project = services.get_project_for_instructor(request.user, project_id)
+    if request.method == "POST":
+        form = SprintForm(request.POST, project=project)
+        if form.is_valid():
+            sprint = form.save()
+            messages.success(request, f"Added {sprint.name}.")
+            return redirect("dashboard:sprint", sprint_id=sprint.id)
+    else:
+        start, end = setup.default_sprint_dates(project)
+        form = SprintForm(project=project, initial={"start_date": start, "end_date": end})
+    return render(request, "dashboard/sprint_new.html", {"project": project, "form": form})
+
+
+@login_required
+def sprint(request, sprint_id):
+    return _render_sprint(request, services.get_sprint_for_instructor(request.user, sprint_id))
+
+
+@login_required
+@require_POST
+def sprint_edit(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    # The form edits a fresh copy, so a rejected edit doesn't change the name the page shows.
+    form = SprintForm(
+        request.POST,
+        instance=Sprint.objects.get(pk=sprint.pk),
+        project=sprint.project,
+        dates_locked=sprint.summaries.exists(),
+    )
+    if form.is_valid():
+        form.save()
+        messages.success(request, "Saved the sprint.")
+        return redirect("dashboard:sprint", sprint_id=sprint.id)
+    return _render_sprint(request, sprint, edit_form=form)
+
+
+@login_required
+@require_POST
+def sprint_delete(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    setup.delete_sprint(sprint)
+    messages.success(request, f"Deleted {sprint.name}.")
+    return redirect("dashboard:project_setup", project_id=sprint.project_id)
+
+
+@login_required
+@require_POST
+def sprint_requirements_import(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    if sprint.requirements.exists():
+        messages.error(request, setup.SPRINT_ALREADY_HAS_REQUIREMENTS)
+        return redirect("dashboard:sprint", sprint_id=sprint.id)
+    form = RequirementImportForm(request.POST, request.FILES)
+    if form.is_valid():
+        try:
+            requirements = setup.import_sprint_requirements(sprint, form.cleaned_data["text"])
+        except setup.RequirementImportError as error:
+            messages.error(request, str(error))
+        else:
+            count = len(requirements)
+            messages.success(
+                request, f"Imported {count} {ngettext('requirement', 'requirements', count)}."
+            )
+            return redirect("dashboard:sprint", sprint_id=sprint.id)
+    return _render_sprint(request, sprint, import_form=form)
+
+
+@login_required
+@require_POST
+def sprint_requirement_add(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    destination = redirect("dashboard:sprint", sprint_id=sprint.id)
+    return _change_requirement(
+        request, destination, setup.add_sprint_requirement, sprint, request.POST.get("text", "")
+    )
+
+
+@login_required
+@require_POST
+def sprint_requirements_copy(request, sprint_id):
+    sprint = services.get_sprint_for_instructor(request.user, sprint_id)
+    destination = redirect("dashboard:sprint", sprint_id=sprint.id)
+    source = Sprint.objects.filter(
+        pk=services.parse_id(request.POST.get("source")), project_id=sprint.project_id
+    ).first()
+    if source is None:
+        messages.error(request, "Choose a sprint from this project.")
+        return destination
+    try:
+        copied = setup.copy_sprint_requirements(source, sprint)
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+    else:
+        count = len(copied)
+        noun = ngettext("requirement", "requirements", count)
+        messages.success(request, f"Copied {count} {noun} from {source.name}.")
+    return destination
+
+
+def _render_team_import(request, project, error=""):
+    return render(request, "dashboard/team_import.html", {"project": project, "error": error})
+
+
+def _render_team_import_preview(request, project, text, plan):
+    return render(
+        request,
+        "dashboard/team_import_preview.html",
+        {
+            "project": project,
+            "csv": text,
+            "plan": plan,
+            "checked_repos": setup.sign_checked_repos(plan.checked_repos),
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def team_import(request, project_id):
+    """Upload a CSV and preview what importing it would do. Nothing is saved."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if request.method == "GET":
+        return _render_team_import(request, project)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return _render_team_import(request, project, "Choose a CSV file to upload.")
+    try:
+        # One byte past the limit is enough to tell the file is too big, without reading it all.
+        text = setup.read_team_csv(upload.read(setup.MAX_TEAM_CSV_BYTES + 1))
+        plan = setup.plan_team_import(project, text)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    return _render_team_import_preview(request, project, text, plan)
+
+
+@login_required
+@require_GET
+def team_import_template(request, project_id):
+    services.get_project_for_instructor(request.user, project_id)
+    response = HttpResponse(setup.TEAM_CSV_TEMPLATE, content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="strive-teams-template.csv"'
+    return response
+
+
+@login_required
+@require_POST
+def team_import_confirm(request, project_id):
+    """Recheck the CSV carried from the preview, then import it all or none of it."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    text = request.POST.get("csv", "")
+    try:
+        checked = setup.read_checked_repos(request.POST.get("checked_repos", ""))
+        plan = setup.plan_team_import(project, text, checked)
+        if not plan.ok:
+            return _render_team_import_preview(request, project, text, plan)
+        if plan.nothing_to_add:
+            messages.info(
+                request, "Nothing was imported: everything in this file is already in the project."
+            )
+            return redirect("dashboard:project_setup", project_id=project.id)
+        result = setup.run_team_import(project, plan)
+    except setup.TeamImportError as error:
+        return _render_team_import(request, project, str(error))
+    messages.success(
+        request,
+        f"Added {result.teams} {ngettext('team', 'teams', result.teams)}, "
+        f"{result.students} {ngettext('student', 'students', result.students)} and "
+        f"{result.repos} {ngettext('repo', 'repos', result.repos)}.",
+    )
+    return redirect("dashboard:project_setup", project_id=project.id)
+
+
+@login_required
+@require_GET
+def passwords(request, project_id):
+    """Say how many students would get a temporary password. Nothing is changed here."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    return render(
+        request,
+        "dashboard/passwords.html",
+        {"project": project, "plan": setup.plan_temporary_passwords(project, request.user)},
+    )
+
+
+@login_required
+@require_POST
+def passwords_generate(request, project_id):
+    """Generate the passwords and send them back once, as a download that isn't cached."""
+    project = services.get_project_for_instructor(request.user, project_id)
+    if not setup.plan_temporary_passwords(project, request.user).count:
+        messages.info(request, "No students need a temporary password.")
+        return redirect("dashboard:passwords", project_id=project.id)
+    try:
+        rows = setup.generate_temporary_passwords(project, request.user)
+    except setup.ProjectSetupError as error:
+        messages.error(request, str(error))
+        return redirect("dashboard:passwords", project_id=project.id)
+    response = HttpResponse(
+        setup.temporary_passwords_csv(rows), content_type="text/csv; charset=utf-8"
+    )
+    response["Content-Disposition"] = 'attachment; filename="strive-temporary-passwords.csv"'
+    # The only copy of these passwords, so no browser or proxy should keep one.
+    response["Cache-Control"] = "no-store"
+    return response

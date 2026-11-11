@@ -1,6 +1,6 @@
 {% extends "dashboard/base.html" %}
 
-{% block title %}{{ summary.user.display_name }}, week of {{ summary.week_start|date:"M j, Y" }} · STRIVE{% endblock %}
+{% block title %}{{ summary.user.display_name }}, {% if summary.sprint %}{{ summary.sprint.name }}{% else %}week of {{ summary.week_start|date:"M j, Y" }}{% endif %} · STRIVE{% endblock %}
 
 {% block crumb %}<span class="crumb"><a href="{% url 'dashboard:course_overview' summary.team.project.course_id %}">{{ summary.team.project.course.name }}</a> · {{ summary.team.project.name }} › <a href="{% url 'dashboard:team' summary.team.id %}">{{ summary.team.name }}</a> › {{ summary.user.display_name }}</span>{% endblock %}
 
@@ -10,14 +10,16 @@
     <h1>{{ summary.user.display_name }}</h1>
     {% if summary.user.get_full_name %}<code>{{ summary.user.github_login }}</code>{% endif %}
   </div>
-  <ul class="pills" aria-label="Weeks">
+  <ul class="pills" aria-label="Periods">
     {% for week in weeks %}
-    <li><a href="{% url 'dashboard:summary' week.id %}"{% if week.id == summary.id %} aria-current="page">{{ summary.week_start|date:"M j, Y" }} – {{ week_end|date:"M j, Y" }}{% else %}>{{ week.week_start|date:"M j" }}{% endif %}{% if week.is_partial %} · {% if week.week_is_running %}in progress{% else %}partial{% endif %}{% endif %}</a></li>
+    <li><a href="{% url 'dashboard:summary' week.id %}"{% if week.id == summary.id %} aria-current="page">{% if summary.sprint %}{{ summary.sprint.name }} · {% endif %}{{ period_start|date:"M j, Y" }} – {{ period_end|date:"M j, Y" }}{% else %}>{% if week.sprint %}{{ week.sprint.name }}{% else %}{{ week.week_start|date:"M j" }}{% endif %}{% endif %}{% if week.is_partial %} · {% if week.week_is_running %}in progress{% else %}partial{% endif %}{% endif %}</a></li>
     {% endfor %}
   </ul>
 </div>
 
-{% if summary.is_partial %}
+{% if summary.sprint and summary.is_partial %}
+<p class="finding warning">{% if summary.week_is_running %}This sprint is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}. Flags only count a sprint once it has ended and every student's summary is complete.{% else %}This summary was generated before the sprint ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}. Generate the sprint again to cover all of it.{% endif %}</p>
+{% elif summary.is_partial %}
 <p class="finding warning">{% if summary.week_is_running %}This week is still in progress. This summary covers activity up to {{ summary.generated_at|date:"M j" }}, and it doesn't count toward flags until the week is generated again after it ends.{% else %}This summary was generated before the week ended, so it only covers activity up to {{ summary.generated_at|date:"M j" }}. Generate this week again to cover the whole week and count it toward flags.{% endif %}</p>
 {% endif %}
 
@@ -62,9 +64,9 @@
 </article>
 {% empty %}
   {% if not summary.artifact_count %}
-  <div class="stat empty">No activity that week.</div>
+  <div class="stat empty">No activity {% if summary.sprint %}in this sprint{% else %}that week{% endif %}. Check that the team's repo and the student's GitHub username are right.</div>
   {% elif not unverified_count %}
-  <div class="stat empty">No claims were made for this week.</div>
+  <div class="stat empty">No claims were made for this {% if summary.sprint %}sprint{% else %}week{% endif %}.</div>
   {% endif %}
 {% endfor %}
 {% endblock %}

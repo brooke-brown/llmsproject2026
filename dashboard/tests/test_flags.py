@@ -20,9 +20,10 @@ from django.db.migrations.loader import MigrationLoader
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
-from core.models import Course, Project, Team
+from core.models import Course, Project, Team, TeamMembership
 
-WEEK_START = date(2026, 10, 26)  # A Monday.
+from .sprint_helpers import flaggable_sprint, sprint_for
+
 
 
 def flag_model():
@@ -47,14 +48,24 @@ def make_team(name="Sample Team A"):
     return Team.objects.create(project=project, name=name)
 
 
+def make_flaggable_team(name="Sample Team A"):
+    """A team with a student and a finished sprint they have a complete summary for, so
+    compute_flags runs its rules for that sprint."""
+    team = make_team(name)
+    TeamMembership.objects.create(user=make_user(f"sample-{name.split()[-1].lower()}"), team=team)
+    flaggable_sprint(team)
+    return team
+
+
 def make_flag(team, save=True, **fields):
     values = {
         "rule": "sample-rule",
-        "reason": "sample-student-a has 2 of the team's 30 points this week.",
+        "reason": "sample-student-a has 2 of the team's 30 points in Sprint 1.",
         "severity": "flag",
-        "week_start": WEEK_START,
         **fields,
     }
+    if "sprint" not in values:
+        values["sprint"] = sprint_for(team.project)
     flag = flag_model()(team=team, **values)
     if save:
         flag.save()
@@ -64,8 +75,8 @@ def make_flag(team, save=True, **fields):
 def rule_raising(*flag_fields):
     """A stand-in rule that raises one unsaved flag per dict of fields."""
 
-    def rule(team):
-        return [make_flag(team, save=False, **fields) for fields in flag_fields]
+    def rule(team, sprint):
+        return [make_flag(team, save=False, sprint=sprint, **fields) for fields in flag_fields]
 
     return rule
 
@@ -80,9 +91,9 @@ class FlagModelTests(TestCase):
         self.assertEqual(flag.team, team)
         self.assertEqual(flag.user, user)
         self.assertEqual(flag.rule, "low-share-week")
-        self.assertEqual(flag.reason, "sample-student-a has 2 of the team's 30 points this week.")
+        self.assertEqual(flag.reason, "sample-student-a has 2 of the team's 30 points in Sprint 1.")
         self.assertEqual(flag.severity, "warning")
-        self.assertEqual(flag.week_start, WEEK_START)
+        self.assertEqual(flag.sprint, sprint_for(team.project))
         self.assertIsNotNone(flag.created_at)
 
     def test_team_reaches_its_flags_as_flags(self):
@@ -108,11 +119,19 @@ class FlagModelTests(TestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             make_flag(team, severity="critical")
 
-    def test_week_start_is_required(self):
+    def test_sprint_is_required(self):
         team = make_team()
 
         with self.assertRaises(IntegrityError), transaction.atomic():
-            make_flag(team, week_start=None)
+            make_flag(team, sprint=None)
+
+    def test_deleting_a_sprint_deletes_its_flags(self):
+        team = make_team()
+        make_flag(team)
+
+        sprint_for(team.project).delete()
+
+        self.assertFalse(flag_model().objects.exists())
 
     def test_rule_must_be_a_slug(self):
         flag = make_flag(make_team(), save=False, rule="Low share!")
@@ -144,7 +163,7 @@ class ComputeFlagsTests(TestCase):
         self.assertFalse(team.flags.exists())
 
     def test_saves_and_returns_the_flags_rules_raise(self):
-        team, user = make_team(), make_user()
+        team, user = make_flaggable_team(), make_user()
 
         with patch("dashboard.flags.RULES", [rule_raising({"user": user})]):
             flags = compute_flags(team)
@@ -153,21 +172,31 @@ class ComputeFlagsTests(TestCase):
         self.assertIsNotNone(flags[0].pk)
         self.assertEqual(list(team.flags.all()), flags)
 
-    def test_rules_are_run_for_the_given_team(self):
-        team = make_team()
+    def test_rules_are_run_for_the_given_team_and_each_flaggable_sprint(self):
+        team = make_flaggable_team()
         seen = []
 
-        def rule(team):
-            seen.append(team)
+        def rule(team, sprint):
+            seen.append((team, sprint))
             return []
 
         with patch("dashboard.flags.RULES", [rule]):
             compute_flags(team)
 
-        self.assertEqual(seen, [team])
+        self.assertEqual(seen, [(team, sprint_for(team.project))])
+
+    def test_rules_dont_run_without_a_flaggable_sprint(self):
+        team = make_team()
+        sprint_for(team.project)
+        seen = []
+
+        with patch("dashboard.flags.RULES", [lambda team, sprint: seen.append(sprint) or []]):
+            compute_flags(team)
+
+        self.assertEqual(seen, [])
 
     def test_recomputing_replaces_earlier_flags(self):
-        team = make_team()
+        team = make_flaggable_team()
 
         with patch("dashboard.flags.RULES", [rule_raising({})]):
             compute_flags(team)
@@ -193,10 +222,10 @@ class ComputeFlagsTests(TestCase):
         self.assertEqual(list(other_team.flags.all()), [other_flag])
 
     def test_a_failing_rule_keeps_the_earlier_flags(self):
-        team = make_team()
+        team = make_flaggable_team()
         earlier = make_flag(team)
 
-        def broken_rule(team):
+        def broken_rule(team, sprint):
             raise RuntimeError("rule failed")
 
         with patch("dashboard.flags.RULES", [broken_rule]), self.assertRaises(RuntimeError):

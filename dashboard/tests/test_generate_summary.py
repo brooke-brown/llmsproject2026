@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from django.test import TestCase
 from django.urls import NoReverseMatch, reverse
 
-from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
+from core.models import Course, Enrollment, Project, Repo, Requirement, Sprint, Team, TeamMembership
 from dashboard import services
 from dashboard.models import Flag
 from ingest import services as ingest_services
@@ -25,6 +25,7 @@ from summaries import schemas
 from summaries.llm import LLMError
 from summaries.models import Claim, Summary
 
+from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user, overview_url, team_url
 from .test_show_flags import article_containing
 
@@ -80,6 +81,10 @@ class TeamGenerationFixture(TestCase):
             TeamMembership.objects.create(user=student, team=cls.team)
 
         cls.empty_team = Team.objects.create(project=cls.project, name="Team Beta")
+        # The overview only offers the Generate summaries control once a sprint has started.
+        cls.sprint = Sprint.objects.create(
+            project=cls.project, name="Sprint 1", start_date=date(2026, 10, 19), end_date=date(2026, 11, 15)
+        )
 
     def setUp(self):
         clock = mock.patch("django.utils.timezone.now", return_value=NOW)
@@ -161,12 +166,6 @@ class GenerateButtonTests(TeamGenerationFixture):
         self.assertIn('method="post"', article)
         self.assertIn("csrfmiddlewaretoken", article)
         self.assertEqual(article.count(GENERATE_LABEL), 1)
-
-    def test_week_picker_defaults_to_the_most_recent_completed_week(self):
-        article = team_article(self.get_overview(), "Team Alpha")
-
-        self.assertEqual(article.count('name="week_start"'), 1)
-        self.assertIn(f'value="{LAST_WEEK.isoformat()}"', article)
 
     def test_the_team_page_has_no_generate_button(self):
         self.client.force_login(self.instructor)
@@ -778,7 +777,7 @@ class GenerateFlagTests(TeamGenerationFixture):
             rule="low-requirement-share",
             reason="Stale flag",
             severity=Flag.Severity.FLAG,
-            week_start=date(2026, 10, 19),
+            sprint=sprint_for(self.team.project),
         )
 
     def test_flags_are_recomputed_once_after_every_student_succeeds(self):
@@ -856,6 +855,10 @@ class OneClickEndToEndTests(TestCase):
         enroll(cls.instructor, cls.course, Role.INSTRUCTOR)
         cls.project = Project.objects.create(course=cls.course, name="Project One")
         Requirement.objects.create(project=cls.project, number=1, text="Sample requirement")
+        cls.sprint = sprint_for(cls.project)
+        Requirement.objects.create(
+            project=cls.project, sprint=cls.sprint, number=1, text="Sample requirement"
+        )
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         cls.repo = Repo.objects.create(
             team=cls.team, url="https://github.com/sample-org/app", full_name="sample-org/app"
@@ -910,7 +913,11 @@ class OneClickEndToEndTests(TestCase):
         self.assertFalse(summary.claims.exists())
 
     def test_one_click_flags_a_team_with_no_earlier_summaries(self):
-        response = self.click_generate()
+        # Flags follow sprints (US-41), so this generates the sprint that just ended.
+        self.client.force_login(self.instructor)
+        response = self.client.post(
+            generate_url(self.team.id), {"sprint": str(self.sprint.id)}, follow=True
+        )
 
         flag = Flag.objects.get(team=self.team)
         self.assertEqual(flag.user, self.grace)

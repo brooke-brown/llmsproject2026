@@ -1,5 +1,6 @@
 {% extends "dashboard/base.html" %}
 
+
 {% block title %}{{ course.name }} · STRIVE{% endblock %}
 
 {% block crumb %}<span class="crumb">{{ course.name }}</span>{% endblock %}
@@ -16,32 +17,39 @@
   </div>
   <div class="layout">
     <div>
-      {% if project.teams.all %}
+      {% if project.ranked_teams %}
       <h2>Teams</h2>
       <div class="cards">
-        {% for team in project.teams.all %}
+        {% for team in project.ranked_teams %}
         <article class="card{% if team.flag_rank == 0 %} flag{% elif team.flag_rank == 1 %} warn{% endif %}">
           <div class="row">
             <h3><a href="{% url 'dashboard:team' team.id %}"><strong>{{ team.name }}</strong></a></h3>
-            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
+            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week or team.latest_sprint %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
             {% if team.has_open_dispute %}<span class="tag dispute">Dispute open</span>{% endif %}
           </div>
           <ul class="people">
             {% for membership in team.memberships.all %}
             <li>{{ membership.user.display_name }}</li>
             {% empty %}
-            <li>No students on this team yet.</li>
+            <li>No students on this team yet. {% if can_set_up %}Open the team to add them.{% else %}An instructor needs to add them.{% endif %}</li>
             {% endfor %}
           </ul>
           {% if not team.repos.all %}<p class="missing">No repo yet.</p>{% endif %}
-          <div class="latest">{% if team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% if team.latest_week_note %} ({{ team.latest_week_note }}){% endif %}{% else %}No summaries yet{% endif %}</div>
+          <div class="latest">{% if team.latest_sprint %}Latest sprint: {{ team.latest_sprint.name }}{% if team.latest_sprint_note %} ({{ team.latest_sprint_note }}){% endif %}{% elif team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% if team.latest_week_note %} ({{ team.latest_week_note }}){% endif %}{% else %}No summaries yet{% endif %}</div>
+          {% if team.active_run %}<div data-progress-for="{{ team.id }}">{% include "dashboard/_generation_progress.html" with run=team.active_run %}</div>{% endif %}
           <div class="foot">
             <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post" class="generate-form">
               {% csrf_token %}
+              {% if project.started_sprints %}
               <fieldset role="group">
-                <input type="date" name="week_start" value="{{ default_week_start|date:'Y-m-d' }}" min="1970-01-05" step="7" max="{{ current_week_start|date:'Y-m-d' }}" aria-label="Week starting Monday" required>
+                <select name="sprint" aria-label="Sprint" required>
+                  {% for sprint in project.started_sprints %}<option value="{{ sprint.id }}"{% if sprint.id == project.default_sprint.id %} selected{% endif %}>{{ sprint.label }}</option>{% endfor %}
+                </select>
                 {% if team.id in generating_team_ids %}<button type="submit" disabled aria-busy="true">Generating…</button>{% else %}<button type="submit">Generate summaries</button>{% endif %}
               </fieldset>
+              {% else %}
+              <p class="keynote">No sprint has started yet, so there's nothing to generate.{% if can_set_up %} <a href="{% url 'dashboard:project_setup' project.id %}">Add a sprint</a>.{% endif %}</p>
+              {% endif %}
             </form>
             {% if team.id in retry_team_ids %}
             <form action="{% url 'dashboard:retry_failed_summaries' team.id %}" method="post" class="generate-form">
@@ -54,7 +62,7 @@
         {% endfor %}
       </div>
       {% else %}
-      <p>No teams in this project yet.</p>
+      <p>No teams in this project yet. {% if can_set_up %}Add one below.{% else %}An instructor needs to add teams.{% endif %}</p>
       {% endif %}
       {% if can_set_up %}
       {% include "dashboard/_add_team.html" %}
@@ -73,7 +81,7 @@
         </tbody>
       </table>
       {% else %}
-      <p>No requirements for this project yet.</p>
+      <p>No requirements for this project yet.{% if not can_set_up %} An instructor can add them.{% endif %}</p>
       {% endif %}
       {% if can_set_up %}
       <p class="rail-action"><a href="{% url 'dashboard:project_requirements' project.id %}">{% if project.requirements.all %}Edit requirements{% else %}Add requirements{% endif %}</a></p>
@@ -82,7 +90,7 @@
   </div>
 </section>
 {% empty %}
-<p>No projects in this course yet.</p>
+<p>No projects in this course yet. {% if can_set_up %}Create one with New project.{% else %}An instructor needs to create one.{% endif %}</p>
 {% endfor %}
 {% if generating_team_ids %}<div hidden data-generating-status="{% url 'dashboard:course_generating_status' course.id %}" data-team-ids="{{ generating_team_ids|join:',' }}"></div>{% endif %}
 <script>
@@ -97,7 +105,8 @@
     clicked.setAttribute("aria-busy", "true");
     clicked.textContent = "Generating…";
   });
-  // A run started earlier is still going, so reload when one of them finishes to show the result.
+  // A run started earlier is still going: update its progress in place, and reload when one of
+  // them finishes to show the result.
   var watcher = document.querySelector("[data-generating-status]");
   if (watcher) {
     var watched = watcher.dataset.teamIds.split(",").map(Number);
@@ -107,7 +116,11 @@
         .then(function (status) {
           if (status.error === "password_change_required") { location.reload(); return; }
           var finished = watched.some(function (id) { return status.team_ids.indexOf(id) === -1; });
-          if (finished) location.reload();
+          if (finished) { location.reload(); return; }
+          watched.forEach(function (id) {
+            var slot = document.querySelector('[data-progress-for="' + id + '"]');
+            if (slot && status.progress[id]) slot.innerHTML = status.progress[id];
+          });
         })
         .catch(function () {});  // Try again next time.
     }, 5000);

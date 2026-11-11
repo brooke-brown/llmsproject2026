@@ -1,6 +1,7 @@
 """Tests for generating the current week: its summaries are marked as partial. They count
 toward the contribution shares on the team page, which say so, but not toward flags until
-the week is generated again after it ends.
+the week is generated again after it ends. Flags and shares now follow sprints (US-41), so
+their in-progress tests are in test_sprint_flags.
 
 The clock is fixed at Wednesday Nov 4, 2026, noon in New York, so the current week starts
 Nov 2 and the most recent completed week starts Oct 26.
@@ -17,10 +18,9 @@ from django.urls import reverse
 from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
 from dashboard import flags
 from dashboard.models import Flag
-from summaries.models import Summary, ValidationRun
+from summaries.models import Claim, Summary, ValidationRun
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
-from .test_flag_rules import give
 from .test_generate_summary import generate_url, page_messages, team_article
 
 Role = Enrollment.Role
@@ -32,6 +32,19 @@ NEXT_TUESDAY = datetime(2026, 11, 10, 12, 0, tzinfo=NEW_YORK)
 CURRENT = date(2026, 11, 2)
 COMPLETED = date(2026, 10, 26)
 NEXT = date(2026, 11, 9)
+
+
+def give(student, team, *significances, week):
+    """Give the student a summary for the week, with one verified, requirement-tied claim per
+    significance."""
+    summary, _ = Summary.objects.get_or_create(team=team, user=student, week_start=week)
+    for significance in significances:
+        Claim.objects.create(
+            summary=summary, text=f"Sample {significance} work", category="feature",
+            artifact_ids=[], requirement_ids=[1], significance=significance,
+            status=Claim.Status.VERIFIED,
+        )
+    return summary
 
 
 def at(moment):
@@ -94,22 +107,6 @@ class PickingTheWeekTests(InProgressFixture):
         return self.client.post(
             generate_url(self.team.id), {"week_start": week.isoformat()}, follow=True
         )
-
-    def test_the_picker_allows_the_current_week_and_defaults_to_the_completed_one(self):
-        response = self.client.get(overview_url(self.course.id))
-
-        self.assertContains(response, f'value="{COMPLETED.isoformat()}"')
-        self.assertContains(response, f'max="{CURRENT.isoformat()}"')
-
-    def test_the_picker_only_allows_mondays(self):
-        """A step of 7 days from a Monday is what makes browsers treat other days as invalid."""
-        content = self.client.get(overview_url(self.course.id)).content.decode()
-
-        picker = re.search(r'<input type="date" name="week_start"[^>]*>', content).group(0)
-        self.assertIn('step="7"', picker)
-        anchor = date.fromisoformat(re.search(r'min="([\d-]+)"', picker).group(1))
-        self.assertEqual(anchor.weekday(), 0)
-        self.assertLess(anchor, COMPLETED)
 
     def test_a_submitted_non_monday_is_still_rejected(self):
         message = page_messages(self.post(date(2026, 11, 3)))
@@ -186,119 +183,6 @@ class IsPartialTests(InProgressFixture):
 
         self.assertEqual(Summary.objects.get(pk=summary.pk).generated_at, NEXT_TUESDAY)
 
-
-class FlagsAndSharesTests(InProgressFixture):
-    def give_completed_week(self):
-        """Ada did most of the completed week's work, so Grace gets a warning."""
-        self.generated(self.ada, WEDNESDAY, COMPLETED, "major")
-        self.generated(self.grace, WEDNESDAY, COMPLETED, "minor")
-
-    def test_the_flag_rule_skips_a_partial_week_but_the_chart_doesnt(self):
-        self.give_completed_week()
-        self.generated(self.ada, WEDNESDAY, CURRENT, "minor")
-        self.generated(self.grace, WEDNESDAY, CURRENT, "major")
-
-        self.assertEqual(flags.requirement_shares(self.team)[0], COMPLETED)
-        self.assertEqual(flags.requirement_shares(self.team, include_partial=True)[0], CURRENT)
-    def test_with_only_a_partial_week_there_are_shares_but_no_flags(self):
-        self.generated(self.ada, WEDNESDAY, CURRENT, "major")
-        self.generated(self.grace, WEDNESDAY, CURRENT, "minor")
-
-        self.assertIsNone(flags.requirement_shares(self.team))
-        self.assertEqual(flags.requirement_shares(self.team, include_partial=True)[0], CURRENT)
-        self.assertEqual(flags.compute_flags(self.team), [])
-    def test_a_partial_week_cant_raise_a_flag_or_clear_an_earlier_one(self):
-        self.give_completed_week()
-        flags.compute_flags(self.team)
-        before = list(Flag.objects.values_list("user_id", "week_start"))
-        self.assertEqual(before, [(self.grace.id, COMPLETED)])
-        self.generated(self.ada, WEDNESDAY, CURRENT, "minor")
-        self.generated(self.grace, WEDNESDAY, CURRENT, "major")
-
-        flags.compute_flags(self.team)
-
-        self.assertEqual(list(Flag.objects.values_list("user_id", "week_start")), before)
-
-    def test_it_doesnt_count_once_the_week_ends_until_generated_again(self):
-        self.give_completed_week()
-        ada = self.generated(self.ada, WEDNESDAY, CURRENT, "major")
-        grace = self.generated(self.grace, WEDNESDAY, CURRENT, "major")
-
-        with at(NEXT_TUESDAY):
-            self.assertEqual(flags.requirement_shares(self.team)[0], COMPLETED)
-            run_on(ada)
-            self.assertEqual(flags.requirement_shares(self.team)[0], COMPLETED)
-            run_on(grace)
-            self.assertEqual(flags.requirement_shares(self.team)[0], CURRENT)
-
-    def team_page_with_a_partial_week(self, ada="major", grace="minor"):
-        self.give_completed_week()
-        flags.compute_flags(self.team)
-        self.generated(self.ada, WEDNESDAY, CURRENT, ada)
-        self.generated(self.grace, WEDNESDAY, CURRENT, grace)
-        self.set_clock(WEDNESDAY)
-        return self.client.get(team_url(self.team.id))
-
-    def test_the_chart_shows_the_partial_week_and_says_so(self):
-        response = self.team_page_with_a_partial_week()
-
-        self.assertContains(response, "week of Nov 2 (in progress)")
-        self.assertContains(response, "flags don't use them")
-        self.assertEqual(response.context["share_week"], CURRENT)
-        shares = {m.user_id: m.contribution_share for m in response.context["memberships"]}
-        self.assertEqual(shares, {self.ada.id: 75, self.grace.id: 25})
-
-    def test_the_chart_says_partial_once_the_week_has_ended(self):
-        self.generated(self.ada, WEDNESDAY, CURRENT, "major")
-        self.generated(self.grace, WEDNESDAY, CURRENT, "minor")
-        self.set_clock(NEXT_TUESDAY)
-
-        response = self.client.get(team_url(self.team.id))
-
-        self.assertContains(response, "week of Nov 2 (partial)")
-
-    def test_a_complete_chart_has_no_note(self):
-        self.give_completed_week()
-        self.set_clock(WEDNESDAY)
-
-        response = self.client.get(team_url(self.team.id))
-
-        self.assertContains(response, "work, week of Oct 26</h2>")
-        self.assertNotContains(response, "flags don't use them")
-
-    def test_a_student_missing_from_the_partial_week_keeps_the_chart_on_a_full_week(self):
-        self.give_completed_week()
-        self.generated(self.ada, WEDNESDAY, CURRENT, "major")
-        self.set_clock(WEDNESDAY)
-
-        response = self.client.get(team_url(self.team.id))
-
-        self.assertEqual(response.context["share_week"], COMPLETED)
-
-    def test_a_flag_from_another_week_doesnt_mark_the_partial_chart(self):
-        """Grace's warning is about Oct 26, and she's at 75% in the week on the chart."""
-        response = self.team_page_with_a_partial_week(ada="minor", grace="major")
-
-        rows = {m.user_id: m for m in response.context["legend"]}
-        self.assertIsNone(rows[self.grace.id].chart_flag)
-        self.assertNotIn("var(--warn)", rows[self.grace.id].pie["color"])
-        self.assertNotIn("var(--flag)", rows[self.grace.id].pie["color"])
-
-    def test_that_flag_still_shows_on_the_students_card_naming_its_week(self):
-        response = self.team_page_with_a_partial_week(ada="minor", grace="major")
-
-        self.assertContains(response, "in the week of Oct 26")
-
-    def test_a_flag_for_the_week_on_the_chart_still_marks_it(self):
-        self.give_completed_week()
-        flags.compute_flags(self.team)
-        self.set_clock(WEDNESDAY)
-
-        response = self.client.get(team_url(self.team.id))
-
-        rows = {m.user_id: m for m in response.context["legend"]}
-        self.assertEqual(rows[self.grace.id].chart_flag.severity, Flag.Severity.WARNING)
-        self.assertEqual(rows[self.grace.id].pie["color"], "var(--warn)")
 
 class LabelTests(InProgressFixture):
     def summary_page(self, summary):
@@ -426,12 +310,3 @@ class TeamStatusTests(InProgressFixture):
         self.set_clock(WEDNESDAY)
 
         self.assertRegex(self.overview_card(), r"Latest week: Oct 26\s*<")
-
-    def test_a_warned_team_still_shows_its_warning(self):
-        self.generated(self.ada, WEDNESDAY, COMPLETED, "major")
-        self.generated(self.grace, WEDNESDAY, COMPLETED, "minor")
-        flags.compute_flags(self.team)
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(WEDNESDAY)
-
-        self.assertIn("<mark>Warning</mark>", self.overview_card())

@@ -3,7 +3,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.db import models
 
-from core.models import Team
+from core.models import Sprint, Team
 
 
 class Flag(models.Model):
@@ -31,8 +31,8 @@ class Flag(models.Model):
     # Shown to instructors. Describes observable activity only.
     reason = models.TextField()
     severity = models.CharField(max_length=20, choices=Severity.choices)
-    # The Monday that starts the reporting week the rule looked at.
-    week_start = models.DateField()
+    # The sprint the rule looked at. Each sprint keeps its own flags.
+    sprint = models.ForeignKey(Sprint, on_delete=models.CASCADE, related_name="flags")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -44,14 +44,14 @@ class Flag(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.rule} on {self.team}, week of {self.week_start}"
+        return f"{self.rule} on {self.team}, {self.sprint.name}"
 
 
 class FlagDispute(models.Model):
     """A student's explanation of a flag or warning about them, and the instructor's decision.
 
     It isn't linked to a Flag row, because compute_flags replaces a team's flags on every run.
-    It matches its flag by team, student, rule and week instead (see services.dispute_for), and
+    It matches its flag by team, student, rule and sprint instead (see services.dispute_for), and
     keeps the flag's reason and severity as they were when the student disputed it.
     """
 
@@ -64,9 +64,9 @@ class FlagDispute(models.Model):
     student = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="flag_disputes"
     )
-    # With team, student and week_start, these identify the disputed flag.
+    # With team and student, these identify the disputed flag.
     rule = models.SlugField(max_length=50)
-    week_start = models.DateField()
+    sprint = models.ForeignKey(Sprint, on_delete=models.CASCADE, related_name="flag_disputes")
     # The flag as the student saw it when they disputed it.
     flag_reason = models.TextField()
     severity = models.CharField(max_length=20, choices=Flag.Severity.choices)
@@ -88,7 +88,7 @@ class FlagDispute(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["team", "student", "rule", "week_start"],
+                fields=["team", "student", "rule", "sprint"],
                 name="dashboard_flagdispute_one_per_flag",
             ),
             models.CheckConstraint(
@@ -111,7 +111,7 @@ class FlagDispute(models.Model):
         # Leaves out the explanation, a student education record, so it stays out of logs.
         return (
             f"{self.student.github_login}'s dispute of {self.rule} on {self.team}, "
-            f"week of {self.week_start}"
+            f"{self.sprint.name}"
         )
 
 
@@ -126,6 +126,12 @@ class GenerationRun(models.Model):
     team = models.OneToOneField(Team, on_delete=models.CASCADE, related_name="generation_run")
     started_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+    # Progress, for the overview and team page. Zero students means the run hasn't counted yet.
+    student_count = models.PositiveIntegerField(default=0)
+    done_count = models.PositiveIntegerField(default=0)
+    # Students whose summary failed so far, each {"name": ..., "reason": ...}. A reason is
+    # never student work, so it is safe to show.
+    failures = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return f"{self.team} generating since {self.started_at}"
