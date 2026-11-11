@@ -247,6 +247,36 @@ class PreviewTests(TeamSetupFixture):
         result = plan(self.project, csv_text("Team Beta,Grace Example,sample-grace,,"))
         self.assertEqual(result.errors, [])
 
+    def test_an_account_with_a_password_and_no_enrollments_is_an_error(self):
+        from core.services import ProjectSetupError, add_student
+
+        make_user("unclaimed-dev", "Una", "Claimed")  # Has a password and no enrollments.
+        with self.assertRaises(ProjectSetupError) as by_hand:
+            add_student(self.empty_team, "Una Claimed", "unclaimed-dev")
+        result = plan(self.project, csv_text("Team Gamma,Una Claimed,UNCLAIMED-dev,,"))
+        self.assertEqual(messages(result), [str(by_hand.exception)])
+        self.assertEqual([e.row for e in result.errors], [2])
+        self.assertEqual(result.teams[0].students[0].status, "error")
+
+    def test_an_account_with_a_password_enrolled_in_another_course_is_fine(self):
+        other = make_user("elsewhere-dev", "Elle", "Where")
+        enroll(other, self.other_course, Enrollment.Role.STUDENT)
+        result = plan(self.project, csv_text("Team Gamma,Elle Where,elsewhere-dev,,"))
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.teams[0].students[0].status, "existing")
+
+    def test_an_account_without_a_password_and_no_enrollments_is_fine(self):
+        loose = make_user("no-password-dev", "Nora", "Pass")
+        loose.set_unusable_password()
+        loose.save()
+        result = plan(self.project, csv_text("Team Gamma,Nora Pass,no-password-dev,,"))
+        self.assertEqual(result.errors, [])
+
+    def test_a_staff_account_with_no_enrollments_is_not_called_unclaimed(self):
+        User.objects.filter(pk=make_user("staff-dev", "Stan", "Staff").pk).update(is_staff=True)
+        result = plan(self.project, csv_text("Team Gamma,Stan Staff,staff-dev,,"))
+        self.assertNotIn("isn't enrolled", " ".join(messages(result)))
+
     def test_an_instructor_or_ta_in_this_course_is_an_error(self):
         ta = make_user("sample-ta")
         enroll(ta, self.course, Enrollment.Role.TA)
