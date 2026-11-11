@@ -604,6 +604,19 @@ class StaleConfirmationTests(ConfirmContributionsTestCase):
         self.assertFalse(Corroboration.objects.exists())
         self.assertIn(self.STALE_MESSAGE, page_text(response).lower())
 
+    def test_an_impossible_time_is_refused(self):
+        contribution = self.teammates_contribution()
+
+        response = self.client.post(
+            confirm_url(contribution.pk),
+            {"updated_at": "2026-13-45T00:00:00+00:00"},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Corroboration.objects.exists())
+        self.assertIn(self.STALE_MESSAGE, page_text(response).lower())
+
     def test_an_edit_after_the_access_check_is_still_caught(self):
         """The version is compared under the row lock, against the database, not against
         the copy the view fetched before the transaction started."""
