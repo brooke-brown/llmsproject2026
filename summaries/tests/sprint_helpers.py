@@ -61,4 +61,4 @@ class SprintTestCase(TestCase):
         return artifact_id
 
     def add_requirement(self, sprint, number, text):
-        return Requirement.objects.create(project=self.project, sprint=sprint, number=number, text=text)
+        return Requirement.objects.create(sprint=sprint, number=number, text=text)

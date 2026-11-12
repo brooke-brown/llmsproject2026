@@ -31,6 +31,7 @@ from dashboard.models import Flag
 from ingest.models import Artifact
 from summaries import schemas
 from summaries.models import Claim, Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user, overview_url, team_url
@@ -127,13 +128,16 @@ class TeamSetupFixture(TestCase):
         return patcher.start()
 
     def summary_for(self, user, team):
-        return Summary.objects.create(team=team, user=user, week_start=WEEK, artifact_count=1)
+        return Summary.objects.create(
+            team=team, user=user, sprint=sprint_for_week(team.project, WEEK), artifact_count=1
+        )
 
     def claim_citing(self, artifact, team=None):
+        team = team or self.team
         summary, _ = Summary.objects.get_or_create(
-            team=team or self.team,
+            team=team,
             user=self.grace,
-            week_start=WEEK,
+            sprint=sprint_for_week(team.project, WEEK),
             defaults={"artifact_count": 1},
         )
         claim = Claim.objects.create(
@@ -1260,14 +1264,14 @@ class MissingSetupTests(TeamSetupFixture):
         self.assertContains(response, "No repo yet")
         self.assertContains(response, "No students")
 
-    def test_project_says_it_has_no_teams_or_requirements_yet(self):
+    def test_project_says_it_has_no_teams_or_sprints_yet(self):
         project = Project.objects.create(course=self.course, name="Project Empty")
 
         response = self.client.get(overview_url(self.course.id))
 
         section = response.content.decode().split(f'id="project-{project.id}"')[1]
         self.assertIn("No teams", section)
-        self.assertIn("No requirements", section)
+        self.assertIn("No sprint has started yet, so there are no requirements to show.", section)
 
     def test_generating_for_a_team_with_no_repos_says_so_and_writes_nothing(self):
         """Otherwise each student would get a "No activity" summary that looks like a finding."""

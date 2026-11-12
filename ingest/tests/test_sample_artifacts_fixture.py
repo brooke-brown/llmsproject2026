@@ -131,7 +131,8 @@ class TargetScenarioTests(TestCase):
 
     def test_target_project_has_requirements(self):
         # The validator checks each claim's requirement_ids against these.
-        self.assertGreaterEqual(Requirement.objects.filter(project=self.team.project).count(), 2)
+        requirements = Requirement.objects.filter(sprint__project=self.team.project)
+        self.assertGreaterEqual(requirements.count(), 2)
 
     def test_includes_each_artifact_type_creditable_to_the_target_student(self):
         for type_ in ("commit", "pr", "review", "issue"):

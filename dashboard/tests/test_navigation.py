@@ -11,6 +11,7 @@ from django.urls import reverse
 
 from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
 from summaries.models import Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .test_course_overview import enroll, make_user
 
@@ -24,7 +25,6 @@ class NavigationFixture(TestCase):
         cls.project = Project.objects.create(course=cls.course, name="Project One")
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         Repo.objects.create(team=cls.team, url="https://github.com/acme/app", full_name="acme/app")
-        Requirement.objects.create(project=cls.project, number=1, text="Log in")
 
         cls.instructor = make_user("sample-instructor", "Iris", "Instructor")
         enroll(cls.instructor, cls.course, Role.INSTRUCTOR)
@@ -33,7 +33,9 @@ class NavigationFixture(TestCase):
         cls.student = make_user("sample-student", "Grace", "Example")
         enroll(cls.student, cls.course, Role.STUDENT)
         TeamMembership.objects.create(user=cls.student, team=cls.team)
-        cls.summary = Summary.objects.create(team=cls.team, user=cls.student, week_start=date(2026, 10, 26))
+        cls.sprint = sprint_for_week(cls.project, date(2026, 10, 26))
+        Requirement.objects.create(sprint=cls.sprint, number=1, text="Log in")
+        cls.summary = Summary.objects.create(team=cls.team, user=cls.student, sprint=cls.sprint)
 
         # Staff in one course and a student in another.
         cls.both = make_user("sample-both", "Bea", "Both")
@@ -79,7 +81,7 @@ class RoleLinksTests(NavigationFixture):
             reverse("dashboard:course_overview", args=[self.course.id]),
             reverse("dashboard:team", args=[self.team.id]),
             reverse("dashboard:summary", args=[self.summary.id]),
-            reverse("dashboard:project_requirements", args=[self.project.id]),
+            reverse("dashboard:sprint", args=[self.sprint.id]),
             reverse("dashboard:project_setup", args=[self.project.id]),
         ]
         for url in pages:
@@ -112,9 +114,10 @@ class BreadcrumbTests(NavigationFixture):
         html = self.client.get(url).content.decode()
         return re.search(r'<span class="crumb">.*?</span>', html, re.S).group(0)
 
-    def test_team_summary_and_requirement_pages_link_back_to_the_overview(self):
+    def test_team_summary_and_sprint_pages_link_back_to_the_overview(self):
         overview = reverse("dashboard:course_overview", args=[self.course.id])
-        for name, arg in (("team", self.team.id), ("summary", self.summary.id), ("project_requirements", self.project.id)):
+        pages = (("team", self.team.id), ("summary", self.summary.id), ("sprint", self.sprint.id))
+        for name, arg in pages:
             crumb = self.crumb(reverse(f"dashboard:{name}", args=[arg]))
             self.assertIn(f'href="{overview}"', crumb, name)
 

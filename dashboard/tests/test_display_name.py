@@ -14,6 +14,7 @@ from core.models import Course, Enrollment, Project, Sprint, Team, TeamMembershi
 from dashboard import flags
 from dashboard.services import SummaryFailure, TeamGeneration
 from summaries.models import Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
 from .sprint_helpers import give, sprint_for
@@ -87,7 +88,9 @@ class TeamPageNameTests(DisplayNameFixture):
         self.assertEqual(self.content().count("sample-nameless"), 1)
 
     def test_a_linked_name_also_has_the_username_below_it(self):
-        Summary.objects.create(team=self.team, user=self.ada, week_start=date(2026, 10, 26))
+        Summary.objects.create(
+            team=self.team, user=self.ada, sprint=sprint_for_week(self.team.project, date(2026, 10, 26))
+        )
 
         self.assertRegex(
             self.content(), r"Ada Sample</a>\s*</strong>\s*<code>sample-ada</code>"
@@ -114,7 +117,7 @@ class SummaryPageNameTests(DisplayNameFixture):
         super().setUpTestData()
         cls.summaries = {
             student: Summary.objects.create(
-                team=cls.team, user=student, week_start=date(2026, 10, 26)
+                team=cls.team, user=student, sprint=sprint_for_week(cls.team.project, date(2026, 10, 26))
             )
             for student in cls.students
         }

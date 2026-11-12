@@ -106,7 +106,7 @@ class Command(BaseCommand):
         for number, text in enumerate(REQUIREMENTS, start=1):
             # Matched on number only, so requirement text edited in admin survives a rerun.
             Requirement.objects.get_or_create(
-                project=project, sprint=sprint, number=number, defaults={"text": text}
+                sprint=sprint, number=number, defaults={"text": text}
             )
 
         self.seed_team(project, course, LIVE_TEAM, LIVE_REPO, LIVE_STUDENTS, password)

@@ -51,9 +51,7 @@ class SprintFixture(TestCase):
         )
 
     def requirement(self, sprint, number, text="Users can log in"):
-        return Requirement.objects.create(
-            project=sprint.project, sprint=sprint, number=number, text=text
-        )
+        return Requirement.objects.create(sprint=sprint, number=number, text=text)
 
     def summary(self, sprint):
         team = Team.objects.create(project=sprint.project, name=f"Team {Team.objects.count()}")

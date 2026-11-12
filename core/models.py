@@ -259,13 +259,10 @@ class Sprint(models.Model):
 
 
 class Requirement(models.Model):
-    """Claims' requirement_ids hold `number`, not the database ID."""
+    """Claims' requirement_ids hold `number`, not the database ID. A number only has meaning
+    within its sprint."""
 
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="requirements")
-    # Optional only until T-21 (#125). Pages not yet moved to sprints add requirements without one.
-    sprint = models.ForeignKey(
-        Sprint, on_delete=models.CASCADE, related_name="requirements", null=True, blank=True
-    )
+    sprint = models.ForeignKey(Sprint, on_delete=models.CASCADE, related_name="requirements")
     number = models.PositiveIntegerField()
     text = models.TextField()
 
@@ -273,11 +270,6 @@ class Requirement(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["sprint", "number"], name="core_requirement_unique_per_sprint"
-            ),
-            models.UniqueConstraint(
-                fields=["project", "number"],
-                condition=models.Q(sprint__isnull=True),
-                name="core_requirement_unique_without_sprint",
             ),
         ]
 

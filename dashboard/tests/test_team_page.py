@@ -1,4 +1,4 @@
-"""Tests for US-16 (#53): see a team's students and their summaries.
+"""Tests for US-16 (#53): see a team's students and their summaries, one sprint at a time.
 
 URLs are reversed per test rather than at module level, so each criterion passes
 or fails on its own instead of the whole module failing on a single
@@ -12,6 +12,7 @@ from django.urls import reverse
 
 from core.models import Course, Enrollment, Project, Repo, Team, TeamMembership
 from summaries.models import Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .test_course_overview import enroll, make_user, overview_url, team_url
 
@@ -44,11 +45,12 @@ class TeamPageFixture(TestCase):
             enroll(student, cls.course, Role.STUDENT)
             TeamMembership.objects.create(user=student, team=cls.team)
 
+        # Each sprint is a Monday-Sunday week named for its Monday, as "Week of Oct 19".
         cls.ada_oct_19 = Summary.objects.create(
-            team=cls.team, user=cls.ada, week_start=date(2026, 10, 19)
+            team=cls.team, user=cls.ada, sprint=sprint_for_week(cls.project, date(2026, 10, 19))
         )
         cls.ada_oct_26 = Summary.objects.create(
-            team=cls.team, user=cls.ada, week_start=date(2026, 10, 26)
+            team=cls.team, user=cls.ada, sprint=sprint_for_week(cls.project, date(2026, 10, 26))
         )
 
         other_project = Project.objects.create(course=cls.course, name="Project Two")
@@ -113,52 +115,59 @@ class TeamPageStudentTests(TeamPageFixture):
 
 
 class TeamPageSummaryTests(TeamPageFixture):
-    def test_labels_each_summary_with_its_week(self):
+    """The page shows one sprint at a time: by default the latest the team has a summary for.
+    Choosing a sprint is tested in test_team_sprint (US-42)."""
+
+    def test_labels_each_summary_with_its_sprint(self):
         response = self.get_team_page()
 
-        self.assertContains(response, "Week of Oct 19, 2026")
-        self.assertContains(response, "Week of Oct 26, 2026")
-
-    def test_each_summary_links_to_its_summary_page(self):
-        response = self.get_team_page()
-
-        self.assertContains(response, f'href="{summary_url(self.ada_oct_19.id)}"')
-        self.assertContains(response, f'href="{summary_url(self.ada_oct_26.id)}"')
-
-    def test_lists_summaries_newest_week_first(self):
-        content = self.get_team_page().content.decode()
-
-        self.assertLess(
-            content.index("Week of Oct 26, 2026"), content.index("Week of Oct 19, 2026")
+        self.assertContains(
+            response,
+            f'<a href="{summary_url(self.ada_oct_26.id)}">Week of Oct 26',
         )
 
+    def test_each_summary_links_to_its_summary_page(self):
+        self.assertContains(self.get_team_page(), f'href="{summary_url(self.ada_oct_26.id)}"')
+
+        self.client.force_login(self.instructor)
+        earlier = self.client.get(
+            team_url(self.team.id), {"sprint": self.ada_oct_19.sprint_id}
+        )
+        self.assertContains(earlier, f'href="{summary_url(self.ada_oct_19.id)}"')
+
     def test_summaries_appear_under_their_student(self):
-        Summary.objects.create(team=self.team, user=self.grace, week_start=date(2026, 10, 12))
+        grace_summary = Summary.objects.create(
+            team=self.team, user=self.grace, sprint=self.ada_oct_26.sprint
+        )
 
         content = self.get_team_page().content.decode()
 
         ada = content.index("Ada Sample")
         grace = content.index("Grace Example")
-        ada_week = content.index("Week of Oct 26, 2026")
-        grace_week = content.index("Week of Oct 12, 2026")
+        ada_pill = content.index(f'href="{summary_url(self.ada_oct_26.id)}">Week of')
+        grace_pill = content.index(f'href="{summary_url(grace_summary.id)}">Week of')
         # Students are listed by last name, so Grace Example comes before Ada Sample.
-        self.assertLess(grace, grace_week)
-        self.assertLess(grace_week, ada)
-        self.assertLess(ada, ada_week)
+        self.assertLess(grace, grace_pill)
+        self.assertLess(grace_pill, ada)
+        self.assertLess(ada, ada_pill)
 
-    def test_student_with_no_summaries_says_so(self):
+    def test_student_with_no_summary_for_the_sprint_says_so(self):
         response = self.get_team_page()
 
-        self.assertContains(response, "No summaries yet.", count=1)
+        self.assertContains(response, "<li>Not generated</li>", count=1, html=True)
 
     def test_lists_only_a_students_summaries_for_this_team(self):
         TeamMembership.objects.create(user=self.ada, team=self.other_team)
-        Summary.objects.create(team=self.other_team, user=self.ada, week_start=date(2026, 9, 28))
+        Summary.objects.create(
+            team=self.other_team,
+            user=self.ada,
+            sprint=sprint_for_week(self.other_team.project, date(2026, 9, 28)),
+        )
 
         response = self.get_team_page()
 
-        self.assertContains(response, "Week of Oct 26, 2026")
-        self.assertNotContains(response, "Week of Sep 28, 2026")
+        self.assertContains(response, "Week of Oct 26")
+        self.assertNotContains(response, "Week of Sep 28")
 
 
 class TeamPageStudentLinkTests(TeamPageFixture):
@@ -174,7 +183,9 @@ class TeamPageStudentLinkTests(TeamPageFixture):
     def test_the_link_ignores_the_students_summaries_on_other_teams(self):
         TeamMembership.objects.create(user=self.ada, team=self.other_team)
         elsewhere = Summary.objects.create(
-            team=self.other_team, user=self.ada, week_start=date(2026, 11, 2)
+            team=self.other_team,
+            user=self.ada,
+            sprint=sprint_for_week(self.other_team.project, date(2026, 11, 2)),
         )
 
         response = self.get_team_page()
@@ -189,7 +200,7 @@ class TeamPageStudentLinkTests(TeamPageFixture):
 
         self.assertIn("<strong>Grace Example</strong>", content)
         self.assertNotIn(">Grace Example</a>", content)
-        self.assertIn("No summaries yet.", content)
+        self.assertIn("<li>Not generated</li>", content)
 
 
 class TeamPageAccessTests(TeamPageFixture):
@@ -198,7 +209,7 @@ class TeamPageAccessTests(TeamPageFixture):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Ada Sample")
-        self.assertContains(response, "Week of Oct 26, 2026")
+        self.assertContains(response, "Week of Oct 26")
 
     def test_ta_enrolled_in_course_sees_the_team_page(self):
         ta = make_user("sample-ta")
@@ -208,7 +219,7 @@ class TeamPageAccessTests(TeamPageFixture):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Ada Sample")
-        self.assertContains(response, "Week of Oct 26, 2026")
+        self.assertContains(response, "Week of Oct 26")
 
     def test_student_on_the_team_gets_403(self):
         response = self.get_team_page(self.ada)

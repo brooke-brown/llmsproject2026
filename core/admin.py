@@ -27,7 +27,6 @@ from core.models import (
 )
 from core.services import (
     RequirementImportError,
-    import_requirements,
     import_sprint_requirements,
 )
 
@@ -79,30 +78,6 @@ class ProjectAdmin(admin.ModelAdmin):
     list_display = ("name", "course")
     list_filter = ("course",)
     search_fields = ("name",)
-
-    def get_urls(self):
-        return [
-            path(
-                "<int:project_id>/import-requirements/",
-                self.admin_site.admin_view(self.import_requirements_view),
-                name="core_project_import_requirements",
-            ),
-            *super().get_urls(),
-        ]
-
-    def import_requirements_view(self, request, project_id):
-        if not request.user.has_perm("core.add_requirement"):
-            raise PermissionDenied
-        project = get_object_or_404(Project, pk=project_id)
-        return _requirements_import_page(
-            self,
-            request,
-            import_into=lambda text: import_requirements(project, text),
-            changelist_filter={"project__id__exact": project.pk},
-            template="admin/core/project/import_requirements.html",
-            title=f"Import requirements for {project.name}",
-            context={"project": project},
-        )
 
 
 @admin.register(Sprint)
@@ -172,11 +147,11 @@ def _requirements_import_page(
 
 @admin.register(Requirement)
 class RequirementAdmin(admin.ModelAdmin):
-    list_display = ("number", "text", "project", "sprint")
+    list_display = ("number", "text", "sprint")
     list_display_links = ("number", "text")
-    list_filter = ("project", "sprint")
+    list_filter = ("sprint__project", "sprint")
     search_fields = ("text",)
-    ordering = ("project", "sprint", "number")
+    ordering = ("sprint__project", "sprint__start_date", "number")
 
 
 class TeamMembershipInline(admin.TabularInline):

@@ -1,5 +1,7 @@
 """Tests for US-26 (#90): set up a project and its requirements from my account.
 
+Since T-21 (#125) requirements belong to a sprint, so they're managed on the sprint's page.
+
 These drive the real pages, so they check what an instructor sees. The PDFs are real files,
 and only the LLM is replaced, so nothing makes a network call.
 
@@ -16,7 +18,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from core.models import Course, Enrollment, Project, Requirement, Team
+from core.models import Course, Enrollment, Project, Requirement, Sprint, Team
 from core.tests.test_requirements_pdf import TEXT, scanned_pdf, text_pdf
 from summaries.llm import LLMError
 from summaries.models import Claim, Summary
@@ -38,16 +40,17 @@ def rename_url(project_id):
     return reverse("dashboard:project_rename", args=[project_id])
 
 
-def requirements_url(project_id):
-    return reverse("dashboard:project_requirements", args=[project_id])
+# Requirements belong to a sprint since T-21 (#125), so these are the sprint page's.
+def requirements_url(sprint_id):
+    return reverse("dashboard:sprint", args=[sprint_id])
 
 
-def import_url(project_id):
-    return reverse("dashboard:requirements_import", args=[project_id])
+def import_url(sprint_id):
+    return reverse("dashboard:sprint_requirements_import", args=[sprint_id])
 
 
-def add_url(project_id):
-    return reverse("dashboard:requirement_add", args=[project_id])
+def add_url(sprint_id):
+    return reverse("dashboard:sprint_requirement_add", args=[sprint_id])
 
 
 def edit_url(requirement_id):
@@ -56,6 +59,12 @@ def edit_url(requirement_id):
 
 def delete_url(requirement_id):
     return reverse("dashboard:requirement_delete", args=[requirement_id])
+
+
+def make_sprint(project):
+    return Sprint.objects.create(
+        project=project, name="Sprint 1", start_date=date(2026, 10, 26), end_date=date(2026, 11, 1)
+    )
 
 
 def llm_returns(requirements):
@@ -75,31 +84,32 @@ class SetupFixture(TestCase):
         enroll(cls.instructor, cls.course, Role.INSTRUCTOR)
 
         cls.empty_project = Project.objects.create(course=cls.course, name="Empty Project")
+        cls.empty_sprint = make_sprint(cls.empty_project)
         cls.project = Project.objects.create(course=cls.course, name="Full Project")
-        cls.first = Requirement.objects.create(project=cls.project, number=1, text="Log in")
-        cls.second = Requirement.objects.create(project=cls.project, number=2, text="Log out")
-        cls.fifth = Requirement.objects.create(project=cls.project, number=5, text="Export")
+        cls.sprint = make_sprint(cls.project)
+        cls.first = Requirement.objects.create(sprint=cls.sprint, number=1, text="Log in")
+        cls.second = Requirement.objects.create(sprint=cls.sprint, number=2, text="Log out")
+        cls.fifth = Requirement.objects.create(sprint=cls.sprint, number=5, text="Export")
 
         cls.other_course = Course.objects.create(name="CS 3240, Fall 2026")
         cls.other_project = Project.objects.create(course=cls.other_course, name="Other Project")
+        cls.other_sprint = make_sprint(cls.other_project)
 
     def setUp(self):
         self.client.force_login(self.instructor)
 
-    def numbers(self, project=None):
-        project = project or self.project
-        return list(project.requirements.order_by("number").values_list("number", flat=True))
+    def numbers(self, sprint=None):
+        sprint = sprint or self.sprint
+        return list(sprint.requirements.order_by("number").values_list("number", flat=True))
 
     def project_names(self, course=None):
         return sorted((course or self.course).projects.values_list("name", flat=True))
 
-    def cite(self, project, numbers, status=Claim.Status.VERIFIED):
-        """Store a claim citing these requirement numbers, on a team in this project."""
-        team = Team.objects.create(project=project, name=f"Team {Team.objects.count()}")
+    def cite(self, sprint, numbers, status=Claim.Status.VERIFIED):
+        """Store a claim citing these requirement numbers, in a summary for this sprint."""
+        team = Team.objects.create(project=sprint.project, name=f"Team {Team.objects.count()}")
         student = make_user(f"sample-student-{get_user_model().objects.count()}")
-        summary = Summary.objects.create(
-            team=team, user=student, week_start=date(2026, 10, 26), artifact_count=1
-        )
+        summary = Summary.objects.create(team=team, user=student, sprint=sprint, artifact_count=1)
         return Claim.objects.create(
             summary=summary,
             text="Added the login form.",
@@ -238,69 +248,63 @@ class RenameProjectTests(SetupFixture):
 
 
 class RequirementsPageTests(SetupFixture):
-    def test_overview_links_to_each_projects_requirements_page(self):
-        response = self.client.get(overview_url(self.course.id))
-
-        self.assertContains(response, f'href="{requirements_url(self.project.id)}"')
-        self.assertContains(response, f'href="{requirements_url(self.empty_project.id)}"')
-
-    def test_project_with_no_requirements_offers_a_pdf_upload_and_pasted_text(self):
-        response = self.client.get(requirements_url(self.empty_project.id))
+    def test_a_sprint_with_no_requirements_offers_a_pdf_upload_and_pasted_text(self):
+        response = self.client.get(requirements_url(self.empty_sprint.id))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, f'action="{import_url(self.empty_project.id)}"')
+        self.assertContains(response, f'action="{import_url(self.empty_sprint.id)}"')
         self.assertContains(response, 'enctype="multipart/form-data"')
         self.assertContains(response, 'type="file"')
         self.assertContains(response, "<textarea")
 
-    def test_shows_the_numbered_requirements_of_this_project_only(self):
-        Requirement.objects.create(project=self.empty_project, number=9, text="Not this project")
+    def test_shows_the_numbered_requirements_of_this_sprint_only(self):
+        Requirement.objects.create(sprint=self.empty_sprint, number=9, text="Not this sprint")
 
-        response = self.client.get(requirements_url(self.project.id))
+        response = self.client.get(requirements_url(self.sprint.id))
 
         self.assertContains(response, "Log in")
         self.assertContains(response, "Export")
         self.assertEqual(
             [requirement.number for requirement in response.context["requirements"]], [1, 2, 5]
         )
-        self.assertNotContains(response, "Not this project")
+        self.assertNotContains(response, "Not this sprint")
 
-    def test_project_that_has_requirements_no_longer_offers_an_import(self):
-        response = self.client.get(requirements_url(self.project.id))
+    def test_a_sprint_that_has_requirements_no_longer_offers_an_import(self):
+        response = self.client.get(requirements_url(self.sprint.id))
 
-        self.assertNotContains(response, f'action="{import_url(self.project.id)}"')
+        self.assertNotContains(response, f'action="{import_url(self.sprint.id)}"')
         self.assertNotContains(response, 'type="file"')
 
     def test_page_offers_edit_delete_and_add_forms(self):
-        response = self.client.get(requirements_url(self.project.id))
+        response = self.client.get(requirements_url(self.sprint.id))
 
-        self.assertContains(response, f'href="?edit={self.first.id}"')
+        self.assertContains(response, f'href="?edit_requirement={self.first.id}"')
         self.assertContains(response, f'action="{delete_url(self.first.id)}"')
-        self.assertContains(response, f'action="{add_url(self.project.id)}"')
+        self.assertContains(response, f'action="{add_url(self.sprint.id)}"')
 
-    def test_a_project_with_no_requirements_can_also_add_one_by_hand(self):
-        response = self.client.get(requirements_url(self.empty_project.id))
+    def test_a_sprint_with_no_requirements_can_also_add_one_by_hand(self):
+        response = self.client.get(requirements_url(self.empty_sprint.id))
 
-        self.assertContains(response, f'action="{add_url(self.empty_project.id)}"')
+        self.assertContains(response, f'action="{add_url(self.empty_sprint.id)}"')
 
 
 class ImportRequirementsTests(SetupFixture):
-    def post(self, project=None, **data):
-        project = project or self.empty_project
+    def post(self, sprint=None, **data):
+        sprint = sprint or self.empty_sprint
         # A browser always submits the empty textarea along with the file.
         data.setdefault("text", "")
-        return self.client.post(import_url(project.id), data, follow=True)
+        return self.client.post(import_url(sprint.id), data, follow=True)
 
     def stored(self):
         return list(
-            self.empty_project.requirements.order_by("number").values_list("number", "text")
+            self.empty_sprint.requirements.order_by("number").values_list("number", "text")
         )
 
     def test_pasted_text_shows_numbered_requirements_and_how_many_were_imported(self):
         with llm_returns(SPLIT):
             response = self.post(text=PASTED)
 
-        self.assertRedirects(response, requirements_url(self.empty_project.id))
+        self.assertRedirects(response, requirements_url(self.empty_sprint.id))
         self.assertEqual(self.stored(), list(enumerate(SPLIT, start=1)))
         self.assertContains(response, "Imported 3 requirements.")
         for text in SPLIT:
@@ -350,7 +354,7 @@ class ImportRequirementsTests(SetupFixture):
         self.assertContains(response, "may be a scanned copy")
         self.assertEqual(self.stored(), [])
         llm.assert_not_called()
-        self.assertContains(response, f'action="{import_url(self.empty_project.id)}"')
+        self.assertContains(response, f'action="{import_url(self.empty_sprint.id)}"')
 
     def test_an_llm_error_shows_the_reason_saves_nothing_and_keeps_the_text(self):
         with mock.patch(
@@ -360,7 +364,7 @@ class ImportRequirementsTests(SetupFixture):
 
         self.assertContains(response, "The LLM timed out.")
         self.assertEqual(self.stored(), [])
-        self.assertContains(response, f'action="{import_url(self.empty_project.id)}"')
+        self.assertContains(response, f'action="{import_url(self.empty_sprint.id)}"')
         self.assertContains(response, "Instructors can export grades.")
 
     def test_a_requirement_not_in_the_source_shows_the_reason_and_saves_nothing(self):
@@ -382,9 +386,9 @@ class ImportRequirementsTests(SetupFixture):
         self.assertContains(response, "Imported 3 requirements.")
         self.assertEqual(len(self.stored()), 3)
 
-    def test_a_submitted_import_is_refused_when_the_project_has_requirements(self):
+    def test_a_submitted_import_is_refused_when_the_sprint_has_requirements(self):
         with llm_returns(SPLIT) as llm:
-            response = self.post(project=self.project, text=PASTED)
+            response = self.post(sprint=self.sprint, text=PASTED)
 
         self.assertContains(response, "already has requirements")
         self.assertEqual(self.numbers(), [1, 2, 5])
@@ -395,7 +399,7 @@ class ImportRequirementsTests(SetupFixture):
         """Requirements arrive while the LLM runs, so the page no longer has an import form."""
 
         def another_import_finishes(*args, **kwargs):
-            Requirement.objects.create(project=self.empty_project, number=1, text="Won the race")
+            Requirement.objects.create(sprint=self.empty_sprint, number=1, text="Won the race")
             return SimpleNamespace(requirements=SPLIT)
 
         with mock.patch(
@@ -414,25 +418,26 @@ class EditRequirementTests(SetupFixture):
     def test_edit_changes_the_text(self):
         response = self.edit(text="Log out of every device")
 
-        self.assertRedirects(response, requirements_url(self.project.id))
+        self.assertRedirects(response, requirements_url(self.sprint.id))
         self.assertEqual(Requirement.objects.get(pk=self.second.pk).text, "Log out of every device")
         self.assertContains(response, "Log out of every device")
 
     def test_edit_form_has_no_number_field(self):
-        response = self.client.get(requirements_url(self.project.id) + f"?edit={self.second.id}")
+        url = requirements_url(self.sprint.id) + f"?edit_requirement={self.second.id}"
+        response = self.client.get(url)
 
         self.assertContains(response, f'action="{edit_url(self.second.id)}"')
         self.assertNotContains(response, 'name="number"')
 
     def test_a_submitted_number_is_ignored(self):
-        self.edit(text="Log out of every device", number="7", project=self.empty_project.id)
+        self.edit(text="Log out of every device", number="7", sprint=self.empty_sprint.id)
 
         stored = Requirement.objects.get(pk=self.second.pk)
         self.assertEqual(stored.number, 2)
-        self.assertEqual(stored.project, self.project)
+        self.assertEqual(stored.sprint, self.sprint)
 
     def test_a_requirement_a_claim_cites_can_still_be_edited(self):
-        self.cite(self.project, [2])
+        self.cite(self.sprint, [2])
 
         self.edit(text="Log out of every device")
 
@@ -448,28 +453,28 @@ class EditRequirementTests(SetupFixture):
 
 
 class AddRequirementTests(SetupFixture):
-    def add(self, project=None, **data):
-        return self.client.post(add_url((project or self.project).id), data, follow=True)
+    def add(self, sprint=None, **data):
+        return self.client.post(add_url((sprint or self.sprint).id), data, follow=True)
 
-    def test_add_takes_the_next_number_after_the_projects_highest(self):
+    def test_add_takes_the_next_number_after_the_sprints_highest(self):
         response = self.add(text="Reset a password")
 
-        self.assertRedirects(response, requirements_url(self.project.id))
+        self.assertRedirects(response, requirements_url(self.sprint.id))
         self.assertEqual(self.numbers(), [1, 2, 5, 6])
-        self.assertEqual(self.project.requirements.get(number=6).text, "Reset a password")
+        self.assertEqual(self.sprint.requirements.get(number=6).text, "Reset a password")
         self.assertContains(response, "Reset a password")
 
-    def test_first_requirement_in_a_project_is_number_one(self):
-        self.add(project=self.empty_project, text="Reset a password")
+    def test_first_requirement_in_a_sprint_is_number_one(self):
+        self.add(sprint=self.empty_sprint, text="Reset a password")
 
-        self.assertEqual(self.numbers(self.empty_project), [1])
+        self.assertEqual(self.numbers(self.empty_sprint), [1])
 
-    def test_numbers_are_counted_within_the_project(self):
-        Requirement.objects.create(project=self.other_project, number=40, text="Elsewhere")
+    def test_numbers_are_counted_within_the_sprint(self):
+        Requirement.objects.create(sprint=self.other_sprint, number=40, text="Elsewhere")
 
-        self.add(project=self.empty_project, text="Reset a password")
+        self.add(sprint=self.empty_sprint, text="Reset a password")
 
-        self.assertEqual(self.numbers(self.empty_project), [1])
+        self.assertEqual(self.numbers(self.empty_sprint), [1])
 
     def test_a_submitted_number_is_ignored(self):
         self.add(text="Reset a password", number="3")
@@ -491,7 +496,7 @@ class AddRequirementTests(SetupFixture):
 
         self.assertContains(response, "try again")
         self.assertEqual(self.numbers(), [1, 2, 5])
-        self.assertEqual(self.project.requirements.get(number=5).text, "Export")
+        self.assertEqual(self.sprint.requirements.get(number=5).text, "Export")
 
 
 class DeleteRequirementTests(SetupFixture):
@@ -501,7 +506,7 @@ class DeleteRequirementTests(SetupFixture):
     def test_a_requirement_no_claim_cites_is_deleted(self):
         response = self.delete()
 
-        self.assertRedirects(response, requirements_url(self.project.id))
+        self.assertRedirects(response, requirements_url(self.sprint.id))
         self.assertEqual(self.numbers(), [1, 5])
         # Matched with its tag, since the top bar has a "Log out" button.
         self.assertNotContains(response, "Log out</p>")
@@ -510,13 +515,13 @@ class DeleteRequirementTests(SetupFixture):
     def test_deleting_one_doesnt_renumber_the_others(self):
         self.delete(self.first)
 
-        stored = dict(self.project.requirements.values_list("number", "text"))
+        stored = dict(self.sprint.requirements.values_list("number", "text"))
         self.assertEqual(stored, {2: "Log out", 5: "Export"})
 
     def test_a_deleted_number_in_the_middle_is_never_reassigned(self):
         self.delete()
 
-        self.client.post(add_url(self.project.id), {"text": "Reset a password"})
+        self.client.post(add_url(self.sprint.id), {"text": "Reset a password"})
 
         self.assertEqual(self.numbers(), [1, 5, 6])
 
@@ -528,12 +533,12 @@ class DeleteRequirementTests(SetupFixture):
         """
         self.delete(self.fifth)
 
-        self.client.post(add_url(self.project.id), {"text": "Reset a password"})
+        self.client.post(add_url(self.sprint.id), {"text": "Reset a password"})
 
         self.assertEqual(self.numbers(), [1, 2, 3])
 
     def test_deleting_a_verified_claims_requirement_is_refused_with_a_message(self):
-        self.cite(self.project, [1, 2])
+        self.cite(self.sprint, [1, 2])
 
         response = self.delete()
 
@@ -541,7 +546,7 @@ class DeleteRequirementTests(SetupFixture):
         self.assertEqual(self.numbers(), [1, 2, 5])
 
     def test_a_dropped_claim_also_counts_as_citing(self):
-        self.cite(self.project, [2], status=Claim.Status.COULDNT_VERIFY)
+        self.cite(self.sprint, [2], status=Claim.Status.COULDNT_VERIFY)
 
         response = self.delete()
 
@@ -549,14 +554,14 @@ class DeleteRequirementTests(SetupFixture):
         self.assertEqual(self.numbers(), [1, 2, 5])
 
     def test_a_claim_on_another_number_doesnt_block_the_delete(self):
-        self.cite(self.project, [1, 5])
+        self.cite(self.sprint, [1, 5])
 
         self.delete()
 
         self.assertEqual(self.numbers(), [1, 5])
 
-    def test_a_claim_in_another_project_with_the_same_number_doesnt_block_the_delete(self):
-        self.cite(self.empty_project, [2])
+    def test_a_claim_in_another_sprint_with_the_same_number_doesnt_block_the_delete(self):
+        self.cite(self.empty_sprint, [2])
 
         self.delete()
 
@@ -566,19 +571,19 @@ class DeleteRequirementTests(SetupFixture):
         for requirement in (self.first, self.second, self.fifth):
             response = self.delete(requirement)
 
-        self.assertContains(response, f'action="{import_url(self.project.id)}"')
+        self.assertContains(response, f'action="{import_url(self.sprint.id)}"')
 
 
 class AccessTests(SetupFixture):
     def get_requests(self):
         """Every setup request, as (description, method, URL, data)."""
         return [
-            ("page", "get", requirements_url(self.project.id), {}),
+            ("page", "get", requirements_url(self.sprint.id), {}),
             ("new project page", "get", create_url(self.course.id), {}),
             ("create", "post", create_url(self.course.id), {"name": "New"}),
             ("rename", "post", rename_url(self.project.id), {"name": "New"}),
-            ("import", "post", import_url(self.empty_project.id), {"text": PASTED}),
-            ("add", "post", add_url(self.project.id), {"text": "New"}),
+            ("import", "post", import_url(self.empty_sprint.id), {"text": PASTED}),
+            ("add", "post", add_url(self.sprint.id), {"text": "New"}),
             ("edit", "post", edit_url(self.second.id), {"text": "New"}),
             ("delete", "post", delete_url(self.second.id), {}),
         ]
@@ -586,7 +591,7 @@ class AccessTests(SetupFixture):
     def assert_nothing_changed(self):
         self.assertEqual(self.project_names(), ["Empty Project", "Full Project"])
         self.assertEqual(self.numbers(), [1, 2, 5])
-        self.assertEqual(self.numbers(self.empty_project), [])
+        self.assertEqual(self.numbers(self.empty_sprint), [])
         self.assertEqual(Requirement.objects.get(pk=self.second.pk).text, "Log out")
 
     def assert_refused(self, user):
@@ -609,7 +614,7 @@ class AccessTests(SetupFixture):
                     self.assertNotEqual(response.get("Location", ""), "/admin/")
 
         self.assertIn("New", self.project_names())
-        self.assertEqual(self.numbers(self.empty_project), [1, 2, 3])
+        self.assertEqual(self.numbers(self.empty_sprint), [1, 2, 3])
         self.assertEqual(self.numbers(), [1, 5, 6])
 
     def test_ta_is_refused(self):
@@ -666,12 +671,12 @@ class AccessTests(SetupFixture):
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, create_url(self.course.id))
         self.assertNotContains(response, rename_url(self.project.id))
-        self.assertNotContains(response, requirements_url(self.project.id))
+        self.assertNotContains(response, requirements_url(self.sprint.id))
         self.assertNotContains(response, "New project")
         # The read-only table is still theirs to see.
         self.assertContains(response, "Log in")
 
-    def test_missing_course_project_or_requirement_is_a_404(self):
+    def test_missing_course_project_sprint_or_requirement_is_a_404(self):
         missing = 999999
         requests = [
             ("page", "get", requirements_url(missing), {}),
@@ -708,13 +713,17 @@ class AccessTests(SetupFixture):
     def test_every_setup_form_posts_with_a_csrf_token(self):
         pages = [
             overview_url(self.course.id),
-            requirements_url(self.project.id),
-            requirements_url(self.empty_project.id),
+            requirements_url(self.sprint.id),
+            requirements_url(self.empty_sprint.id),
         ]
         for page in pages:
             with self.subTest(page=page):
                 content = self.client.get(page).content.decode()
-                forms = content.split("<form")[1:]
+                # The overview's sprint menu is a GET form that changes nothing.
+                forms = [
+                    form for form in content.split("<form")[1:]
+                    if 'method="get"' not in form.split(">")[0]
+                ]
                 self.assertGreater(len(forms), 1)
                 for form in forms:
                     self.assertIn('method="post"', form.split(">")[0])

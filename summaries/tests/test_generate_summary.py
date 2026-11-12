@@ -552,9 +552,7 @@ class RequirementPromptTests(GenerateSummaryTestCase):
         self.assertIn("2. Users can mark a task as done.", self.prompt)
 
     def test_requirements_are_listed_in_number_order(self):
-        Requirement.objects.create(
-            project=self.team.project, sprint=self.sprint, number=3, text="Third one."
-        )
+        Requirement.objects.create(sprint=self.sprint, number=3, text="Third one.")
 
         self.run_summary()
 
@@ -563,7 +561,11 @@ class RequirementPromptTests(GenerateSummaryTestCase):
 
     def test_another_projects_requirements_are_not_in_the_prompt(self):
         other = Project.objects.create(course=self.team.project.course, name="Other project")
-        Requirement.objects.create(project=other, number=7, text="OTHER-PROJECT-REQUIREMENT")
+        Requirement.objects.create(
+            sprint=sprint_for_week(other, self.sprint.start_date),
+            number=7,
+            text="OTHER-PROJECT-REQUIREMENT",
+        )
 
         self.run_summary()
 
@@ -582,9 +584,7 @@ class RequirementPromptTests(GenerateSummaryTestCase):
         self.assertNotIn("has no requirements", self.prompt)
 
     def test_a_long_requirement_is_cut_to_the_cap_and_marked(self):
-        Requirement.objects.create(
-            project=self.team.project, sprint=self.sprint, number=3, text="R" * 1500
-        )
+        Requirement.objects.create(sprint=self.sprint, number=3, text="R" * 1500)
 
         self.run_summary()
 

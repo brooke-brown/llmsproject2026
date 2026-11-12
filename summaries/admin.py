@@ -61,10 +61,10 @@ class ClaimInline(admin.TabularInline):
 
 @admin.register(Summary)
 class SummaryAdmin(ReadOnlyAdmin):
-    list_display = ("user", "team", "week_start", "unverified_count", "created_at")
-    list_filter = ("team", "week_start")
+    list_display = ("user", "team", "sprint", "unverified_count", "created_at")
+    list_filter = ("team", "sprint")
     search_fields = ("user__github_login", "user__username")
-    ordering = ("-week_start", "user__github_login")
+    ordering = ("-sprint__start_date", "user__github_login")
     inlines = [ClaimInline]
 
 

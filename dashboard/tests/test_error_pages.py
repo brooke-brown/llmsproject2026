@@ -5,6 +5,7 @@ are what a user really gets.
 """
 
 import re
+from datetime import date
 from unittest import mock
 
 from django.test import Client, TestCase
@@ -12,6 +13,7 @@ from django.urls import reverse
 
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from summaries.models import Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .test_course_overview import enroll, make_user
 
@@ -132,7 +134,11 @@ class EmptyStateTests(ErrorFixture):
     def test_the_requirements_panel_says_who_can_add_them(self):
         Project.objects.create(course=self.course, name="Project One")
         text = self.page(self.ta, self.overview())
-        self.assertIn("No requirements for this project yet. An instructor can add them.", text)
+        self.assertIn(
+            "No sprint has started yet, so there are no requirements to show. An instructor "
+            "sets up sprints and their requirements.",
+            text,
+        )
 
     def test_a_team_card_with_no_students(self):
         project = Project.objects.create(course=self.course, name="Project One")
@@ -156,9 +162,14 @@ class EmptyStateTests(ErrorFixture):
         project = Project.objects.create(course=self.course, name="Project One")
         team = Team.objects.create(project=project, name="Team Alpha")
         TeamMembership.objects.create(user=self.student, team=team)
-        summary = Summary.objects.create(team=team, user=self.student, week_start="2026-10-26", artifact_count=0)
+        summary = Summary.objects.create(
+            team=team,
+            user=self.student,
+            sprint=sprint_for_week(team.project, date(2026, 10, 26)),
+            artifact_count=0,
+        )
         text = self.page(self.instructor, reverse("dashboard:summary", args=[summary.id]))
-        self.assertIn("No activity that week.", text)
+        self.assertIn("No activity in this sprint.", text)
         self.assertIn("Check that the team's repo and the student's GitHub username are right.", text)
 
     def test_a_student_on_no_team_is_told_to_ask_their_instructor(self):

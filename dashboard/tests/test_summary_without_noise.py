@@ -131,7 +131,7 @@ class CollapsedRequirementTests(SummaryPageFixture):
 
     def test_several_requirements_show_a_plural_count(self):
         for number in (3, 4):
-            Requirement.objects.create(project=self.project, number=number, text=f"Rule {number}")
+            Requirement.objects.create(sprint=self.sprint, number=number, text=f"Rule {number}")
         self.tie_fix_claim_to(1, 2, 3, 4)
 
         response = self.get_summary_page()

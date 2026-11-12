@@ -57,7 +57,6 @@ class GenerateSprintSummaryTests(SprintTestCase):
         self.llm.return_value = [make_claim("acme/app:commit:aa2")]
         summary = self.generate()
         self.assertEqual(summary.sprint, self.sprint)
-        self.assertIsNone(summary.week_start)
         self.assertEqual(summary.claims.get().status, "verified")
 
     def test_a_running_sprint_covers_only_through_today_and_is_partial(self):
@@ -141,7 +140,7 @@ class GenerateSprintSummaryTests(SprintTestCase):
 
 
 class TwoSprintsTestCase(SprintTestCase):
-    """Two sprints whose requirement 1 differ, plus a leftover project-wide requirement."""
+    """Two sprints whose requirement 1 differ."""
 
     def setUp(self):
         super().setUp()
@@ -151,7 +150,6 @@ class TwoSprintsTestCase(SprintTestCase):
         self.add_requirement(self.sprint, 1, "Users can log in")
         self.add_requirement(self.sprint, 2, "Users can reset passwords")
         self.add_requirement(self.next_sprint, 1, "Users can pay")
-        self.add_requirement(None, 3, "A project-wide leftover")
         patcher = mock.patch("summaries.services.generate_claims")
         self.llm = patcher.start()
         self.addCleanup(patcher.stop)
@@ -169,7 +167,7 @@ class SprintRequirementTests(TwoSprintsTestCase):
         generate_sprint_summary(self.student, self.team, self.next_sprint)
         prompt = self.llm.call_args.args[0]
         self.assertIn("Users can pay", prompt)
-        for other in ("Users can log in", "reset passwords", "project-wide leftover"):
+        for other in ("Users can log in", "reset passwords"):
             self.assertNotIn(other, prompt)
 
     def test_a_number_that_exists_in_the_sprint_is_accepted(self):
@@ -231,15 +229,9 @@ class SprintWordingTests(TwoSprintsTestCase):
 
 
 class SummarySprintModelTests(SprintTestCase):
-    def test_a_summary_needs_a_week_or_a_sprint(self):
+    def test_a_summary_needs_a_sprint(self):
         with self.assertRaises(IntegrityError), transaction.atomic():
             Summary.objects.create(team=self.team, user=self.student)
-
-    def test_a_summary_cannot_have_both_a_week_and_a_sprint(self):
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            Summary.objects.create(
-                team=self.team, user=self.student, week_start=date(2026, 10, 26), sprint=self.sprint
-            )
 
     def test_one_summary_per_team_student_and_sprint(self):
         Summary.objects.create(team=self.team, user=self.student, sprint=self.sprint)
@@ -254,22 +246,3 @@ class SummarySprintModelTests(SprintTestCase):
         Summary.objects.create(team=self.team, user=self.other, sprint=self.sprint)
         Summary.objects.create(team=self.team, user=self.student, sprint=other_sprint)
 
-    def test_weekly_summaries_still_work_beside_sprint_ones(self):
-        Summary.objects.create(team=self.team, user=self.student, week_start=date(2026, 10, 26))
-        Summary.objects.create(team=self.team, user=self.student, sprint=self.sprint)
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            Summary.objects.create(team=self.team, user=self.student, week_start=date(2026, 10, 26))
-
-
-class SprintFlagCodeIgnoresWeeklySummariesTests(SprintTestCase):
-    """Until T-21, weekly summaries sit beside sprint summaries, and the sprint flag code
-    (US-41) must not trip on them."""
-
-    def test_sprint_requirement_shares_skip_a_weekly_summary(self):
-        from dashboard import flags
-
-        for user in (self.student, self.other):
-            Summary.objects.create(team=self.team, user=user, sprint=self.sprint)
-            Summary.objects.create(team=self.team, user=user, week_start=date(2026, 10, 26))
-        # Neither kind has claims, so there's nothing to compare.
-        self.assertIsNone(flags.sprint_shares(self.team, self.sprint))

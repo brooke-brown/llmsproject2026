@@ -14,6 +14,7 @@ from django.urls import reverse
 from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
 from summaries.models import Summary
 
+from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user, overview_url, team_url
 
 Role = Enrollment.Role
@@ -39,8 +40,9 @@ def team_create_url(project_id):
     return reverse("dashboard:team_create", args=[project_id])
 
 
-def requirements_url(project_id):
-    return reverse("dashboard:project_requirements", args=[project_id])
+def requirements_url(sprint_id):
+    """The page a sprint's requirements are managed on."""
+    return reverse("dashboard:sprint", args=[sprint_id])
 
 
 def form_for(content, action):
@@ -62,6 +64,8 @@ class SetupUiFixture(TestCase):
 
         cls.project = Project.objects.create(course=cls.course, name="Project One")
         cls.other_project = Project.objects.create(course=cls.course, name="Project Two")
+        cls.sprint = sprint_for(cls.project)
+        cls.other_sprint = sprint_for(cls.other_project)
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         cls.empty_team = Team.objects.create(project=cls.project, name="Team Beta")
 
@@ -301,16 +305,16 @@ class ConfirmBeforeDeletingTests(SetupUiFixture):
                 self.assert_confirms(content, action)
 
     def test_deleting_a_requirement_asks_first(self):
-        requirement = Requirement.objects.create(project=self.project, number=1, text="Log in")
+        requirement = Requirement.objects.create(sprint=self.sprint, number=1, text="Log in")
 
-        content = self.client.get(requirements_url(self.project.id)).content.decode()
+        content = self.client.get(requirements_url(self.sprint.id)).content.decode()
 
         self.assert_confirms(content, reverse("dashboard:requirement_delete", args=[requirement.id]))
 
     def test_deleting_a_requirement_explains_the_numbering(self):
-        requirement = Requirement.objects.create(project=self.project, number=3, text="Log in")
+        requirement = Requirement.objects.create(sprint=self.sprint, number=3, text="Log in")
 
-        content = self.client.get(requirements_url(self.project.id)).content.decode()
+        content = self.client.get(requirements_url(self.sprint.id)).content.decode()
 
         form = form_for(content, reverse("dashboard:requirement_delete", args=[requirement.id]))
         self.assertIn("keep their numbers", form.split(">")[0])
@@ -329,11 +333,11 @@ class StaticRequirementsTests(SetupUiFixture):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.first = Requirement.objects.create(project=cls.project, number=1, text="Log in")
-        cls.second = Requirement.objects.create(project=cls.project, number=2, text="Export")
+        cls.first = Requirement.objects.create(sprint=cls.sprint, number=1, text="Log in")
+        cls.second = Requirement.objects.create(sprint=cls.sprint, number=2, text="Export")
 
     def page(self, query=""):
-        return self.client.get(requirements_url(self.project.id) + query)
+        return self.client.get(requirements_url(self.sprint.id) + query)
 
     def edit_url(self, requirement):
         return reverse("dashboard:requirement_edit", args=[requirement.id])
@@ -343,14 +347,14 @@ class StaticRequirementsTests(SetupUiFixture):
 
         self.assertContains(response, "Log in</p>")
         self.assertContains(response, "Export</p>")
-        self.assertContains(response, f'href="?edit={self.first.id}"')
-        self.assertContains(response, f'href="?edit={self.second.id}"')
-        self.assertContains(response, ">edit</a>", count=2)
+        self.assertContains(response, f'href="?edit_requirement={self.first.id}"')
+        self.assertContains(response, f'href="?edit_requirement={self.second.id}"')
+        self.assertContains(response, 'href="?edit_requirement=', count=2)
         self.assertNotContains(response, f'action="{self.edit_url(self.first)}"')
         self.assertNotContains(response, "Log in</textarea>")
 
     def test_edit_opens_a_prefilled_box_for_that_requirement_only(self):
-        response = self.page(f"?edit={self.first.id}")
+        response = self.page(f"?edit_requirement={self.first.id}")
 
         form = form_for(response.content.decode(), self.edit_url(self.first))
         self.assertIn("Log in</textarea>", form)
@@ -361,14 +365,19 @@ class StaticRequirementsTests(SetupUiFixture):
         self.assertNotContains(response, f'action="{self.edit_url(self.second)}"')
 
     def test_edit_can_be_cancelled(self):
-        response = self.page(f"?edit={self.first.id}")
+        response = self.page(f"?edit_requirement={self.first.id}")
 
-        self.assertContains(response, f'href="{requirements_url(self.project.id)}"')
+        self.assertContains(response, f'href="{requirements_url(self.sprint.id)}"')
         self.assertContains(response, "Cancel")
 
     def test_a_meaningless_edit_value_shows_the_normal_page(self):
-        elsewhere = Requirement.objects.create(project=self.other_project, number=1, text="Other")
-        for query in ["?edit=abc", "?edit=", "?edit=999999", f"?edit={elsewhere.id}"]:
+        elsewhere = Requirement.objects.create(sprint=self.other_sprint, number=1, text="Other")
+        for query in [
+            "?edit_requirement=abc",
+            "?edit_requirement=",
+            "?edit_requirement=999999",
+            f"?edit_requirement={elsewhere.id}",
+        ]:
             with self.subTest(query=query):
                 response = self.page(query)
 
@@ -387,7 +396,7 @@ class StaticRequirementsTests(SetupUiFixture):
     def test_adding_a_requirement_stays_available(self):
         self.assertContains(
             self.page(),
-            f'action="{reverse("dashboard:requirement_add", args=[self.project.id])}"',
+            f'action="{reverse("dashboard:sprint_requirement_add", args=[self.sprint.id])}"',
         )
 
 
@@ -400,7 +409,7 @@ class DeleteProjectTests(SetupUiFixture):
 
     def add_summary(self):
         return Summary.objects.create(
-            team=self.team, user=self.grace, week_start=date(2026, 10, 26), artifact_count=1
+            team=self.team, user=self.grace, sprint=self.sprint, artifact_count=1
         )
 
     def test_setup_page_offers_it_and_asks_first(self):
@@ -424,7 +433,7 @@ class DeleteProjectTests(SetupUiFixture):
         self.assertIn("Ada\\u0027s", tag)
 
     def test_it_deletes_the_project_and_returns_to_the_overview(self):
-        Requirement.objects.create(project=self.project, number=1, text="Log in")
+        Requirement.objects.create(sprint=self.sprint, number=1, text="Log in")
 
         response = self.delete()
 
@@ -432,7 +441,7 @@ class DeleteProjectTests(SetupUiFixture):
         self.assertIn("Deleted Project One.", self.messages_of(response))
         self.assertFalse(Project.objects.filter(pk=self.project.pk).exists())
         self.assertFalse(Team.objects.filter(pk=self.team.pk).exists())
-        self.assertFalse(Requirement.objects.filter(project_id=self.project.pk).exists())
+        self.assertFalse(Requirement.objects.filter(sprint__project_id=self.project.pk).exists())
         self.assertTrue(Project.objects.filter(pk=self.other_project.pk).exists())
 
     def test_it_keeps_students_accounts_and_enrollments(self):
