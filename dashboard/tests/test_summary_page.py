@@ -13,6 +13,7 @@ from django.urls import reverse
 from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
 from ingest.models import Artifact
 from summaries.models import Claim, Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .test_course_overview import enroll, make_user, team_url
 
@@ -55,8 +56,10 @@ class SummaryPageFixture(TestCase):
         enroll(cls.instructor, cls.course, Role.INSTRUCTOR)
 
         cls.project = Project.objects.create(course=cls.course, name="Project One")
-        Requirement.objects.create(project=cls.project, number=1, text="Users can log in")
-        Requirement.objects.create(project=cls.project, number=2, text="Users can reset a password")
+        # The sprint runs Monday Oct 26 to Sunday Nov 1, so it crosses a month.
+        cls.sprint = sprint_for_week(cls.project, date(2026, 10, 26))
+        Requirement.objects.create(sprint=cls.sprint, number=1, text="Users can log in")
+        Requirement.objects.create(sprint=cls.sprint, number=2, text="Users can reset a password")
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         cls.repo = Repo.objects.create(
             team=cls.team, url="https://github.com/sample-org/app", full_name="sample-org/app"
@@ -76,7 +79,7 @@ class SummaryPageFixture(TestCase):
 
         # The week runs Monday Oct 26 to Sunday Nov 1, so it crosses a month.
         cls.summary = Summary.objects.create(
-            team=cls.team, user=cls.ada, week_start=date(2026, 10, 26), artifact_count=3
+            team=cls.team, user=cls.ada, sprint=cls.sprint, artifact_count=3
         )
         cls.login_claim = make_claim(
             cls.summary,
@@ -106,7 +109,7 @@ class SummaryPageFixture(TestCase):
         return Summary.objects.create(
             team=self.team,
             user=self.ada,
-            week_start=date(2026, 10, 19),
+            sprint=sprint_for_week(self.team.project, date(2026, 10, 19)),
             artifact_count=artifact_count,
         )
 
@@ -228,7 +231,11 @@ class SummaryPageRequirementTests(SummaryPageFixture):
 
     def test_takes_requirement_text_from_the_teams_own_project(self):
         other_project = Project.objects.create(course=self.course, name="Project Two")
-        Requirement.objects.create(project=other_project, number=1, text="Ships a mobile app")
+        Requirement.objects.create(
+            sprint=sprint_for_week(other_project, date(2026, 10, 26)),
+            number=1,
+            text="Ships a mobile app",
+        )
 
         response = self.get_summary_page()
 
@@ -279,12 +286,12 @@ class SummaryPageNoteTests(SummaryPageFixture):
     def test_summary_with_no_claims_says_there_was_no_activity(self):
         response = self.get_summary_page(summary=self.make_summary(artifact_count=0))
 
-        self.assertContains(response, "No activity that week.")
+        self.assertContains(response, "No activity in this sprint.")
 
     def test_summary_with_claims_doesnt_say_there_was_no_activity(self):
         response = self.get_summary_page()
 
-        self.assertNotContains(response, "No activity that week.")
+        self.assertNotContains(response, "No activity in this sprint.")
 
     def test_summary_whose_claims_were_all_dropped_doesnt_say_there_was_no_activity(self):
         summary = self.make_summary(artifact_count=2)
@@ -293,7 +300,7 @@ class SummaryPageNoteTests(SummaryPageFixture):
         response = self.get_summary_page(summary=summary)
 
         self.assertContains(response, "1 couldn't be verified.")
-        self.assertNotContains(response, "No activity that week.")
+        self.assertNotContains(response, "No activity in this sprint.")
 
 
 class SummaryPageAccessTests(SummaryPageFixture):

@@ -3,9 +3,8 @@
 Sprint is looked up per test rather than imported at module level, so each criterion
 passes or fails on its own instead of the whole module failing on a single ImportError.
 
-`Requirement.project` stays until T-21, so requirements made here set it as well as
-`sprint`. The existing tests for requirements with no sprint are left as they are, since
-the dashboard keeps creating those until US-39 moves it over.
+T-21 (#125) has since removed `Requirement.project`, so a requirement belongs to its sprint
+only (see test_requirements_by_sprint).
 """
 
 from datetime import UTC, date, datetime, timedelta
@@ -54,9 +53,7 @@ def make_sprint(project, name="Sprint 1", start=day(1), end=day(7)):
 
 
 def make_requirement(sprint, number=1, text="Users can log in"):
-    return Requirement.objects.create(
-        project=sprint.project, sprint=sprint, number=number, text=text
-    )
+    return Requirement.objects.create(sprint=sprint, number=number, text=text)
 
 
 def freeze(moment=NOW):
@@ -309,15 +306,13 @@ class RequirementSprintTests(TestCase):
         make_requirement(self.first, number=1)
         make_requirement(self.second, number=1)
 
-        numbered_one = Requirement.objects.filter(project=self.project, number=1)
+        numbered_one = Requirement.objects.filter(sprint__project=self.project, number=1)
         self.assertEqual(numbered_one.count(), 2)
 
     def test_two_requirements_with_the_same_number_pass_validation_in_different_sprints(self):
         make_requirement(self.first, number=1)
 
-        Requirement(
-            project=self.project, sprint=self.second, number=1, text="Something else"
-        ).full_clean()
+        Requirement(sprint=self.second, number=1, text="Something else").full_clean()
 
     def test_database_rejects_a_number_used_twice_in_a_sprint(self):
         make_requirement(self.first, number=1)
@@ -329,9 +324,7 @@ class RequirementSprintTests(TestCase):
         make_requirement(self.first, number=1)
 
         with self.assertRaises(ValidationError):
-            Requirement(
-                project=self.project, sprint=self.first, number=1, text="Something else"
-            ).full_clean()
+            Requirement(sprint=self.first, number=1, text="Something else").full_clean()
 
 
 class SprintDataMigrationTests(TransactionTestCase):
@@ -394,13 +387,6 @@ class SprintDataMigrationTests(TransactionTestCase):
             list(moved.values_list("number", "text")),
             [(1, "Log in"), (2, "Log out"), (5, "Pay")],
         )
-
-    def test_moved_requirements_keep_their_project_until_t21(self):
-        project = self.old_project("Has requirements", [(1, "Log in")])
-
-        _, Requirement_ = self.migrate()
-
-        self.assertEqual(Requirement_.objects.get().project_id, project.pk)
 
     def test_a_project_with_no_requirements_gets_no_sprint(self):
         project = self.old_project("No requirements")
@@ -477,14 +463,7 @@ class SprintAdminTests(TestCase):
 
 
 class ImportRequirementsIntoSprintTests(SplitRequirementsTestCase):
-    """The admin import, on a page per sprint.
-
-    The project's own import page stays until T-21 and keeps its existing tests.
-    """
-
-    def setUp(self):
-        super().setUp()
-        self.sprint = make_sprint(self.project, "Sprint 1", day(1), day(7))
+    """The admin import, on a page per sprint. SplitRequirementsTestCase makes `self.sprint`."""
 
     def sprint_import_url(self, sprint=None):
         pk = sprint.pk if sprint else self.sprint.pk

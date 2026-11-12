@@ -15,6 +15,7 @@ from django.urls import reverse
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag
 from summaries.models import Claim, Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .sprint_helpers import flaggable_sprint, sprint_for
 
@@ -43,7 +44,7 @@ class BalanceFixture(TestCase):
         cls.instructor = make_user("sample-instructor")
         Enrollment.objects.create(user=cls.instructor, course=cls.course, role="instructor")
         cls.project = Project.objects.create(course=cls.course, name="Project One")
-        cls.project.requirements.create(number=1, text="Users can log in.")
+        sprint_for_week(cls.project, WEEK).requirements.create(number=1, text="Users can log in.")
         cls.alpha = Team.objects.create(project=cls.project, name="Team Alpha")
         cls.ada = make_user("sample-ada", "Ada", "Sample")
         cls.grace = make_user("sample-grace", "Grace", "Example")
@@ -55,8 +56,12 @@ class BalanceFixture(TestCase):
         self.client.force_login(self.instructor)
 
     def summary(self, user, week=WEEK, artifacts=1, team=None):
+        team = team or self.alpha
         return Summary.objects.create(
-            team=team or self.alpha, user=user, week_start=week, artifact_count=artifacts
+            team=team,
+            user=user,
+            sprint=sprint_for_week(team.project, week),
+            artifact_count=artifacts,
         )
 
     def get(self, name, *args):
@@ -118,7 +123,9 @@ class OverviewCardTests(BalanceFixture):
         return content[content.rindex("<article", 0, at) : content.index("</article>", at)]
 
     def test_a_team_with_summaries_and_no_flags_says_so(self):
+        # A sprint's status counts once every student has a complete summary for it.
         self.summary(self.ada)
+        self.summary(self.grace)
 
         self.assertIn("No flags</span>", self.card(self.alpha))
 
@@ -129,11 +136,11 @@ class OverviewCardTests(BalanceFixture):
         self.assertNotIn("No flags", card)
         self.assertIn("No summaries yet", card)
 
-    def test_a_card_shows_the_teams_latest_week(self):
+    def test_a_card_shows_the_teams_latest_sprint(self):
         self.summary(self.ada, week=EARLIER_WEEK)
         self.summary(self.grace, week=WEEK)
 
-        self.assertIn("Latest week: Oct 26", self.card(self.alpha))
+        self.assertIn("Latest sprint: Week of Oct 26", self.card(self.alpha))
 
     def test_neither_extra_status_uses_the_flag_marker(self):
         # Only a real flag or warning is a <mark>, so one can't be mistaken for a status.
@@ -166,12 +173,10 @@ class TeamPageTests(BalanceFixture):
 
     def test_the_header_shows_the_teams_status(self):
         self.assertNotIn('class="tag', self.get("team", self.alpha.id))  # Nothing generated yet.
-        self.summary(self.ada)
+        sprint = self.summary(self.ada).sprint
+        self.summary(self.grace)
         self.assertIn('<span class="tag ok">No flags</span>', self.get("team", self.alpha.id))
-        Flag.objects.create(
-            team=self.alpha, rule="r", reason="x", severity="flag",
-            sprint=flaggable_sprint(self.alpha),
-        )
+        Flag.objects.create(team=self.alpha, rule="r", reason="x", severity="flag", sprint=sprint)
         self.assertIn('<span class="tag flag">Flag</span>', self.get("team", self.alpha.id))
 
     def give_shares(self):
@@ -241,16 +246,17 @@ class SummaryPageTests(BalanceFixture):
         content = self.get("summary", summary.id)
 
         self.assertNotIn("Verified claims", content)
-        self.assertIn("No activity that week.", content)
+        self.assertIn("No activity in this sprint.", content)
 
-    def test_the_week_switcher_lists_this_students_weeks_and_marks_the_current_one(self):
+    def test_the_sprint_switcher_lists_this_students_sprints_and_marks_the_current_one(self):
         earlier, current = self.summary(self.ada, week=EARLIER_WEEK), self.summary(self.ada)
-        graces = self.summary(self.grace, week=date(2026, 10, 12))  # Another student's week.
+        graces = self.summary(self.grace, week=date(2026, 10, 12))  # Another student's sprint.
 
         content = self.get("summary", current.id)
 
-        self.assertIn(f'href="{reverse("dashboard:summary", args=[earlier.id])}">Oct 19<', content)
-        self.assertIn('aria-current="page">Oct 26, 2026 – Nov 1, 2026<', content)
+        earlier_url = reverse("dashboard:summary", args=[earlier.id])
+        self.assertIn(f'href="{earlier_url}">Week of Oct 19<', content)
+        self.assertIn('aria-current="page">Week of Oct 26 · Oct 26, 2026 – Nov 1, 2026<', content)
         self.assertNotIn(f'href="{reverse("dashboard:summary", args=[graces.id])}"', content)
 
     def test_significance_is_drawn_as_one_two_or_three_marks(self):

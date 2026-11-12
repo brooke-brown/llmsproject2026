@@ -5,7 +5,7 @@ criterion passes or fails on its own instead of the whole module failing on a
 single ImportError.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import StringIO
 from zoneinfo import ZoneInfo
 
@@ -16,13 +16,13 @@ from django.db import IntegrityError, connection, transaction
 from django.db.migrations.loader import MigrationLoader
 from django.test import TestCase
 
-from core.models import Course, Project, Repo, Team
+from core.models import Course, Project, Repo, Sprint, Team
 from ingest.models import Artifact
 
 SUMMARY_MODELS = ["Summary", "Claim", "ValidationRun"]
 
-WEEK_START = date(2026, 10, 26)  # A Monday.
-NEXT_WEEK_START = date(2026, 11, 2)
+SPRINT_START = date(2026, 10, 26)
+NEXT_SPRINT_START = date(2026, 11, 2)
 MID_WEEK = datetime(2026, 10, 28, 12, 0, tzinfo=ZoneInfo("America/New_York"))
 
 
@@ -56,9 +56,20 @@ def make_artifact(team, artifact_id="sample-org/app:pr:12", type_="pr"):
     )
 
 
-def make_summary(team=None, user=None, week_start=WEEK_START):
+def make_sprint(project, start=SPRINT_START):
+    """The project's seven-day sprint starting on `start`, made on first use."""
+    sprint, _ = Sprint.objects.get_or_create(
+        project=project,
+        start_date=start,
+        defaults={"name": f"Sprint from {start}", "end_date": start + timedelta(days=6)},
+    )
+    return sprint
+
+
+def make_summary(team=None, user=None, start=SPRINT_START):
+    team = team or make_team()
     return summaries_model("Summary").objects.create(
-        team=team or make_team(), user=user or make_user(), week_start=week_start
+        team=team, user=user or make_user(), sprint=make_sprint(team.project, start)
     )
 
 
@@ -96,7 +107,7 @@ def make_run(summary, **overrides):
 
 
 class SummaryTests(TestCase):
-    def test_summary_belongs_to_a_team_a_user_and_a_week(self):
+    def test_summary_belongs_to_a_team_a_user_and_a_sprint(self):
         team, user = make_team(), make_user()
 
         summary = make_summary(team=team, user=user)
@@ -104,7 +115,7 @@ class SummaryTests(TestCase):
 
         self.assertEqual(summary.team, team)
         self.assertEqual(summary.user, user)
-        self.assertEqual(summary.week_start, WEEK_START)
+        self.assertEqual(summary.sprint.start_date, SPRINT_START)
 
     def test_summaries_are_reachable_from_the_team_and_the_user(self):
         team, user = make_team(), make_user()
@@ -116,22 +127,22 @@ class SummaryTests(TestCase):
     def test_summary_records_when_it_was_created(self):
         self.assertIsNotNone(make_summary().created_at)
 
-    def test_a_student_has_one_summary_per_team_and_week(self):
+    def test_a_student_has_one_summary_per_team_and_sprint(self):
         team, user = make_team(), make_user()
         make_summary(team=team, user=user)
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             make_summary(team=team, user=user)
 
-    def test_a_student_can_have_a_summary_for_another_week(self):
+    def test_a_student_can_have_a_summary_for_another_sprint(self):
         team, user = make_team(), make_user()
         make_summary(team=team, user=user)
 
-        make_summary(team=team, user=user, week_start=NEXT_WEEK_START)
+        make_summary(team=team, user=user, start=NEXT_SPRINT_START)
 
         self.assertEqual(team.summaries.count(), 2)
 
-    def test_another_student_can_have_a_summary_for_the_same_week(self):
+    def test_another_student_can_have_a_summary_for_the_same_sprint(self):
         team = make_team()
         make_summary(team=team, user=make_user("sample-student-a"))
 

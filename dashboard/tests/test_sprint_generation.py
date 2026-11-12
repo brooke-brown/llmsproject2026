@@ -283,8 +283,8 @@ class RetryBySprintTests(SprintGenerationFixture):
 class SprintPagesTests(SprintGenerationFixture):
     def setUp(self):
         super().setUp()
-        Requirement.objects.create(project=self.project, sprint=self.ended, number=1, text="Users can log in")
-        Requirement.objects.create(project=self.project, sprint=self.running, number=1, text="Users can pay")
+        Requirement.objects.create(sprint=self.ended, number=1, text="Users can log in")
+        Requirement.objects.create(sprint=self.running, number=1, text="Users can pay")
         # Summaries are created when the running sprint's was written, on Nov 2.
         self.summary = Summary.objects.create(team=self.team, user=self.ada, sprint=self.running)
         self.done = Summary.objects.create(team=self.team, user=self.grace, sprint=self.ended)

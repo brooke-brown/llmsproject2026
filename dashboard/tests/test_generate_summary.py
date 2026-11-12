@@ -849,9 +849,7 @@ class OneClickEndToEndTests(TestCase):
         enroll(cls.instructor, cls.course, Role.INSTRUCTOR)
         cls.project = Project.objects.create(course=cls.course, name="Project One")
         cls.sprint = sprint_for(cls.project)
-        Requirement.objects.create(
-            project=cls.project, sprint=cls.sprint, number=1, text="Sample requirement"
-        )
+        Requirement.objects.create(sprint=cls.sprint, number=1, text="Sample requirement")
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         cls.repo = Repo.objects.create(
             team=cls.team, url="https://github.com/sample-org/app", full_name="sample-org/app"

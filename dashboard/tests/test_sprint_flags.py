@@ -230,22 +230,6 @@ class ShareTests(SprintFlagFixture):
 
         self.assertEqual(self.flagged(solo, self.sprint2), {})
 
-    def test_weekly_summaries_raise_no_flags(self):
-        for student, significances in [(self.ada, ["minor"]), (self.grace, ["major", "major"])]:
-            summary = Summary.objects.create(
-                team=self.pair, user=student, week_start=date(2026, 10, 26)
-            )
-            for significance in significances:
-                Claim.objects.create(
-                    summary=summary, text="Sample work", category="feature", artifact_ids=[],
-                    requirement_ids=[1], significance=significance,
-                    status=Claim.Status.VERIFIED,
-                )
-
-        self.compute(self.pair)
-
-        self.assertFalse(Flag.objects.filter(team=self.pair).exists())
-
 
 class WholeSprintTests(SprintFlagFixture):
     """Sprint 1 is two weeks long. Shares cover the whole sprint, so when in it a student

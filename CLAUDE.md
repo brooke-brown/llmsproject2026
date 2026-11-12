@@ -26,7 +26,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 | App | Contents |
 |---|---|
 | `core/` | `User` (custom, has `github_login`), `Course`, `Enrollment`, `Project`, `Sprint`, `Team`, `TeamMembership`, `Repo`, `Requirement`, requirements PDF upload + extraction (pypdf) + LLM split, admin, seed command |
-| `ingest/` | `Artifact` model, `ingest(repo, week_start, week_end)`, co-author parsing, unattributed commits |
+| `ingest/` | `Artifact` model, `ingest(repo, week_start, week_end)` (any range of days, despite the names), co-author parsing, unattributed commits |
 | `summaries/` | `Summary`, `Claim`, `ValidationRun`, LLM prompt, Pydantic claim schema, validator + retry |
 | `dashboard/` | Views, templates, `Flag` and `FlagDispute` models + flag rules, "Generate summaries" button |
 | `contributions/` | `Contribution` and `Corroboration` models: offline work students report and teammates confirm. Never evidence for a claim, passed to the LLM or counted toward flags |
@@ -36,7 +36,7 @@ Reading `directions/` is blocked in `.claude/settings.json`; leave it that way. 
 
 These are the interfaces between apps. Changing them silently breaks other work. If a task seems to need a contract change, stop and say so instead of making it, unless its issue already calls for that change.
 
-The `Sprint` model, `generate_sprint_summary` (T-19, with the T-20 chunking and merge) and per-sprint flags (US-41) are built; the other sprint changes below are agreed but not built yet. Where a contract is changing, it says what `main` does today and which issue replaces it.
+Reports are per sprint only: T-21 (#125) removed the alpha's weekly reports, their data and `Requirement.project`.
 
 - **Models in `core/` and `ingest/`** (field names and types)
 - **Claim schema** in `summaries/schemas.py`. Requirement mapping and significance are based on what the work accomplishes, not lines changed; empty `requirement_ids` means not tied to a requirement.
@@ -49,31 +49,31 @@ The `Sprint` model, `generate_sprint_summary` (T-19, with the T-20 chunking and 
   ```
   - `artifact_ids` use the format `owner/repo:type:id`, such as `acme/app:pr:12`, so they stay unique across a team's repos.
   - `Artifact.artifact_id` is unique per `Repo`, not globally: a later project reusing a GitHub repo has its own `Repo` row and copies. Always look IDs up within the team: `Artifact.objects.filter(repo__team=team, artifact_id=...)`.
-  - `requirement_ids` hold `Requirement.number`, not the database ID. Once sprints land, a number only has meaning within its summary's sprint.
-- **Reporting dates:** a report covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. The alpha's Monday-Sunday weekly reports are no longer generated (T-21, #125), though existing weekly summaries stay until the data migration deletes them. `ingest.services.student_artifacts` and `unattributed_commits` take a first and last day, and the validator's `validate_sprint_claims` takes the covered range. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
+  - `requirement_ids` hold `Requirement.number`, not the database ID. A number only has meaning within its summary's sprint.
+- **Reporting dates:** a report covers one sprint, from its first day through the earlier of today and its last day, inclusive, in `America/New_York`. `ingest.services.student_artifacts` and `unattributed_commits` take a first and last day, and the validator's `validate_sprint_claims` takes the covered range. Ingest stores this date for each artifact in `Artifact.timestamp`, and the validator must use that field:
   - Commit: author date
   - PR: merged date, or created date if unmerged
   - Review: submitted date
   - Issue: created date
-- **`Requirement` model** in `core/`: `project`, `sprint`, `number`, `text`, with numbers unique per sprint. `sprint` is optional until T-21 (#125) removes `project`, and requirements with no sprint stay unique per project. New code must use `sprint`.
+- **`Requirement` model** in `core/`: `sprint` (required), `number`, `text`, with numbers unique per sprint. A requirement reaches its project through `sprint.project`; there is no project-wide requirement.
 - **`Sprint` model** in `core/`: `project` (`related_name="sprints"`), `name`, `start_date`, `end_date`, both dates inclusive. `Sprint.covered_through(today)` returns the earlier of `today` and `end_date`.
 - **`Repo.full_name`** in `core/` is `owner/repo`, required and unique per team. An artifact's ID must start with its repo's `full_name`. Only repo setup (US-1) reads `Repo.url` to fill this in; everything else uses `full_name`.
 - **Reviewers:** a review artifact's `author_login` is the reviewer. There is no separate reviewer field. `Artifact.review_state` holds GitHub's state for a review, such as `APPROVED`, and is empty for other types.
 - **Function signatures:**
   - `ingest.services.ingest(repo: Repo, week_start: date, week_end: date) -> list[Artifact]`
-  - `summaries.services.generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary`. A sprint summary has `Summary.sprint` set; the weekly `generate_summary` is gone (T-21).
+  - `summaries.services.generate_sprint_summary(user: User, team: Team, sprint: Sprint) -> Summary`. Every summary has `Summary.sprint` set, which is required.
   - `dashboard.flags.compute_flags(team: Team) -> list[Flag]`
 
 ## Data model
 
-What's on `main` today. The planned sprint model follows it.
+What's on `main` today.
 
 ```
 Course                     e.g. "CS 3240, Fall 2026"
  ├── Enrollment            User ↔ Course, with role: instructor | ta | student
- └── Project               optional requirements PDF or pasted text → Requirement rows
+ └── Project
       ├── Sprint           name, start and end date; a project has zero or more
-      │    └── Requirement numbered per sprint; also keeps `project` until T-21
+      │    └── Requirement numbered per sprint, from an optional requirements PDF or pasted text
       ├── PeerEvaluation   a named round of ratings, such as "Midpoint", with a closing time
       │    └── PeerRating  one rater's 1–5 scores for one teammate, by question key; never shown to students
       └── Team             exists only inside this project
@@ -83,19 +83,12 @@ Course                     e.g. "CS 3240, Fall 2026"
            └── Contribution     offline work a student reports; in any sprint whose dates include its date
                 └── Corroboration   a teammate's confirmation, one per teammate
 
-Summary          → Team + User + reporting week
+Summary          → Team + User + Sprint: one per student per sprint
   └── Claim      → claim schema above + status (verified / couldn't verify)
 ValidationRun    → per-run log: first-pass rate, retries, drop rate
 Flag             → Team + Sprint: each finished sprint keeps its own flags
 FlagDispute      → Team + student + rule + Sprint: finds its flag by these, so it survives flags being recomputed
 GenerationRun    → Team: exists only while its summaries are generating; holds progress (students, done, failures)
-```
-
-Planned changes for sprints (#119–#125):
-
-```
-Requirement      → belongs to a sprint only, once T-21 removes `project`
-Summary          → Team + User + Sprint, replacing the reporting week
 ```
 
 - **Teams belong to a project, not the course.** Classes that reshuffle teams per project get new teams per project; a semester-long class has one project with one set of teams. Past projects' teams and reports are never edited.
@@ -112,7 +105,7 @@ Summary          → Team + User + Sprint, replacing the reporting week
 Built, and what `main` does today:
 
 - Setup: instructors create, rename and delete projects, manage requirements, and manage teams, students and each team's repo from the dashboard; deleting warns what goes with it in its confirmation, including summaries, and is only refused where a claim would lose its evidence or requirement (a repo or requirement that claims cite). Courses and instructor and TA enrollments stay in admin. Repo ingest by URL + token, including co-author trailers and PR review credit
-- Requirements PDF (or pasted text) → `Requirement` rows an instructor can edit on the project's requirements page or in admin; requirement tags + significance on claims; simple per-project requirement table
+- Requirements PDF (or pasted text) → `Requirement` rows an instructor can edit on the sprint's page or in admin; requirement tags + significance on claims; the course overview's Requirements panel shows the requirements of the sprint it's on
 - "Generate summaries" button, one per team on the course overview, which calls `ingest` once per repo for the chosen sprint, then `generate_sprint_summary` once per student; flags are recomputed once every student has succeeded. A team can only have one run at a time (`GenerationRun`). A summary written before its sprint ended (`Summary.is_partial`) is labelled in progress, counts toward the team page's shares, and never counts toward flags until the sprint is generated again
 - Validator, retry, drop + "N couldn't be verified" note, `ValidationRun` logging
 - 1–2 flag rules, based on share of requirement-tied claims weighted by significance
@@ -122,13 +115,13 @@ Built, and what `main` does today:
 
 Each item is a GitHub issue. Read the issue before starting; it has the acceptance criteria.
 
-**Sprints (#118–#125).** Agreed, not built yet. New code lands beside the weekly code so `main` keeps working, and T-21 (#125) then removes the weekly code and deletes the alpha summaries.
-- A project has zero or more sprints, each with its own dates and requirements. Requirements never belong to a project as a whole. Built (US-39, #121): the project's edit page has a Sprints panel, where instructors create, rename and delete sprints and manage each sprint's requirements, including copying them from an earlier sprint. Dates are locked once a sprint has summaries. The overview's Generate summaries control picks a started sprint (US-40, #122); a sprint run recomputes flags once every student has succeeded, as a week does.
+**Sprints (#118–#125).** Built. T-21 (#125) removed the weekly code, deleted the alpha's weekly summaries with their claims and validation runs, and deleted any requirement with no sprint, along with the project-wide requirements page.
+- A project has zero or more sprints, each with its own dates and requirements. Requirements never belong to a project as a whole. Built (US-39, #121): the project's edit page has a Sprints panel, where instructors create, rename and delete sprints and manage each sprint's requirements, including copying them from an earlier sprint. Dates are locked once a sprint has summaries. The overview's Generate summaries control picks a started sprint (US-40, #122); a sprint run recomputes flags once every student has succeeded.
 - A new sprint's dates are editable and default to 7 days: from today for the first sprint, or from the latest sprint's last day otherwise.
 - Two sprints can overlap only by one sprint's last day being the next one's first day, and can never start on the same day.
 - Each student gets one summary per sprint. Before the sprint ends, it covers the sprint's first day through today and is labelled in progress.
 - A covered range is split into 7-day chunks, with a leftover of 3 days or fewer joining the previous chunk, so up to 10 days is one chunk. Every student on a team is chunked the same way. Several chunks go through an LLM merge pass and the validator again, and users only ever see the one report.
-- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint. Weekly summaries no longer raise flags.
+- Flags are computed per sprint, only once it has ended and every student has a complete summary. A running sprint shows shares but raises no flags or warnings. Built (US-41, #123): `compute_flags` recomputes every such sprint.
 - Built (US-46, #136): each project on the course overview has a sprint menu (`?sprint=<id>`, repeated once per project), defaulting to the latest sprint that has ended. Teams are labelled and ordered by that sprint's flags, then open disputes from any sprint (the tag names an earlier one), and each team link carries the sprint to the team page. The overview and team page share one sprint tag (`team_sprint_status`), and the course picker counts flags in the sprint the overview opens on.
 - Built (US-42, #124): the team page has a sprint menu (`?sprint=<id>`), defaulting to the latest sprint the team has a summary for. Its tag, flags, disputes, shares, pie and summary links are all for that sprint. Shares appear once every student has a summary for it, partial or not; a partial one is labelled "in progress, through <date>", and a missing one "Not generated".
 

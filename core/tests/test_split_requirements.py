@@ -1,4 +1,6 @@
-"""Tests for US-9 (#25): pasting project requirements and getting them split by the LLM.
+"""Tests for US-9 (#25): pasting a sprint's requirements and getting them split by the LLM.
+
+Requirements belonged to a project until T-21 (#125), so these now import into a sprint.
 
 The admin tests drive the real pages, so they check what an instructor sees. The source
 check's edge cases call the service directly, which US-10's PDF upload will also use.
@@ -24,7 +26,9 @@ from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
 from pydantic import BaseModel
 
-from core.models import Course, Project, Requirement, User
+from datetime import date, timedelta
+
+from core.models import Course, Project, Requirement, Sprint, User
 
 SOURCE = (
     "Project requirements\n"
@@ -42,9 +46,9 @@ INVENTED = "The app supports single sign-on."
 
 
 def import_requirements(*args, **kwargs):
-    from core.services import import_requirements
+    from core.services import import_sprint_requirements
 
-    return import_requirements(*args, **kwargs)
+    return import_sprint_requirements(*args, **kwargs)
 
 
 def import_error():
@@ -114,13 +118,22 @@ class SplitRequirementsTestCase(TestCase):
         self.client.force_login(self.admin)
         self.course = Course.objects.create(name="CS 3240, Fall 2026")
         self.project = Project.objects.create(course=self.course, name="Project 1")
+        self.sprint = self.new_sprint("Sprint 1")
 
-    def import_url(self, project=None):
-        project = project or self.project
+    def new_sprint(self, name):
+        """A sprint of the project, each a week after the last so none overlap."""
+        weeks = self.project.sprints.count()
+        start = date(2026, 9, 1) + timedelta(days=7 * weeks)
+        return Sprint.objects.create(
+            project=self.project, name=name, start_date=start, end_date=start + timedelta(days=6)
+        )
+
+    def import_url(self, sprint=None):
+        sprint = sprint or self.sprint
         try:
-            return reverse("admin:core_project_import_requirements", args=[project.pk])
+            return reverse("admin:core_sprint_import_requirements", args=[sprint.pk])
         except NoReverseMatch:
-            self.fail("Project has no admin page for importing requirements")
+            self.fail("Sprint has no admin page for importing requirements")
 
     def requirement_url(self, action, *args):
         try:
@@ -128,11 +141,11 @@ class SplitRequirementsTestCase(TestCase):
         except NoReverseMatch:
             self.fail(f"Requirement has no admin {action} page")
 
-    def paste(self, text=SOURCE, project=None):
-        return self.client.post(self.import_url(project), {"text": text})
+    def paste(self, text=SOURCE, sprint=None):
+        return self.client.post(self.import_url(sprint), {"text": text})
 
-    def stored(self, project=None):
-        requirements = Requirement.objects.filter(project=project or self.project)
+    def stored(self, sprint=None):
+        requirements = Requirement.objects.filter(sprint=sprint or self.sprint)
         return list(requirements.order_by("number").values_list("number", "text"))
 
     def assert_import_error(self, response, expected_text=""):
@@ -146,14 +159,14 @@ class SplitRequirementsTestCase(TestCase):
 
 
 class ImportPageTests(SplitRequirementsTestCase):
-    def test_the_project_page_links_to_the_import_page(self):
-        response = self.client.get(reverse("admin:core_project_change", args=[self.project.pk]))
+    def test_the_sprint_page_links_to_the_import_page(self):
+        response = self.client.get(reverse("admin:core_sprint_change", args=[self.sprint.pk]))
 
         self.assertContains(response, self.import_url())
 
-    def test_the_page_for_adding_a_project_still_loads(self):
-        # It shares the template that holds the link, but has no project to link to yet.
-        response = self.client.get(reverse("admin:core_project_add"))
+    def test_the_page_for_adding_a_sprint_still_loads(self):
+        # It shares the template that holds the link, but has no sprint to link to yet.
+        response = self.client.get(reverse("admin:core_sprint_add"))
 
         self.assertEqual(response.status_code, 200)
 
@@ -187,8 +200,8 @@ class ImportPageTests(SplitRequirementsTestCase):
         self.assertEqual(self.llm.calls, [])
         self.assertEqual(self.stored(), [])
 
-    def test_an_unknown_project_is_not_found(self):
-        url = self.import_url().replace(f"/{self.project.pk}/", "/999999/")
+    def test_an_unknown_sprint_is_not_found(self):
+        url = self.import_url().replace(f"/{self.sprint.pk}/", "/999999/")
 
         response = self.client.post(url, {"text": SOURCE})
 
@@ -245,15 +258,15 @@ class SplitTests(SplitRequirementsTestCase):
 
         self.assertTrue(issubclass(self.llm.calls[0]["output_format"], BaseModel))
 
-    def test_requirements_are_added_only_to_this_project(self):
-        other = Project.objects.create(course=self.course, name="Project 2")
+    def test_requirements_are_added_only_to_this_sprint(self):
+        other = self.new_sprint("Sprint 2")
 
         self.paste()
 
         self.assertEqual(self.stored(other), [])
 
     def test_the_service_returns_the_new_requirements_in_order(self):
-        requirements = import_requirements(self.project, SOURCE)
+        requirements = import_requirements(self.sprint, SOURCE)
 
         self.assertEqual([requirement.number for requirement in requirements], [1, 2, 3])
         self.assertTrue(all(requirement.pk for requirement in requirements))
@@ -267,11 +280,11 @@ class SplitTests(SplitRequirementsTestCase):
 
     def test_a_requirement_can_be_edited_in_admin(self):
         self.paste()
-        requirement = Requirement.objects.get(project=self.project, number=2)
+        requirement = Requirement.objects.get(sprint=self.sprint, number=2)
 
         response = self.client.post(
             self.requirement_url("change", requirement.pk),
-            {"project": self.project.pk, "number": 2, "text": "Instructors can export a CSV."},
+            {"sprint": self.sprint.pk, "number": 2, "text": "Instructors can export a CSV."},
         )
 
         self.assertEqual(response.status_code, 302)
@@ -283,25 +296,25 @@ class SourceCheckTests(SplitRequirementsTestCase):
     """Every requirement appears in my source text, ignoring whitespace differences."""
 
     def assert_accepted(self, source, requirement):
-        project = Project.objects.create(course=self.course, name="Accepted")
+        sprint = self.new_sprint("Accepted")
         self.llm.replies_with([requirement])
 
-        import_requirements(project, source)
+        import_requirements(sprint, source)
 
         self.assertEqual(
-            [whitespace_normalized(text) for _, text in self.stored(project)],
+            [whitespace_normalized(text) for _, text in self.stored(sprint)],
             [whitespace_normalized(requirement)],
         )
 
     def assert_refused(self, source, requirements):
-        project = Project.objects.create(course=self.course, name="Refused")
+        sprint = self.new_sprint("Refused")
         self.llm.replies_with(requirements)
 
         with self.assertRaises(import_error()) as raised:
-            import_requirements(project, source)
+            import_requirements(sprint, source)
 
         self.assertIn("source text", str(raised.exception).lower())
-        self.assertEqual(self.stored(project), [])
+        self.assertEqual(self.stored(sprint), [])
 
     def test_whitespace_differences_are_ignored(self):
         cases = {
@@ -412,7 +425,7 @@ class FailedSplitTests(SplitRequirementsTestCase):
         self.llm.error = anthropic.APITimeoutError(request=api_request())
 
         with self.assertRaises(import_error()):
-            import_requirements(self.project, SOURCE)
+            import_requirements(self.sprint, SOURCE)
 
     def test_the_pasted_text_is_kept_so_it_can_be_retried(self):
         self.llm.error = anthropic.APITimeoutError(request=api_request())
@@ -423,7 +436,7 @@ class FailedSplitTests(SplitRequirementsTestCase):
 
     def test_a_failure_leaves_requirements_that_appeared_during_the_call_alone(self):
         def someone_else_adds_a_requirement():
-            Requirement.objects.create(project=self.project, number=1, text="Added meanwhile")
+            Requirement.objects.create(sprint=self.sprint, number=1, text="Added meanwhile")
 
         self.llm.during_call = someone_else_adds_a_requirement
         self.llm.error = anthropic.APITimeoutError(request=api_request())
@@ -431,9 +444,9 @@ class FailedSplitTests(SplitRequirementsTestCase):
         self.assert_import_error(self.paste())
         self.assertEqual(self.stored(), [(1, "Added meanwhile")])
 
-    def test_a_failure_leaves_other_projects_alone(self):
-        other = Project.objects.create(course=self.course, name="Project 2")
-        Requirement.objects.create(project=other, number=1, text="Users can log out")
+    def test_a_failure_leaves_other_sprints_alone(self):
+        other = self.new_sprint("Sprint 2")
+        Requirement.objects.create(sprint=other, number=1, text="Users can log out")
         self.llm.error = anthropic.APITimeoutError(request=api_request())
 
         self.paste()
@@ -442,12 +455,12 @@ class FailedSplitTests(SplitRequirementsTestCase):
 
 
 class ExistingRequirementsTests(SplitRequirementsTestCase):
-    """If the project already has requirements, the import is refused."""
+    """If the sprint already has requirements, the import is refused."""
 
     def setUp(self):
         super().setUp()
         self.existing = Requirement.objects.create(
-            project=self.project, number=1, text="Users can log out"
+            sprint=self.sprint, number=1, text="Users can log out"
         )
 
     def test_the_import_is_refused_with_an_error(self):
@@ -467,41 +480,41 @@ class ExistingRequirementsTests(SplitRequirementsTestCase):
     def test_the_service_refuses_too(self):
         # US-10's upload goes through the service, so the refusal can't live only in the page.
         with self.assertRaises(import_error()) as raised:
-            import_requirements(self.project, SOURCE)
+            import_requirements(self.sprint, SOURCE)
 
         self.assertIn("already has requirements", str(raised.exception).lower())
         self.assertEqual(self.stored(), [(1, "Users can log out")])
 
-    def test_requirements_in_another_project_do_not_block_the_import(self):
-        other = Project.objects.create(course=self.course, name="Project 2")
+    def test_requirements_in_another_sprint_do_not_block_the_import(self):
+        other = self.new_sprint("Sprint 2")
 
-        response = self.paste(project=other)
+        response = self.paste(sprint=other)
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(len(self.stored(other)), 3)
 
     def test_an_import_that_collides_at_the_last_moment_is_refused(self):
         # Two overlapping imports can both pass the check, and then number 1 collides.
-        other = Project.objects.create(course=self.course, name="Project 2")
+        other = self.new_sprint("Sprint 2")
 
         with mock.patch(
             "django.db.models.query.QuerySet.bulk_create", side_effect=IntegrityError
         ):
-            response = self.paste(project=other)
+            response = self.paste(sprint=other)
 
         self.assert_import_error(response, "already has requirements")
         self.assertEqual(self.stored(other), [])
 
     def test_requirements_that_appear_during_the_call_also_refuse_the_import(self):
         # Two imports can overlap, and the LLM call is long enough for that to happen.
-        project = Project.objects.create(course=self.course, name="Project 2")
+        sprint = self.new_sprint("Sprint 2")
 
         def someone_else_adds_a_requirement():
-            Requirement.objects.create(project=project, number=1, text="Added meanwhile")
+            Requirement.objects.create(sprint=sprint, number=1, text="Added meanwhile")
 
         self.llm.during_call = someone_else_adds_a_requirement
 
-        response = self.paste(project=project)
+        response = self.paste(sprint=sprint)
 
         self.assert_import_error(response, "already has requirements")
-        self.assertEqual(self.stored(project), [(1, "Added meanwhile")])
+        self.assertEqual(self.stored(sprint), [(1, "Added meanwhile")])

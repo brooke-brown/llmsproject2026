@@ -18,6 +18,7 @@ from django.test import TestCase
 from core.models import Course, Enrollment, Project, Team, TeamMembership
 from dashboard.models import Flag
 from summaries.models import Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .sprint_helpers import sprint_for
 from .test_course_overview import enroll, make_user, team_url
@@ -302,7 +303,12 @@ class DeleteConfirmationTests(TeamSetupFixture):
         self.assertNotIn("dispute", tag)
 
     def test_the_team_delete_confirmation_counts_its_disputes(self):
-        Summary.objects.create(team=self.team, user=self.grace, week_start=WEEK, artifact_count=1)
+        Summary.objects.create(
+            team=self.team,
+            user=self.grace,
+            sprint=sprint_for_week(self.team.project, WEEK),
+            artifact_count=1,
+        )
         self.dispute()
         make_dispute(self.team, self.grace, rule="another-rule")
 

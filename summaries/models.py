@@ -10,24 +10,18 @@ from ingest.services import REPORTING_TIME_ZONE
 
 
 class Summary(models.Model):
-    """One student's summary for one team and one reporting week.
+    """One student's summary for one team and one sprint.
 
-    Regenerating a week reuses this row: the old claims are deleted and new ones are
-    written, so the week's ValidationRuns survive.
+    Regenerating a sprint reuses this row: the old claims are deleted and new ones are
+    written, so the sprint's ValidationRuns survive.
     """
 
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="summaries")
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="summaries"
     )
-    # The Monday that starts the reporting week (Monday-Sunday, America/New_York). Empty for
-    # a sprint summary, which is the replacement for the weekly one (T-21 removes this).
-    week_start = models.DateField(null=True, blank=True)
-    # Set for a sprint summary: one per team, student and sprint.
-    sprint = models.ForeignKey(
-        Sprint, on_delete=models.CASCADE, related_name="summaries", null=True, blank=True
-    )
-    # How many artifacts the student had that week, so a page can tell "no activity"
+    sprint = models.ForeignKey(Sprint, on_delete=models.CASCADE, related_name="summaries")
+    # How many artifacts the student had in the sprint, so a page can tell "no activity"
     # apart from "every claim was dropped".
     artifact_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -35,19 +29,7 @@ class Summary(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["team", "user", "week_start"], name="summaries_summary_unique"
-            ),
-            models.UniqueConstraint(
                 fields=["team", "user", "sprint"], name="summaries_summary_unique_per_sprint"
-            ),
-            # Exactly one of the two, so week_ended_at always has a date to work from and
-            # neither unique constraint is slipped by a row with both empty.
-            models.CheckConstraint(
-                condition=(
-                    models.Q(week_start__isnull=False, sprint__isnull=True)
-                    | models.Q(week_start__isnull=True, sprint__isnull=False)
-                ),
-                name="summaries_summary_week_or_sprint",
             ),
         ]
 
@@ -58,23 +40,20 @@ class Summary(models.Model):
         return max((run.created_at for run in self.validation_runs.all()), default=self.created_at)
 
     @property
-    def week_ended_at(self):
-        """The moment its reporting week, or its sprint's last day, ended."""
-        if self.sprint_id is not None:
-            day_after = self.sprint.end_date + timedelta(days=1)
-        else:
-            day_after = self.week_start + timedelta(days=7)
+    def sprint_ended_at(self):
+        """The moment its sprint's last day ended."""
+        day_after = self.sprint.end_date + timedelta(days=1)
         return datetime.combine(day_after, time.min, tzinfo=REPORTING_TIME_ZONE)
 
     @property
     def is_partial(self):
-        """Whether it was written before its week ended, so it may be missing activity. This
-        stays true after the week ends, until the week is generated again."""
-        return self.generated_at < self.week_ended_at
+        """Whether it was written before its sprint ended, so it may be missing activity. This
+        stays true after the sprint ends, until the sprint is generated again."""
+        return self.generated_at < self.sprint_ended_at
 
     @property
-    def week_is_running(self):
-        return timezone.now() < self.week_ended_at
+    def sprint_is_running(self):
+        return timezone.now() < self.sprint_ended_at
 
     @property
     def unverified_count(self):
@@ -82,9 +61,7 @@ class Summary(models.Model):
         return self.claims.filter(status=Claim.Status.COULDNT_VERIFY).count()
 
     def __str__(self):
-        if self.sprint_id is not None:
-            return f"{self.user} on {self.team}, {self.sprint.name}"
-        return f"{self.user} on {self.team}, week of {self.week_start}"
+        return f"{self.user} on {self.team}, {self.sprint.name}"
 
 
 class Claim(models.Model):
@@ -145,7 +122,7 @@ class Claim(models.Model):
 
 
 class ValidationRun(models.Model):
-    """The log of one generate_summary call, for measuring the validator and the LLM."""
+    """The log of one generate_sprint_summary call, for measuring the validator and the LLM."""
 
     summary = models.ForeignKey(Summary, on_delete=models.CASCADE, related_name="validation_runs")
     claims_total = models.PositiveIntegerField()

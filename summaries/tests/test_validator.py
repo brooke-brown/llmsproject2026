@@ -378,13 +378,14 @@ class RequirementTests(ValidatorTestCase):
 
     def test_another_projects_requirement_does_not_count(self):
         other = Project.objects.create(course=self.team.project.course, name="Other project")
-        Requirement.objects.create(project=other, number=7, text="Belongs to another project.")
+        Requirement.objects.create(
+            sprint=sprint_for_week(other, WEEK_START), number=7, text="Belongs to another project."
+        )
 
         self.assertEqual(self.checks_of(self.requirement_result([7])), ["unknown_requirement"])
 
     def test_numbers_are_matched_by_requirement_number_not_database_id(self):
         requirement = Requirement.objects.create(
-            project=self.team.project,
             sprint=sprint_for_week(self.team.project, WEEK_START),
             number=5,
             text="Users can delete a task.",
@@ -400,7 +401,7 @@ class RequirementTests(ValidatorTestCase):
         self.assertCountEqual(self.checks_of(result), ["not_contributor", "unknown_requirement"])
 
     def test_a_project_with_no_requirements_accepts_only_an_empty_list(self):
-        Requirement.objects.filter(project=self.team.project).delete()
+        Requirement.objects.filter(sprint__project=self.team.project).delete()
 
         self.assertTrue(self.requirement_result([]).ok)
         self.assertEqual(self.checks_of(self.requirement_result([1])), ["unknown_requirement"])

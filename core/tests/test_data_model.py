@@ -275,38 +275,22 @@ class TeamMembershipDuplicateTests(TestCase):
 
 
 class RequirementTests(TestCase):
-    def setUp(self):
-        self.Requirement = core_model("Requirement")
-        self.project = make_project()
-        self.Requirement.objects.create(project=self.project, number=1, text="Users can log in")
-
-    def test_database_rejects_a_duplicate_number_in_a_project(self):
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            self.Requirement.objects.create(project=self.project, number=1, text="Something else")
-
-    def test_validation_rejects_a_duplicate_number_in_a_project(self):
-        with self.assertRaises(ValidationError):
-            self.Requirement(project=self.project, number=1, text="Something else").full_clean()
-
-    def test_a_project_can_have_several_numbers(self):
-        self.Requirement.objects.create(project=self.project, number=2, text="Users can log out")
-        self.assertEqual(self.Requirement.objects.filter(project=self.project).count(), 2)
-
-    def test_another_project_can_reuse_a_number(self):
-        other = make_project(course=self.project.course, name="Project 2")
-        self.Requirement.objects.create(project=other, number=1, text="Users can log in")
-        self.assertEqual(self.Requirement.objects.filter(number=1).count(), 2)
+    """Requirements belong to a sprint; numbering per sprint is in test_sprints."""
 
     def test_number_is_an_integer_separate_from_the_database_id(self):
         # Claims' requirement_ids hold Requirement.number, not the database ID.
-        field = self.Requirement._meta.get_field("number")
+        Requirement = core_model("Requirement")
+        field = Requirement._meta.get_field("number")
         self.assertIsInstance(field, models.IntegerField)
         self.assertFalse(field.primary_key)
 
-        requirement = self.Requirement.objects.create(
-            project=self.project, number=9000, text="Numbered independently of pk"
+        sprint = core_model("Sprint").objects.create(
+            project=make_project(), name="Sprint 1", start_date="2026-09-01", end_date="2026-09-07"
         )
-        self.assertEqual(self.Requirement.objects.get(pk=requirement.pk).number, 9000)
+        requirement = Requirement.objects.create(
+            sprint=sprint, number=9000, text="Numbered independently of pk"
+        )
+        self.assertEqual(Requirement.objects.get(pk=requirement.pk).number, 9000)
         self.assertNotEqual(requirement.pk, 9000)
 
 

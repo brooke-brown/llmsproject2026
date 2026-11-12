@@ -18,6 +18,7 @@ from django.urls import reverse
 from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
 from dashboard import services
 from summaries.models import Summary
+from summaries.tests.week_shim import sprint_for_week
 
 from .test_course_overview import enroll, make_user
 
@@ -157,13 +158,12 @@ class StudentsAreRefusedOnStaffPagesTests(AccessFixture):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.requirement = Requirement.objects.create(project=cls.project, number=1, text="Log in")
+        cls.sprint = sprint_for_week(cls.project, date(2026, 11, 2))
+        cls.requirement = Requirement.objects.create(sprint=cls.sprint, number=1, text="Log in")
         cls.repo = Repo.objects.create(
             team=cls.team, url="https://github.com/acme/app", full_name="acme/app"
         )
-        cls.summary = Summary.objects.create(
-            team=cls.team, user=cls.student, week_start=date(2026, 11, 2)
-        )
+        cls.summary = Summary.objects.create(team=cls.team, user=cls.student, sprint=cls.sprint)
 
     def staff_pages(self):
         course, project, team = self.course.id, self.project.id, self.team.id
@@ -183,9 +183,9 @@ class StudentsAreRefusedOnStaffPagesTests(AccessFixture):
             ("project_setup", project),
             ("project_delete", project),
             ("project_rename", project),
-            ("project_requirements", project),
-            ("requirements_import", project),
-            ("requirement_add", project),
+            ("sprint", self.sprint.id),
+            ("sprint_requirements_import", self.sprint.id),
+            ("sprint_requirement_add", self.sprint.id),
             ("team_create", project),
             ("requirement_edit", requirement),
             ("requirement_delete", requirement),

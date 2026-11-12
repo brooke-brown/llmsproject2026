@@ -77,7 +77,8 @@ class SeededDataTests(TestCase):
     def test_project_has_requirements(self):
         # The validator checks each claim's requirement_ids against these.
         project = Project.objects.get()
-        self.assertGreaterEqual(project.requirements.count(), 2)
+        requirements = Requirement.objects.filter(sprint__project=project)
+        self.assertGreaterEqual(requirements.count(), 2)
 
     def test_project_has_at_least_two_teams(self):
         self.assertGreaterEqual(Project.objects.get().teams.count(), 2)

@@ -1,27 +1,22 @@
-"""Tests for how a partial weekly summary is labelled and what it says. Weekly summaries are
-the alpha's, and no new ones can be generated (T-21): these only keep the pages that still
-show them honest until PR B deletes them. Generating by sprint, and its in-progress wording,
-is tested in test_sprint_generation, and flags and shares follow sprints (US-41).
+"""Tests for when a summary counts as partial: written before its sprint ended, until it is
+generated again. Each sprint here is a Monday-Sunday week (see week_shim). How a partial
+summary is labelled is tested in test_sprint_generation and test_team_sprint.
 
-The clock is fixed at Wednesday Nov 4, 2026, noon in New York, so the current week starts
-Nov 2 and the most recent completed week starts Oct 26.
+The clock is fixed at Wednesday Nov 4, 2026, noon in New York, so the current sprint starts
+Nov 2 and the most recent completed one starts Oct 26.
 """
 
-import re
 from datetime import date, datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
 from django.test import TestCase
-from django.urls import reverse
 
-from core.models import Course, Enrollment, Project, Repo, Requirement, Team, TeamMembership
-from dashboard import flags
-from dashboard.models import Flag
+from core.models import Course, Enrollment, Project, Repo, Team, TeamMembership
 from summaries.models import Claim, Summary, ValidationRun
+from summaries.tests.week_shim import sprint_for_week
 
-from .test_course_overview import enroll, make_user, overview_url, team_url
-from .test_generate_summary import team_article
+from .test_course_overview import enroll, make_user
 
 Role = Enrollment.Role
 NEW_YORK = ZoneInfo("America/New_York")
@@ -35,9 +30,10 @@ NEXT = date(2026, 11, 9)
 
 
 def give(student, team, *significances, week):
-    """Give the student a summary for the week, with one verified, requirement-tied claim per
-    significance."""
-    summary, _ = Summary.objects.get_or_create(team=team, user=student, week_start=week)
+    """Give the student a summary for the week's sprint, with one verified, requirement-tied
+    claim per significance."""
+    sprint = sprint_for_week(team.project, week)
+    summary, _ = Summary.objects.get_or_create(team=team, user=student, sprint=sprint)
     for significance in significances:
         Claim.objects.create(
             summary=summary, text=f"Sample {significance} work", category="feature",
@@ -52,7 +48,7 @@ def at(moment):
 
 
 def run_on(summary):
-    """Log a generation of this summary, as generate_summary does each time."""
+    """Log a generation of this summary, as generate_sprint_summary does each time."""
     return ValidationRun.objects.create(
         summary=summary, claims_total=0, claims_first_pass=0, claims_dropped=0, retries=0
     )
@@ -65,7 +61,6 @@ class InProgressFixture(TestCase):
         cls.instructor = make_user("sample-instructor")
         enroll(cls.instructor, cls.course, Role.INSTRUCTOR)
         cls.project = Project.objects.create(course=cls.course, name="Project One")
-        Requirement.objects.create(project=cls.project, number=1, text="Sample requirement")
         cls.team = Team.objects.create(project=cls.project, name="Team Alpha")
         Repo.objects.create(
             team=cls.team, url="https://github.com/acme/app", full_name="acme/app"
@@ -136,133 +131,3 @@ class IsPartialTests(InProgressFixture):
             run_on(summary)
 
         self.assertEqual(Summary.objects.get(pk=summary.pk).generated_at, NEXT_TUESDAY)
-
-
-class LabelTests(InProgressFixture):
-    def summary_page(self, summary):
-        return self.client.get(reverse("dashboard:summary", args=[summary.id]))
-
-    def test_team_page_labels_a_summary_in_a_running_week(self):
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(WEDNESDAY)
-
-        self.assertContains(self.client.get(team_url(self.team.id)), "in progress")
-
-    def test_team_page_labels_a_stale_one_partial(self):
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(NEXT_TUESDAY)
-
-        response = self.client.get(team_url(self.team.id))
-
-        self.assertContains(response, "partial")
-        self.assertNotContains(response, "in progress")
-
-    def test_team_page_doesnt_label_a_complete_summary(self):
-        self.generated(self.ada, WEDNESDAY, COMPLETED)
-        self.set_clock(WEDNESDAY)
-
-        response = self.client.get(team_url(self.team.id))
-
-        self.assertNotContains(response, "in progress")
-        self.assertNotContains(response, "partial")
-
-    def test_summary_page_explains_a_running_week(self):
-        summary = self.generated(self.ada, WEDNESDAY)
-        self.set_clock(WEDNESDAY)
-
-        response = self.summary_page(summary)
-
-        self.assertContains(response, "This week is still in progress")
-        self.assertContains(response, "Nov 4")
-        # The weekly flow is gone (T-21), so the page mustn't offer to generate the week again.
-        self.assertContains(response, "Weekly summaries can't be generated again")
-        self.assertNotContains(response, "Generate this week again")
-        self.assertNotContains(response, "or shares")
-
-    def test_summary_page_says_a_stale_one_cant_be_generated_again(self):
-        summary = self.generated(self.ada, WEDNESDAY)
-        self.set_clock(NEXT_TUESDAY)
-
-        response = self.summary_page(summary)
-
-        self.assertContains(response, "before the week ended")
-        self.assertContains(response, "Weekly summaries can't be generated again")
-        self.assertNotContains(response, "Generate this week again")
-        self.assertNotContains(response, "still in progress")
-
-    def test_summary_page_says_nothing_for_a_complete_summary(self):
-        summary = self.generated(self.ada, WEDNESDAY, COMPLETED)
-        self.set_clock(WEDNESDAY)
-
-        response = self.summary_page(summary)
-
-        self.assertNotContains(response, "in progress")
-        self.assertNotContains(response, "before the week ended")
-
-    def test_week_switcher_labels_partial_weeks(self):
-        self.generated(self.ada, WEDNESDAY)
-        complete = self.generated(self.ada, WEDNESDAY, COMPLETED)
-        self.set_clock(WEDNESDAY)
-
-        self.assertContains(self.summary_page(complete), "in progress")
-
-    def test_the_note_uses_new_york_time_for_when_it_was_generated(self):
-        late = datetime(2026, 11, 4, 23, 30, tzinfo=NEW_YORK)
-        summary = self.generated(self.ada, late)
-        self.set_clock(late)
-
-        self.assertContains(self.summary_page(summary), "Nov 4")
-
-
-class TeamStatusTests(InProgressFixture):
-    def overview_card(self):
-        content = self.client.get(overview_url(self.course.id)).content.decode()
-        return team_article(content, self.team.name)
-
-    def test_overview_says_in_progress_rather_than_no_flags(self):
-        """Nothing has been checked yet, so "No flags" would read as an all-clear."""
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(WEDNESDAY)
-
-        card = self.overview_card()
-
-        self.assertIn("In progress", card)
-        self.assertNotIn("No flags", card)
-
-    def test_team_page_says_in_progress_rather_than_no_flags(self):
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(WEDNESDAY)
-
-        response = self.client.get(team_url(self.team.id))
-
-        self.assertContains(response, "In progress")
-        self.assertNotContains(response, "No flags")
-
-    def test_a_completed_week_still_says_no_flags(self):
-        self.generated(self.ada, WEDNESDAY, COMPLETED)
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(WEDNESDAY)
-
-        card = self.overview_card()
-
-        self.assertIn("No flags", card)
-        self.assertNotIn(">In progress<", card)
-
-    def test_latest_week_on_the_overview_is_marked_when_partial(self):
-        self.generated(self.ada, WEDNESDAY, COMPLETED)
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(WEDNESDAY)
-
-        self.assertIn("Latest week: Nov 2 (in progress)", self.overview_card())
-
-    def test_latest_week_says_partial_once_the_week_has_ended(self):
-        self.generated(self.ada, WEDNESDAY)
-        self.set_clock(NEXT_TUESDAY)
-
-        self.assertIn("Latest week: Nov 2 (partial)", self.overview_card())
-
-    def test_latest_week_isnt_marked_when_complete(self):
-        self.generated(self.ada, WEDNESDAY, COMPLETED)
-        self.set_clock(WEDNESDAY)
-
-        self.assertRegex(self.overview_card(), r"Latest week: Oct 26\s*<")

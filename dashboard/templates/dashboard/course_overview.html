@@ -39,7 +39,7 @@
         <article class="card{% if team.flag_rank == 0 %} flag{% elif team.flag_rank == 1 %} warn{% endif %}">
           <div class="row">
             <h3><a href="{% url 'dashboard:team' team.id %}{% if project.overview_sprint %}?sprint={{ project.overview_sprint.id }}{% endif %}"><strong>{{ team.name }}</strong></a></h3>
-            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif project.overview_sprint %}{% if team.sprint_status == "ok" %}<span class="tag ok">No flags</span>{% elif team.sprint_status == "in_progress" %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_week or team.latest_sprint %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
+            {% if team.flag_rank == 0 %}<mark>Flag</mark>{% elif team.flag_rank == 1 %}<mark>Warning</mark>{% elif team.id in retry_team_ids %}<span class="tag none">Incomplete</span>{% elif project.overview_sprint %}{% if team.sprint_status == "ok" %}<span class="tag ok">No flags</span>{% elif team.sprint_status == "in_progress" %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}{% elif team.has_complete_summary %}<span class="tag ok">No flags</span>{% elif team.latest_sprint %}<span class="tag none">In progress</span>{% else %}<span class="tag none new">Not generated</span>{% endif %}
             {% if team.has_open_dispute %}<span class="tag dispute">Dispute open{% if team.dispute_sprints %}: {% for sprint in team.dispute_sprints %}{{ sprint.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</span>{% endif %}
           </div>
           <ul class="people">
@@ -50,7 +50,7 @@
             {% endfor %}
           </ul>
           {% if not team.repos.all %}<p class="missing">No repo yet.</p>{% endif %}
-          <div class="latest">{% if team.latest_sprint %}Latest sprint: {{ team.latest_sprint.name }}{% if team.latest_sprint_note %} ({{ team.latest_sprint_note }}){% endif %}{% elif team.latest_week %}Latest week: {{ team.latest_week|date:"M j" }}{% if team.latest_week_note %} ({{ team.latest_week_note }}){% endif %}{% else %}No summaries yet{% endif %}</div>
+          <div class="latest">{% if team.latest_sprint %}Latest sprint: {{ team.latest_sprint.name }}{% if team.latest_sprint_note %} ({{ team.latest_sprint_note }}){% endif %}{% else %}No summaries yet{% endif %}</div>
           {% if team.active_run %}<div data-progress-for="{{ team.id }}">{% include "dashboard/_generation_progress.html" with run=team.active_run %}</div>{% endif %}
           <div class="foot">
             <form action="{% url 'dashboard:generate_team_summaries' team.id %}" method="post" class="generate-form">
@@ -88,21 +88,31 @@
 
     <aside class="rail">
       <h2>Requirements</h2>
-      {% if project.requirements.all %}
+      {% with sprint=project.overview_sprint %}
+      {% if sprint %}
+      <p><small>{{ sprint.label }}</small></p>
+      {% if sprint.requirements.all %}
       <table>
         <thead><tr><th scope="col">#</th><th scope="col">Requirement</th></tr></thead>
         <tbody>
-          {% for requirement in project.requirements.all %}
+          {% for requirement in sprint.requirements.all %}
           <tr><td>{{ requirement.number }}</td><td>{{ requirement.text }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
       {% else %}
-      <p>No requirements for this project yet.{% if not can_set_up %} An instructor can add them.{% endif %}</p>
+      <p>No requirements for {{ sprint.name }} yet.{% if not can_set_up %} An instructor can add them.{% endif %}</p>
       {% endif %}
       {% if can_set_up %}
-      <p class="rail-action"><a href="{% url 'dashboard:project_requirements' project.id %}">{% if project.requirements.all %}Edit requirements{% else %}Add requirements{% endif %}</a></p>
+      <p class="rail-action"><a href="{% url 'dashboard:sprint' sprint.id %}">{% if sprint.requirements.all %}Edit requirements{% else %}Add requirements{% endif %}</a></p>
       {% endif %}
+      {% else %}
+      <p>No sprint has started yet, so there are no requirements to show.{% if not can_set_up %} An instructor sets up sprints and their requirements.{% endif %}</p>
+      {% if can_set_up %}
+      <p class="rail-action"><a href="{% url 'dashboard:project_setup' project.id %}">Set up sprints</a></p>
+      {% endif %}
+      {% endif %}
+      {% endwith %}
     </aside>
   </div>
 </section>

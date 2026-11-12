@@ -24,13 +24,12 @@ def _student_ids(team):
 
 
 def sprint_summaries(team):
-    """The team's sprint summaries, each with its sprint and generation log. Uses prefetched
+    """The team's summaries, each with its sprint and generation log. Uses prefetched
     summaries when there are some, as on the course overview."""
     if "summaries" in getattr(team, "_prefetched_objects_cache", {}):
-        return [summary for summary in team.summaries.all() if summary.sprint_id is not None]
+        return list(team.summaries.all())
     return list(
-        team.summaries.filter(sprint__isnull=False)
-        .select_related("sprint")
+        team.summaries.select_related("sprint")
         .prefetch_related("validation_runs")
     )
 

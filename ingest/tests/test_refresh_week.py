@@ -34,6 +34,7 @@ from ingest.tests.test_ingest_prs_issues import (
 from ingest.tests.test_review_credit import fake_review, old_pull, review_id
 from ingest.tests.test_student_artifacts import add_repo, make_team, make_user
 from summaries.models import Claim, Summary
+from summaries.tests.week_shim import sprint_for_week
 
 COMMIT_ID = f"{FULL_NAME}:commit:{sha('a')}"
 PREVIOUS_WEEK = {"week_start": date(2026, 10, 12), "week_end": date(2026, 10, 18)}
@@ -185,7 +186,10 @@ class ExistingSummaryTests(ActivityTestCase):
         self.ingest(**one_of_each())
         self.student = make_user("sample-summary-student")
         self.summary = Summary.objects.create(
-            team=self.team, user=self.student, week_start=date(2026, 10, 19), artifact_count=4
+            team=self.team,
+            user=self.student,
+            sprint=sprint_for_week(self.team.project, date(2026, 10, 19)),
+            artifact_count=4,
         )
         self.claim = Claim.objects.create(
             summary=self.summary,

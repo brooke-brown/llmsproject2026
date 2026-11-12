@@ -8,7 +8,7 @@ from fractions import Fraction
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, transaction
-from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -469,9 +469,9 @@ def get_sprint_for_instructor(user, sprint_id):
 
 def get_requirement_for_instructor(user, requirement_id):
     requirement = get_object_or_404(
-        Requirement.objects.select_related("project__course"), pk=requirement_id
+        Requirement.objects.select_related("sprint__project__course"), pk=requirement_id
     )
-    check_course_instructor(user, requirement.project.course)
+    check_course_instructor(user, requirement.sprint.project.course)
     return requirement
 
 
@@ -536,15 +536,12 @@ def get_summary_for_staff(user, summary_id):
 
 
 def summary_period(summary):
-    """The first and last day a summary's period spans: its sprint's, or its reporting week."""
-    if summary.sprint_id is not None:
-        return summary.sprint.start_date, summary.sprint.end_date
-    # A weekly summary from the alpha: its Monday-Sunday week.
-    return summary.week_start, summary.week_start + timedelta(days=6)
+    """The first and last day a summary's sprint spans."""
+    return summary.sprint.start_date, summary.sprint.end_date
 
 
-# Sprint summaries first, newest sprint first, then any weekly ones from before sprints.
-SUMMARY_ORDER = (F("sprint__start_date").desc(nulls_last=True), F("week_start").desc(nulls_last=True))
+# Newest sprint first.
+SUMMARY_ORDER = ("-sprint__start_date", "-sprint__end_date")
 
 
 def short_date(day):
@@ -580,10 +577,7 @@ def verified_claims(summary):
     requirement with that number.
     """
     # A requirement number means something only within its sprint.
-    if summary.sprint_id is not None:
-        requirements = dict(summary.sprint.requirements.values_list("number", "text"))
-    else:
-        requirements = dict(summary.team.project.requirements.values_list("number", "text"))
+    requirements = dict(summary.sprint.requirements.values_list("number", "text"))
     claims = list(
         summary.claims.filter(status=Claim.Status.VERIFIED)
         .order_by("id")
@@ -600,8 +594,9 @@ def verified_claims(summary):
     return claims
 
 
-def student_weeks(summary):
-    """All of this student's summaries for the team, newest first, for the week switcher."""
+def student_sprint_summaries(summary):
+    """All of this student's summaries for the team, newest sprint first, for the sprint
+    switcher."""
     return (
         Summary.objects.filter(team=summary.team, user=summary.user)
         .select_related("sprint")
@@ -682,8 +677,7 @@ def team_page_sprint(team, sprints, value, now=None):
         if sprint.id == chosen:
             return sprint
     latest = (
-        team.summaries.filter(sprint__isnull=False)
-        .select_related("sprint")
+        team.summaries.select_related("sprint")
         .order_by("-sprint__start_date", "-sprint__end_date")
         .first()
     )
@@ -976,8 +970,7 @@ def course_projects_with_teams(course, chosen_sprint_ids=(), now=None):
         "sprint"
     )
     teams = (
-        Team.objects.annotate(latest_week=Max("summaries__week_start"))
-        .order_by("name")
+        Team.objects.order_by("name")
         .prefetch_related(
             Prefetch("memberships", queryset=memberships),
             "repos",
@@ -990,8 +983,8 @@ def course_projects_with_teams(course, chosen_sprint_ids=(), now=None):
     projects = list(
         course.projects.order_by("id").prefetch_related(
             "sprints",
+            Prefetch("sprints__requirements", queryset=Requirement.objects.order_by("number")),
             Prefetch("teams", queryset=teams),
-            Prefetch("requirements", queryset=Requirement.objects.order_by("number")),
         )
     )
     runs = active_generation_runs(course=course)
@@ -1022,22 +1015,17 @@ def course_projects_with_teams(course, chosen_sprint_ids=(), now=None):
 
 
 def _add_summary_status(team):
-    """Give the team `has_complete_summary`, and `latest_week_note`, which says if its latest
-    week is partial."""
-    summaries = list(team.summaries.all())
-    team.has_complete_summary = any(not summary.is_partial for summary in summaries)
-    latest = [summary for summary in summaries if summary.week_start == team.latest_week]
-    team.latest_week_note = ""
-    if any(summary.is_partial for summary in latest):
-        team.latest_week_note = "in progress" if latest[0].week_is_running else "partial"
+    """Give the team `has_complete_summary`, `latest_sprint` (the newest sprint it has a summary
+    for) and `latest_sprint_note`, which says if that sprint's summaries are partial."""
+    sprint_summaries = list(team.summaries.all())
+    team.has_complete_summary = any(not summary.is_partial for summary in sprint_summaries)
     team.latest_sprint, team.latest_sprint_note = None, ""
-    sprint_summaries = [summary for summary in summaries if summary.sprint_id is not None]
     if sprint_summaries:
         newest = max(sprint_summaries, key=lambda summary: summary.sprint.start_date)
         team.latest_sprint = newest.sprint
         partial = [s for s in sprint_summaries if s.sprint_id == newest.sprint_id and s.is_partial]
         if partial:
-            team.latest_sprint_note = "in progress" if partial[0].week_is_running else "partial"
+            team.latest_sprint_note = "in progress" if partial[0].sprint_is_running else "partial"
 
 
 class GenerationError(Exception):
@@ -1198,7 +1186,7 @@ def active_generation_runs(team_ids=None, course=None):
 
 def _write_sprint_summaries(team, students, sprint):
     """Write each student's summary of the sprint, carrying on past a failure, then recompute
-    flags only if none failed, as for a week. compute_flags only raises flags for a sprint that
+    flags only if none failed. compute_flags only raises flags for a sprint that
     has ended with every student's summary complete, so a running sprint raises none (US-41).
     """
     failures = []

@@ -262,9 +262,7 @@ def summary(request, summary_id):
     claims = services.verified_claims(summary)
     period_start, period_end = services.summary_period(summary)
     # Offline work stops where the claims do, so a partial summary doesn't list later work.
-    offline_through = (
-        services.summary_covered_through(summary) if summary.sprint_id is not None else None
-    )
+    offline_through = services.summary_covered_through(summary)
     return render(
         request,
         "dashboard/summary.html",
@@ -275,20 +273,13 @@ def summary(request, summary_id):
             "claims": claims,
             "tied_count": sum(1 for claim in claims if claim.requirement_ids),
             "unverified_count": summary.unverified_count,
-            "weeks": services.student_weeks(summary),
-            # Weekly summaries have no sprint to place offline work in, so they show none.
-            "offline_contributions": (
-                contributions.contributions_for(
-                    summary.team, summary.user, summary.sprint, through=offline_through
-                )
-                if summary.sprint_id is not None
-                else None
+            "sprint_summaries": services.student_sprint_summaries(summary),
+            "offline_contributions": contributions.contributions_for(
+                summary.team, summary.user, summary.sprint, through=offline_through
             ),
             # Set only when the summary stops before its sprint's last day.
             "offline_through": (
-                offline_through
-                if offline_through is not None and offline_through < summary.sprint.end_date
-                else None
+                offline_through if offline_through < summary.sprint.end_date else None
             ),
         },
     )
@@ -323,7 +314,6 @@ def project_setup(request, project_id):
             "sprints": project.sprints.annotate(requirement_count=Count("requirements")).order_by(
                 "start_date", "end_date"
             ),
-            "requirement_count": project.requirements.count(),
             "summary_count": Summary.objects.filter(team__project=project).count(),
             "dispute_count": FlagDispute.objects.filter(team__project=project).count(),
             "contribution_count": Contribution.objects.filter(team__project=project).count(),
@@ -360,55 +350,9 @@ def project_delete(request, project_id):
     return redirect("dashboard:course_overview", course_id=project.course_id)
 
 
-def _render_requirements(request, project, import_form=None):
-    return render(
-        request,
-        "dashboard/project_requirements.html",
-        {
-            "project": project,
-            "requirements": project.requirements.order_by("number"),
-            "editing_requirement_id": services.parse_id(request.GET.get("edit")),
-            "import_form": import_form or RequirementImportForm(),
-        },
-    )
-
-
-@login_required
-def project_requirements(request, project_id):
-    project = services.get_project_for_instructor(request.user, project_id)
-    return _render_requirements(request, project)
-
-
-@login_required
-@require_POST
-def requirements_import(request, project_id):
-    project = services.get_project_for_instructor(request.user, project_id)
-    # Checked first, so a refused import doesn't spend time reading the PDF.
-    if project.requirements.exists():
-        messages.error(request, setup.ALREADY_HAS_REQUIREMENTS)
-        return redirect("dashboard:project_requirements", project_id=project.id)
-
-    form = RequirementImportForm(request.POST, request.FILES)
-    if form.is_valid():
-        try:
-            requirements = setup.import_requirements(project, form.cleaned_data["text"])
-        except setup.RequirementImportError as error:
-            # Not a form error: if another import just won, the page has no form to show it.
-            messages.error(request, str(error))
-        else:
-            count = len(requirements)
-            noun = ngettext("requirement", "requirements", count)
-            messages.success(request, f"Imported {count} {noun}.")
-            return redirect("dashboard:project_requirements", project_id=project.id)
-    # Rendered here rather than redirected, so the pasted text is still there to try again.
-    return _render_requirements(request, project, form)
-
-
 def _requirements_page(requirement):
-    """Where to go after changing a requirement: its sprint's page, or the project's."""
-    if requirement.sprint_id is not None:
-        return redirect("dashboard:sprint", sprint_id=requirement.sprint_id)
-    return redirect("dashboard:project_requirements", project_id=requirement.project_id)
+    """Where to go after changing a requirement: its sprint's page."""
+    return redirect("dashboard:sprint", sprint_id=requirement.sprint_id)
 
 
 def _change_requirement(request, destination, change, *args):
@@ -418,15 +362,6 @@ def _change_requirement(request, destination, change, *args):
     except setup.ProjectSetupError as error:
         messages.error(request, str(error))
     return destination
-
-
-@login_required
-@require_POST
-def requirement_add(request, project_id):
-    project = services.get_project_for_instructor(request.user, project_id)
-    text = request.POST.get("text", "")
-    destination = redirect("dashboard:project_requirements", project_id=project.id)
-    return _change_requirement(request, destination, setup.add_requirement, project, text)
 
 
 @login_required

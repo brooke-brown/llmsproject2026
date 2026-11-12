@@ -14,7 +14,7 @@ from django.test import override_settings
 from django.urls import reverse
 from django.utils.html import escape
 
-from core.models import Enrollment, Project, Requirement, Team
+from core.models import Enrollment, Requirement, Team
 from core.tests.test_split_requirements import (
     INVENTED,
     SPLIT,
@@ -31,7 +31,7 @@ LINES = [
     "3. The app sends a weekly reminder.",
 ]
 TEXT = "\n".join(LINES)
-NO_REQUIREMENTS_MESSAGE = "No requirements for this project yet."
+NO_REQUIREMENTS_MESSAGE = "No requirements for Sprint 1 yet."
 
 
 def build_pdf(page_streams):
@@ -127,11 +127,11 @@ def damaged_second_page_pdf():
 
 
 class UploadTestCase(SplitRequirementsTestCase):
-    def upload(self, content=None, name="requirements.pdf", project=None, text="", **kwargs):
+    def upload(self, content=None, name="requirements.pdf", sprint=None, text="", **kwargs):
         content = text_pdf() if content is None else content
         kwargs.setdefault("content_type", "application/pdf")
         file = SimpleUploadedFile(name, content, **kwargs)
-        return self.client.post(self.import_url(project), {"text": text, "pdf": file})
+        return self.client.post(self.import_url(sprint), {"text": text, "pdf": file})
 
     def assert_rejected(self, response, expected_text=""):
         """The page shows an error, the LLM wasn't called and nothing was stored."""
@@ -168,20 +168,20 @@ class SameResultAsPastingTests(UploadTestCase):
     """An uploaded PDF produces the same result as pasting its text (US-9)."""
 
     def test_an_upload_stores_the_same_requirements_as_pasting_its_text(self):
-        pasted_project = Project.objects.create(course=self.course, name="Pasted")
+        pasted_sprint = self.new_sprint("Pasted")
 
-        pasted = self.paste(TEXT, project=pasted_project)
+        pasted = self.paste(TEXT, sprint=pasted_sprint)
         uploaded = self.upload()
 
         self.assertEqual(pasted.status_code, 302)
         self.assertEqual(uploaded.status_code, 302)
-        self.assertEqual(self.stored(), self.stored(pasted_project))
+        self.assertEqual(self.stored(), self.stored(pasted_sprint))
         self.assertEqual(self.stored(), list(enumerate(SPLIT, start=1)))
 
     def test_the_llm_receives_the_same_text_as_a_paste(self):
-        pasted_project = Project.objects.create(course=self.course, name="Pasted")
+        pasted_sprint = self.new_sprint("Pasted")
 
-        self.paste(TEXT, project=pasted_project)
+        self.paste(TEXT, sprint=pasted_sprint)
         self.upload()
 
         self.assertEqual(len(self.llm.calls), 2, "Expected one LLM call for each import")
@@ -227,12 +227,12 @@ class SameResultAsPastingTests(UploadTestCase):
         }
         for label, kwargs in cases.items():
             with self.subTest(label):
-                project = Project.objects.create(course=self.course, name=label)
+                sprint = self.new_sprint(label)
 
-                response = self.upload(project=project, **kwargs)
+                response = self.upload(sprint=sprint, **kwargs)
 
                 self.assertEqual(response.status_code, 302)
-                self.assertEqual(len(self.stored(project)), 3)
+                self.assertEqual(len(self.stored(sprint)), 3)
 
     def test_a_requirement_not_in_the_pdf_is_refused(self):
         self.llm.replies_with([*SPLIT, INVENTED])
@@ -243,8 +243,8 @@ class SameResultAsPastingTests(UploadTestCase):
         self.assertNotContains(response, INVENTED)
         self.assertEqual(self.stored(), [])
 
-    def test_a_project_with_requirements_refuses_an_upload(self):
-        Requirement.objects.create(project=self.project, number=1, text="Users can log out")
+    def test_a_sprint_with_requirements_refuses_an_upload(self):
+        Requirement.objects.create(sprint=self.sprint, number=1, text="Users can log out")
 
         response = self.upload()
 
